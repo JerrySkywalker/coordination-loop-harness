@@ -162,6 +162,76 @@ class LeaseTests(unittest.TestCase):
             self.assertEqual("RELEASED", data["state"])
             self.assertEqual(3, data["generation"])
 
+    def test_release_rejects_traversal_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            victim = base / "outside.lease.json"
+            victim.write_text(
+                json.dumps(
+                    {
+                        "lease_id": "outside",
+                        "state": "ACTIVE",
+                        "generation": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            before = victim.read_bytes()
+            with self.assertRaisesRegex(ValueError, "Invalid lease_id"):
+                release(
+                    "../outside",
+                    locks,
+                    expected_generation=1,
+                    outcome_ref="runs/RUN/outcome.json",
+                )
+            self.assertEqual(before, victim.read_bytes())
+            self.assertEqual([], list(locks.iterdir()))
+
+    def test_release_rejects_absolute_and_sibling_prefix_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            for lease_id in (str(base / "victim"), r"..\locks-sibling\victim"):
+                with self.subTest(lease_id=lease_id):
+                    with self.assertRaisesRegex(ValueError, "Invalid lease_id"):
+                        release(
+                            lease_id,
+                            locks,
+                            expected_generation=1,
+                            outcome_ref="runs/RUN/outcome.json",
+                        )
+            self.assertEqual([], list(locks.iterdir()))
+
+    def test_release_requires_exact_lease_object_binding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            path = locks / "RUN-A.lease.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "lease_id": "RUN-B",
+                        "state": "ACTIVE",
+                        "generation": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            before = path.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "not bound"):
+                release(
+                    "RUN-A",
+                    locks,
+                    expected_generation=1,
+                    outcome_ref="runs/RUN-A/outcome.json",
+                )
+            self.assertEqual(before, path.read_bytes())
+            self.assertFalse(any(locks.glob("*.tmp")))
+
     def test_coordination_repository_overlap_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -232,6 +302,23 @@ class LeaseTests(unittest.TestCase):
             b = lease("RUN-B", "example/b")
             a["local_scopes"] = ["V:/src/_worktrees/RUN-A"]
             b["local_scopes"] = ["v:/src/_worktrees/run-a/product"]
+            self.authorize(base, a, "lease:acquire")
+            self.authorize(base, b, "lease:acquire")
+            pa, pb = base / "a.json", base / "b.json"
+            self.write(pa, a)
+            self.write(pb, b)
+            acquire(pa, locks, repo_root=base)
+            with self.assertRaises(RuntimeError):
+                acquire(pb, locks, repo_root=base)
+
+    def test_equivalent_dot_segment_path_overlap_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            a = lease("RUN-A", "example/a")
+            b = lease("RUN-B", "example/b")
+            a["local_scopes"] = [r"V:\src\scope\child\..\target"]
+            b["local_scopes"] = ["v:/SRC/scope/target/"]
             self.authorize(base, a, "lease:acquire")
             self.authorize(base, b, "lease:acquire")
             pa, pb = base / "a.json", base / "b.json"

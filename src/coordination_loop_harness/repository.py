@@ -15,7 +15,7 @@ GITHUB_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*/[A-Za-z0-9_.-]+$"
 
 def _git(root: Path, *args: str) -> str:
     result = subprocess.run(
-        ["git", "-C", str(root), *args],
+        ["git", "--no-optional-locks", "-C", str(root), *args],
         check=False,
         capture_output=True,
         text=True,
@@ -47,7 +47,16 @@ def verify_repository(
     head = _git(root, "rev-parse", "HEAD")
     local_ref_sha = _git(root, "rev-parse", "--verify", local_ref)
     branch_result = subprocess.run(
-        ["git", "-C", str(root), "symbolic-ref", "--quiet", "--short", "HEAD"],
+        [
+            "git",
+            "--no-optional-locks",
+            "-C",
+            str(root),
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "HEAD",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -56,7 +65,7 @@ def verify_repository(
     detached = branch_result.returncode != 0
     branch = None if detached else branch_result.stdout.strip()
     origin_result = subprocess.run(
-        ["git", "-C", str(root), "remote", "get-url", "origin"],
+        ["git", "--no-optional-locks", "-C", str(root), "remote", "get-url", "origin"],
         check=False,
         capture_output=True,
         text=True,
@@ -150,13 +159,9 @@ def verify_repository(
                         findings.append(f"live GitHub verification returned invalid JSON: {exc}")
                     else:
                         actual_identity = (
-                            metadata.get("nameWithOwner")
-                            if isinstance(metadata, dict)
-                            else None
+                            metadata.get("nameWithOwner") if isinstance(metadata, dict) else None
                         )
-                        repository_url = (
-                            metadata.get("url") if isinstance(metadata, dict) else None
-                        )
+                        repository_url = metadata.get("url") if isinstance(metadata, dict) else None
                         if (
                             not isinstance(actual_identity, str)
                             or canonical_repo(actual_identity) != expected_identity

@@ -116,10 +116,7 @@ def seal_bundle(root: Path, run_id: str) -> Path:
             raise ValueError(f"Durable object is not valid UTF-8: {relative}") from exc
         for name, pattern in SECRET_PATTERNS.items():
             if pattern.search(text):
-                raise ValueError(
-                    f"Refusing to seal sensitive durable object "
-                    f"{relative}: {name}"
-                )
+                raise ValueError(f"Refusing to seal sensitive durable object {relative}: {name}")
     seal: dict[str, Any] = {
         "schema_version": "coord.bundle-seal.v1",
         "run_id": run_id,
@@ -188,8 +185,7 @@ def verify_bundle(root: Path, run_id: str) -> dict[str, Any]:
             elif actual[relative] != expected:
                 findings.append(f"binding hash mismatch: {relative}")
     actual_binding_keys = {
-        (item["json_path"], item["markdown_path"])
-        for item in _bindings(root, durable_files)
+        (item["json_path"], item["markdown_path"]) for item in _bindings(root, durable_files)
     }
     declared_binding_keys = {
         (item.get("json_path"), item.get("markdown_path"))

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -73,6 +75,20 @@ class RepositoryVerificationTests(unittest.TestCase):
             )
             self.assertFalse(result["ok"])
             self.assertGreaterEqual(len(result["findings"]), 3)
+
+    def test_offline_verification_does_not_refresh_git_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _ = self.repository(Path(tmp))
+            index = repo / ".git" / "index"
+            before = hashlib.sha256(index.read_bytes()).hexdigest()
+            tracked = repo / "file.txt"
+            stat = tracked.stat()
+            os.utime(tracked, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+            result = verify_repository(repo, offline=True)
+            after = hashlib.sha256(index.read_bytes()).hexdigest()
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["read_only"])
+            self.assertEqual(before, after)
 
     def test_live_verification_uses_fake_gh(self):
         with tempfile.TemporaryDirectory() as tmp:

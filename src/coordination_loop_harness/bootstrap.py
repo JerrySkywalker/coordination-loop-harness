@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -66,8 +67,7 @@ def _verify_template_provenance(
     if actual_origin == expected_template:
         if head != template_sha:
             raise ValueError(
-                "template provenance exact-head mismatch: "
-                f"expected {template_sha}, found {head}"
+                f"template provenance exact-head mismatch: expected {template_sha}, found {head}"
             )
         return {
             "verification": "exact-template-checkout",
@@ -145,8 +145,22 @@ def _render(template_root: Path, item: dict[str, Any], values: dict[str, str]) -
         label="template source",
     )
     text = source.read_text(encoding="utf-8")
-    for key, value in values.items():
-        text = text.replace("{{" + key + "}}", value)
+    target = Path(item["path"])
+    if target.suffix.casefold() == ".json":
+        for key, value in values.items():
+            text = text.replace(
+                '"{{' + key + '}}"',
+                json.dumps(value, ensure_ascii=False),
+            )
+        try:
+            rendered = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Rendered JSON is invalid for {target.as_posix()}: {exc}") from exc
+        if not isinstance(rendered, dict):
+            raise ValueError(f"Rendered JSON must be an object: {target.as_posix()}")
+    else:
+        for key, value in values.items():
+            text = text.replace("{{" + key + "}}", value)
     return text
 
 
@@ -206,12 +220,10 @@ def bootstrap_repository(
         provenance_errors = validate_document(previous_provenance, template_root)
         if provenance_errors:
             raise ValueError(
-                "Existing template provenance is invalid:\n- "
-                + "\n- ".join(provenance_errors)
+                "Existing template provenance is invalid:\n- " + "\n- ".join(provenance_errors)
             )
         previous_managed_hashes = {
-            item["path"]: item["sha256"]
-            for item in previous_provenance["managed_files"]
+            item["path"]: item["sha256"] for item in previous_provenance["managed_files"]
         }
     actions: list[dict[str, str]] = []
     pending_writes: list[tuple[Path, str]] = []
@@ -256,8 +268,7 @@ def bootstrap_repository(
                 previous_sha256 = previous_managed_hashes.get(relative.as_posix())
                 action = (
                     "safe-update"
-                    if previous_sha256 is not None
-                    and sha256_file(target) == previous_sha256
+                    if previous_sha256 is not None and sha256_file(target) == previous_sha256
                     else "conflict"
                 )
             else:

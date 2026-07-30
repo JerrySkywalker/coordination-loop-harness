@@ -349,6 +349,66 @@ class Wave7ParityTests(unittest.TestCase):
             self.assertTrue(verified["ok"])
             self.assertIsNone(verified["verified"]["independently_launched"])
 
+    def test_status_transition_rejects_escape_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = self.run_root(base)
+            original = root / "runs" / "W7-SYNTH-001" / "status.json"
+            original_before = original.read_bytes()
+            external = base / "external-run"
+            external.mkdir()
+            victim = external / "status.json"
+            victim.write_bytes(original_before)
+            victim_before = victim.read_bytes()
+
+            malicious_ids = (
+                "../external-run",
+                r"..\runs-sibling\victim",
+                str(external),
+            )
+            for run_id in malicious_ids:
+                with self.subTest(run_id=run_id):
+                    with self.assertRaisesRegex(ValueError, "Invalid run_id"):
+                        transition_status(
+                            root,
+                            run_id,
+                            target="ABORTED",
+                            expected_generation=1,
+                            timestamp="2026-01-01T00:00:01Z",
+                            checkpoint="REJECT_ESCAPE",
+                        )
+
+            self.assertEqual(original_before, original.read_bytes())
+            self.assertEqual(victim_before, victim.read_bytes())
+            self.assertFalse(any(external.glob("*.tmp")))
+
+    def test_status_transition_rejects_reparse_escape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = self.run_root(base)
+            original = root / "runs" / "W7-SYNTH-001" / "status.json"
+            external = base / "external-run"
+            external.mkdir()
+            victim = external / "status.json"
+            victim.write_bytes(original.read_bytes())
+            victim_before = victim.read_bytes()
+            link = root / "runs" / "LINK-001"
+            self.directory_link(link, external)
+            try:
+                with self.assertRaisesRegex(ValueError, "must stay within"):
+                    transition_status(
+                        root,
+                        "LINK-001",
+                        target="ABORTED",
+                        expected_generation=1,
+                        timestamp="2026-01-01T00:00:01Z",
+                        checkpoint="REJECT_REPARSE",
+                    )
+                self.assertEqual(victim_before, victim.read_bytes())
+                self.assertFalse(any(external.glob("*.tmp")))
+            finally:
+                self.remove_directory_link(link)
+
     def test_audit_verify_rejects_empty_non_pass_results(self):
         for result in ("FAIL", "BLOCKED"):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:

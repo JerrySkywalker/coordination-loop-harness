@@ -272,6 +272,27 @@ class BootstrapTests(unittest.TestCase):
                 self.bootstrap(template, target, template_sha="f" * 40)
             self.assertFalse((target / ".coord-template.json").exists())
 
+    def test_bootstrap_json_escapes_project_name_before_any_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            template, template_sha = self.template_repository(base)
+            target = base / "derived"
+            target.mkdir()
+            result = bootstrap_repository(
+                template,
+                target,
+                project_name='Broken " Project',
+                project_slug="synthetic-project",
+                template_repository="example/coordination-template",
+                template_version="0.2.0",
+                template_sha=template_sha,
+                dry_run=False,
+                safe_mode=None,
+            )
+            self.assertTrue(result["ok"])
+            rendered = json.loads((target / "coord-project.json").read_text(encoding="utf-8"))
+            self.assertEqual('Broken " Project', rendered["project_name"])
+
     def test_bootstrap_binds_derived_checkout_to_template_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -302,8 +323,15 @@ class BootstrapTests(unittest.TestCase):
                 capture_output=True,
             )
             subprocess.run(
-                ["git", "-C", str(derived), "remote", "set-url", "origin",
-                 "https://github.com/example/derived.git"],
+                [
+                    "git",
+                    "-C",
+                    str(derived),
+                    "remote",
+                    "set-url",
+                    "origin",
+                    "https://github.com/example/derived.git",
+                ],
                 check=True,
             )
             fake_gh = base / "fake-gh.py"
@@ -326,9 +354,7 @@ class BootstrapTests(unittest.TestCase):
                 "github-template-tree",
                 result["provenance_verification"]["verification"],
             )
-            provenance = json.loads(
-                (derived / ".coord-template.json").read_text(encoding="utf-8")
-            )
+            provenance = json.loads((derived / ".coord-template.json").read_text(encoding="utf-8"))
             self.assertEqual(template_sha, provenance["template_exact_sha"])
 
     def test_workflow_run_blocks_do_not_interpolate_dispatch_inputs(self):
@@ -356,7 +382,7 @@ class BootstrapTests(unittest.TestCase):
         joined = "\n".join(run_text)
         self.assertNotIn("${{ inputs.", joined)
         self.assertNotIn("${{ github.event.", joined)
-        self.assertIn('PROJECT_NAME: ${{ inputs.project_name }}', workflow)
+        self.assertIn("PROJECT_NAME: ${{ inputs.project_name }}", workflow)
         self.assertIn('"$PROJECT_NAME"', joined)
 
     def test_workflow_binds_checkout_and_template_provenance(self):
@@ -368,7 +394,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("git remote get-url origin", workflow)
         self.assertIn("gh api --hostname github.com", workflow)
         self.assertIn("template_repository.full_name", workflow)
-        self.assertIn("--target-repository \"$TARGET_REPOSITORY\"", workflow)
+        self.assertIn('--target-repository "$TARGET_REPOSITORY"', workflow)
 
     def test_workflow_contract(self):
         workflow = (ROOT / ".github" / "workflows" / "bootstrap-derived-repository.yml").read_text(
