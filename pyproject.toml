@@ -4,20 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coordination-loop-harness"
-version = "0.1.0"
+version = "0.2.0"
 description = "A repository template for durable, human-supervised ChatGPT Web and Codex CLI development loops."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "Jerry Wang" }]
 dependencies = ["jsonschema>=4.23,<5"]
 keywords = ["codex", "chatgpt", "coordination", "human-in-the-loop", "repository-template", "agent-harness"]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Version Control :: Git",
 ]
 

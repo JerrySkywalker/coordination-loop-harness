@@ -1,0 +1,10 @@
+{
+  "run_id": "W7-SYNTH-001",
+  "repository": "example/synthetic-product",
+  "branch": "main",
+  "requested_by": "fixture-owner",
+  "auditor": "fixture-auditor",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "production_apply": false,
+  "process_launch": false
+}

@@ -1,9 +1,10 @@
 {
-  "schema_version": "coord.decision.v1",
+  "schema_version": "coord.decision.v2",
   "decision_id": "DEC-001",
   "run_id": "EXAMPLE-001",
+  "sequence": 1,
   "decision_type": "OWNER_GATE",
-  "status": "APPROVED",
+  "status": "ACCEPTED",
   "issued_by": "owner",
   "issued_utc": "2026-01-01T00:00:00Z",
   "decision": "Approve the bounded source phase.",
@@ -14,5 +15,13 @@
   "conditions": [
     "Use an isolated worktree",
     "Do not expose secrets"
-  ]
+  ],
+  "authorized_actions": [
+    "status:admit",
+    "lease:acquire"
+  ],
+  "lease_id": "EXAMPLE-001",
+  "lease_generation": 1,
+  "previous_decision_ref": null,
+  "markdown_sha256": "97f66f1c0f6445f44615b2c74a96dfdb0613ce0ff4361e6d1d12afd6dfe5c27d"
 }

@@ -11,3 +11,8 @@
 
 `Publish-PublicTemplate.ps1` can create and mark the repository when run from an authenticated local
 GitHub CLI session.
+
+The v0.2 `bootstrap-derived-repository.yml` workflow is for a repository that already exists from
+the template. It uses the repository-scoped `GITHUB_TOKEN`, requires `contents: write` and
+`pull-requests: write`, creates a dedicated branch, validates the result, and opens a Draft pull
+request. It never creates the top-level repository or writes directly to main.

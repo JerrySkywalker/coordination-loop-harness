@@ -4,11 +4,11 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, Iterator
-
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
@@ -58,20 +58,62 @@ def write_json_atomic(path: Path, data: dict[str, Any], *, create_new: bool = Fa
             pass
 
 
+def canonical_json_bytes(data: object) -> bytes:
+    return (
+        json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+
+
+def sha256_bytes(payload: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha256(payload).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def ensure_within(path: Path, root: Path, *, label: str = "path") -> Path:
+    resolved_root = root.resolve()
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"{label} must stay within {resolved_root}: {resolved}") from exc
+    return resolved
+
+
 def canonical_repo(value: str) -> str:
     value = value.strip().removesuffix(".git")
-    if value.startswith("https://github.com/"):
-        value = value[len("https://github.com/") :]
-    if value.startswith("git@github.com:"):
-        value = value[len("git@github.com:") :]
+    for prefix in (
+        "https://github.com/",
+        "http://github.com/",
+        "ssh://git@github.com/",
+        "git@github.com:",
+    ):
+        if value.startswith(prefix):
+            value = value[len(prefix) :]
+            break
     return value.strip("/").casefold()
 
 
 def canonical_scope(value: str) -> str:
-    value = value.strip().replace("\\", "/").rstrip("/")
-    if WINDOWS_PATH_RE.match(value):
-        return value.casefold()
-    return str(Path(value).expanduser()) if value else value
+    raw = value.strip()
+    if not raw:
+        return raw
+    if WINDOWS_PATH_RE.match(raw) or raw.startswith("//"):
+        return raw.replace("\\", "/").rstrip("/").casefold()
+    normalized = raw.replace("\\", "/").rstrip("/")
+    if normalized.startswith("/"):
+        return str(PurePosixPath(normalized))
+    return str(Path(normalized).expanduser()).replace("\\", "/")
 
 
 @contextmanager

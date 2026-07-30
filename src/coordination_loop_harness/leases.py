@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .decisions import verify_decision
 from .util import (
     admission_mutex,
     canonical_repo,
     canonical_scope,
+    ensure_within,
     load_json,
     utc_now,
     write_json_atomic,
@@ -49,11 +51,15 @@ def _sets(lease: dict[str, Any]) -> dict[str, set[str]]:
                 paths.add(canonical_scope(item[key]))
     paths.update(canonical_scope(item) for item in lease.get("local_scopes", []) if item)
     infrastructure = {
-        str(item).strip().casefold() for item in lease.get("infrastructure_scopes", []) if str(item).strip()
+        str(item).strip().casefold()
+        for item in lease.get("infrastructure_scopes", [])
+        if str(item).strip()
     }
-    coordination = {
-        canonical_repo(lease["coordination_repository"])
-    } if lease.get("coordination_repository") else set()
+    coordination = (
+        {canonical_repo(lease["coordination_repository"])}
+        if lease.get("coordination_repository")
+        else set()
+    )
     repositories.update(coordination)
     return {
         "repository": repositories,
@@ -69,7 +75,12 @@ def _paths_overlap(left: str, right: str) -> bool:
     return left.startswith(right + "/") or right.startswith(left + "/")
 
 
-def find_overlaps(candidate: dict[str, Any], lock_root: Path, *, excluding: str | None = None) -> list[Overlap]:
+def find_overlaps(
+    candidate: dict[str, Any],
+    lock_root: Path,
+    *,
+    excluding: str | None = None,
+) -> list[Overlap]:
     candidate_sets = _sets(candidate)
     overlaps: list[Overlap] = []
     for path in _active_lease_files(lock_root, excluding=excluding):
@@ -99,14 +110,18 @@ def _validate_lease(data: dict[str, Any], repo_root: Path) -> None:
     if coordination in identities:
         raise ValueError("The coordination repository cannot also be a product repository")
 
-    writers = [canonical_repo(item["repository"]) for item in repositories if item.get("mode") == "WRITE"]
+    writers = [
+        canonical_repo(item["repository"]) for item in repositories if item.get("mode") == "WRITE"
+    ]
     active_writer = data.get("active_writer_repository")
     if data.get("state") == "ACTIVE":
         if not data.get("decision_ref"):
             raise ValueError("An ACTIVE lease requires decision_ref")
         if active_writer is None:
             if writers:
-                raise ValueError("A lease with no active writer must not contain WRITE repositories")
+                raise ValueError(
+                    "A lease with no active writer must not contain WRITE repositories"
+                )
         else:
             if len(writers) != 1 or canonical_repo(active_writer) != writers[0]:
                 raise ValueError(
@@ -123,6 +138,22 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
     _validate_lease(candidate, repo_root)
     if candidate["state"] != "ACTIVE" or candidate["generation"] != 1:
         raise ValueError("A new lease must have state=ACTIVE and generation=1")
+    decision = verify_decision(
+        repo_root,
+        ensure_within(
+            repo_root / candidate["decision_ref"],
+            repo_root,
+            label="lease decision_ref",
+        ),
+        run_id=candidate["run_id"],
+        action="lease:acquire",
+        lease_id=candidate["lease_id"],
+        lease_generation=1,
+    )
+    if not decision["ok"]:
+        raise ValueError(
+            "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
+        )
     lease_path = lock_root / f"{candidate['lease_id']}.lease.json"
 
     with admission_mutex(lock_root):
@@ -163,6 +194,22 @@ def replace(
             raise ValueError("Use release() to close a lease")
         if not candidate.get("decision_ref"):
             raise ValueError("Lease replacement requires decision_ref")
+        decision = verify_decision(
+            repo_root,
+            ensure_within(
+                repo_root / candidate["decision_ref"],
+                repo_root,
+                label="lease decision_ref",
+            ),
+            run_id=candidate["run_id"],
+            action="lease:expand",
+            lease_id=candidate["lease_id"],
+            lease_generation=candidate["generation"],
+        )
+        if not decision["ok"]:
+            raise ValueError(
+                "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
+            )
         overlaps = find_overlaps(candidate, lock_root, excluding=candidate["lease_id"])
         if overlaps:
             detail = "; ".join(
