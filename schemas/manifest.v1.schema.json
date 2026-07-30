@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Run manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "template_repository",
+    "template_version",
+    "template_exact_sha",
+    "planned_repo_set",
+    "durable_files",
+    "local_state_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "coord.manifest.v1"
+    },
+    "run_id": {
+      "$ref": "#/$defs/runId"
+    },
+    "template_repository": {
+      "type": "string",
+      "minLength": 1
+    },
+    "template_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "template_exact_sha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "planned_repo_set": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/repositoryName"
+      }
+    },
+    "durable_files": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "local_state_policy": {
+      "enum": [
+        "UNTRACKED_OR_EXTERNAL"
+      ]
+    }
+  },
+  "$defs": {
+    "repositoryName": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "minLength": 3
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
+  }
+}

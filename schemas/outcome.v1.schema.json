@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Run outcome v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "state",
+    "summary",
+    "completed_utc",
+    "exact_heads",
+    "production_mutation",
+    "sensitive_output"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "coord.outcome.v1"
+    },
+    "run_id": {
+      "$ref": "#/$defs/runId"
+    },
+    "state": {
+      "enum": [
+        "PENDING",
+        "COMPLETE",
+        "PARTIAL",
+        "ABORTED"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "completed_utc": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exact_heads": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}$"
+      }
+    },
+    "production_mutation": {
+      "type": "boolean"
+    },
+    "sensitive_output": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "repositoryName": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "minLength": 3
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Run status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "revision",
+    "state",
+    "checkpoint",
+    "active_phase",
+    "active_writer",
+    "lease_id",
+    "product_writes_started",
+    "updated_utc"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "coord.status.v1"
+    },
+    "run_id": {
+      "$ref": "#/$defs/runId"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "state": {
+      "enum": [
+        "PLANNED",
+        "READY",
+        "RUNNING",
+        "BLOCKED",
+        "COMPLETE",
+        "ABORTED"
+      ]
+    },
+    "checkpoint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "active_phase": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "active_writer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lease_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "product_writes_started": {
+      "type": "boolean"
+    },
+    "updated_utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
+  },
+  "$defs": {
+    "repositoryName": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "minLength": 3
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
+  }
+}

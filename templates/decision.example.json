@@ -1,0 +1,18 @@
+{
+  "schema_version": "coord.decision.v1",
+  "decision_id": "DEC-001",
+  "run_id": "EXAMPLE-001",
+  "decision_type": "OWNER_GATE",
+  "status": "APPROVED",
+  "issued_by": "owner",
+  "issued_utc": "2026-01-01T00:00:00Z",
+  "decision": "Approve the bounded source phase.",
+  "rationale": "The repository set is disjoint and the phase has no production apply.",
+  "scope": [
+    "example/product"
+  ],
+  "conditions": [
+    "Use an isolated worktree",
+    "Do not expose secrets"
+  ]
+}

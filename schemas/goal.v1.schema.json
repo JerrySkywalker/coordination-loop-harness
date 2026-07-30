@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Implementer goal v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "role",
+    "active_phase",
+    "write_repository",
+    "read_repositories",
+    "exact_bases",
+    "allowed_paths",
+    "forbidden_paths",
+    "validation_commands",
+    "deliverables",
+    "production_mutation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "coord.goal.v1"
+    },
+    "run_id": {
+      "$ref": "#/$defs/runId"
+    },
+    "role": {
+      "enum": [
+        "IMPLEMENTER",
+        "AUDITOR",
+        "SUPERVISOR"
+      ]
+    },
+    "active_phase": {
+      "$ref": "#/$defs/runId"
+    },
+    "write_repository": {
+      "$ref": "#/$defs/repositoryName"
+    },
+    "read_repositories": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/repositoryName"
+      }
+    },
+    "exact_bases": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}$"
+      }
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "validation_commands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deliverables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "production_mutation": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "repositoryName": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "minLength": 3
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
+  }
+}

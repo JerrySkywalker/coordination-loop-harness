@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose a coordination protocol or tooling improvement
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Safety and coordination boundary
+    validations:
+      required: true

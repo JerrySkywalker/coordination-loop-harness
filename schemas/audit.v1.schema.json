@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Audit report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "audit_id",
+    "run_id",
+    "auditor",
+    "audited_utc",
+    "scope",
+    "result",
+    "findings",
+    "sensitive_output"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "coord.audit.v1"
+    },
+    "audit_id": {
+      "$ref": "#/$defs/runId"
+    },
+    "run_id": {
+      "$ref": "#/$defs/runId"
+    },
+    "auditor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "audited_utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    },
+    "scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "result": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+        "PASS_WITH_FINDINGS"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sensitive_output": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "repositoryName": {
+      "type": "string",
+      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "minLength": 3
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    }
+  }
+}

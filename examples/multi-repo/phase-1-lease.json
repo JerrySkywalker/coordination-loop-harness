@@ -1,0 +1,25 @@
+{
+  "schema_version": "coord.repo-set-lease.v1",
+  "lease_id": "MULTI-001",
+  "run_id": "MULTI-001",
+  "state": "ACTIVE",
+  "generation": 1,
+  "created_utc": "2026-01-01T00:00:00Z",
+  "owner": "owner-or-session-id",
+  "coordination_repository": "example/proxy-train",
+  "repositories": [
+    {
+      "repository": "example/client",
+      "mode": "WRITE",
+      "canonical_path": null,
+      "worktree_root": null,
+      "exact_sha": null
+    }
+  ],
+  "local_scopes": [],
+  "infrastructure_scopes": [],
+  "active_writer_repository": "example/client",
+  "decision_ref": "decisions/MULTI-001/DEC-001.json",
+  "released_utc": null,
+  "outcome_ref": null
+}

@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Local-only coordination state. Durable summaries belong in requests/, plans/,
+# decisions/, runs/, audits/, and handoffs/.
+.coord-local/
+.coord-state/
+*.lease.json
+*.mutex/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
