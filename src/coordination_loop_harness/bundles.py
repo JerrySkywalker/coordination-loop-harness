@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -12,19 +14,67 @@ DURABLE_SUFFIXES = {".json", ".md", ".txt"}
 SEAL_NAME = "bundle-seal.json"
 
 
+def _is_reparse_point(path: Path) -> bool:
+    metadata = os.lstat(path)
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag)
+
+
+def _assert_safe_component_path(root: Path, path: Path) -> Path:
+    lexical_root = root.absolute()
+    lexical_path = path.absolute()
+    try:
+        relative = lexical_path.relative_to(lexical_root)
+    except ValueError as exc:
+        raise ValueError(f"durable path must stay within bundle root: {lexical_path}") from exc
+
+    current = lexical_root
+    if _is_reparse_point(current):
+        raise ValueError("Refusing bundle root that is a symbolic link or reparse point")
+    for component in relative.parts:
+        current /= component
+        if _is_reparse_point(current):
+            display = current.relative_to(lexical_root).as_posix()
+            raise ValueError(
+                f"Refusing durable path through symbolic link or reparse point: {display}"
+            )
+    return lexical_path.resolve(strict=True)
+
+
 def _durable_files(root: Path, run_id: str) -> list[Path]:
     files: list[Path] = []
     for directory in DURABLE_DIRECTORIES:
         base = root / directory / run_id
-        if not base.exists():
+        if not base.exists() and not os.path.lexists(base):
             continue
-        for path in base.rglob("*"):
-            if (
-                path.is_file()
-                and path.suffix.lower() in DURABLE_SUFFIXES
-                and path.name != SEAL_NAME
-            ):
-                files.append(path)
+        resolved_base = _assert_safe_component_path(root, base)
+        if not base.is_dir():
+            relative = base.relative_to(root).as_posix()
+            raise ValueError(f"durable run root must be a directory: {relative}")
+        pending = [base]
+        while pending:
+            current = pending.pop()
+            _assert_safe_component_path(root, current)
+            with os.scandir(current) as entries:
+                for entry in sorted(entries, key=lambda item: item.name):
+                    path = Path(entry.path)
+                    resolved = _assert_safe_component_path(root, path)
+                    try:
+                        resolved.relative_to(resolved_base)
+                    except ValueError as exc:
+                        relative = path.relative_to(root).as_posix()
+                        raise ValueError(
+                            f"durable object escapes its allowed durable root: {relative}"
+                        ) from exc
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(path)
+                    elif (
+                        entry.is_file(follow_symlinks=False)
+                        and path.suffix.lower() in DURABLE_SUFFIXES
+                        and path.name != SEAL_NAME
+                    ):
+                        files.append(path)
     return sorted(files, key=lambda item: item.relative_to(root).as_posix())
 
 
@@ -36,7 +86,6 @@ def _entry(root: Path, path: Path) -> dict[str, str]:
 
 
 def _bindings(root: Path, files: list[Path]) -> list[dict[str, str]]:
-    files = [path for path in files if not path.is_symlink()]
     available = {path.resolve(): path for path in files}
     result: list[dict[str, str]] = []
     for json_path in (path for path in files if path.suffix.lower() == ".json"):
@@ -60,14 +109,16 @@ def seal_bundle(root: Path, run_id: str) -> Path:
     if not files:
         raise ValueError(f"No durable objects found for run {run_id}")
     for path in files:
-        if path.is_symlink():
-            raise ValueError(f"Refusing to seal symbolic link: {path.relative_to(root).as_posix()}")
-        text = path.read_text(encoding="utf-8", errors="replace")
+        relative = path.relative_to(root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Durable object is not valid UTF-8: {relative}") from exc
         for name, pattern in SECRET_PATTERNS.items():
             if pattern.search(text):
                 raise ValueError(
                     f"Refusing to seal sensitive durable object "
-                    f"{path.relative_to(root).as_posix()}: {name}"
+                    f"{relative}: {name}"
                 )
     seal: dict[str, Any] = {
         "schema_version": "coord.bundle-seal.v1",
@@ -94,12 +145,15 @@ def verify_bundle(root: Path, run_id: str) -> dict[str, Any]:
     if seal.get("run_id") != run_id:
         findings.append(f"run_id mismatch: expected {run_id}, found {seal.get('run_id')}")
 
+    try:
+        durable_files = _durable_files(root, run_id)
+    except ValueError as exc:
+        findings.append(str(exc))
+        durable_files = []
+
     actual: dict[str, str] = {}
-    for path in _durable_files(root, run_id):
+    for path in durable_files:
         relative = path.relative_to(root).as_posix()
-        if path.is_symlink():
-            findings.append(f"symbolic-link durable object is forbidden: {relative}")
-            continue
         actual[relative] = sha256_file(path)
     declared_entries = seal.get("files", [])
     declared = {
@@ -135,7 +189,7 @@ def verify_bundle(root: Path, run_id: str) -> dict[str, Any]:
                 findings.append(f"binding hash mismatch: {relative}")
     actual_binding_keys = {
         (item["json_path"], item["markdown_path"])
-        for item in _bindings(root, _durable_files(root, run_id))
+        for item in _bindings(root, durable_files)
     }
     declared_binding_keys = {
         (item.get("json_path"), item.get("markdown_path"))

@@ -39,6 +39,32 @@
     "markdown_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "sensitive_output": {"const": false}
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"result": {"const": "PASS"}},
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "finding_count": {"const": 0},
+          "findings": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"result": {"enum": ["FAIL", "BLOCKED"]}},
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "finding_count": {"minimum": 1},
+          "findings": {"minItems": 1}
+        }
+      }
+    }
+  ],
   "$defs": {
     "id": {
       "type": "string",

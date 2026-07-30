@@ -12,6 +12,13 @@
 - accidental overlapping repository writers;
 - accidental worktree/path overlap;
 - unreviewed lease expansion;
+- incomplete Decision authorization history;
+- durable-file junction, symlink, and reparse-point escapes;
+- invalid UTF-8 hidden by replacement decoding;
+- mismatched live GitHub repository identity or host;
+- unbound template provenance and unsafe template-managed updates;
+- empty FAIL or BLOCKED audit evidence;
+- workflow-dispatch command interpolation;
 - attach scripts that launch a process;
 - common secret-shaped values in durable run artifacts;
 - production apply implied by source-code permission.

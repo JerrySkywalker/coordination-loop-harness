@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -79,7 +80,11 @@ class RepositoryVerificationTests(unittest.TestCase):
             repo, _ = self.repository(base)
             fake_gh = base / "fake-gh.py"
             fake_gh.write_text(
-                "import json\nprint(json.dumps({'nameWithOwner': 'example/repo'}))\n",
+                "import json\n"
+                "print(json.dumps({"
+                "'nameWithOwner': 'example/repo', "
+                "'url': 'https://github.com/example/repo'"
+                "}))\n",
                 encoding="utf-8",
             )
             result = verify_repository(
@@ -90,6 +95,66 @@ class RepositoryVerificationTests(unittest.TestCase):
             )
             self.assertTrue(result["ok"])
             self.assertTrue(result["live_github_verified"])
+
+    def test_live_verification_rejects_wrong_repository_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo, _ = self.repository(base)
+            fake_gh = base / "fake-gh.py"
+            fake_gh.write_text(
+                "import json\n"
+                "print(json.dumps({"
+                "'nameWithOwner': 'example/wrong', "
+                "'url': 'https://github.com/example/wrong'"
+                "}))\n",
+                encoding="utf-8",
+            )
+            result = verify_repository(
+                repo,
+                expected_origin="example/repo",
+                offline=False,
+                gh_command=str(fake_gh),
+            )
+            self.assertFalse(result["ok"])
+            self.assertFalse(result["live_github_verified"])
+            self.assertIn("repository identity mismatch", "\n".join(result["findings"]))
+
+    def test_live_verification_rejects_wrong_host_or_invalid_json(self):
+        scenarios = (
+            {
+                "name": "wrong-host",
+                "payload": json.dumps(
+                    {
+                        "nameWithOwner": "example/repo",
+                        "url": "https://example.invalid/example/repo",
+                    }
+                ),
+                "finding": "repository host mismatch",
+            },
+            {
+                "name": "invalid-json",
+                "payload": "not-json",
+                "finding": "invalid JSON",
+            },
+        )
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario["name"]), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                repo, _ = self.repository(base)
+                fake_gh = base / "fake-gh.py"
+                fake_gh.write_text(
+                    f"print({scenario['payload']!r})\n",
+                    encoding="utf-8",
+                )
+                result = verify_repository(
+                    repo,
+                    expected_origin="example/repo",
+                    offline=False,
+                    gh_command=str(fake_gh),
+                )
+                self.assertFalse(result["ok"])
+                self.assertFalse(result["live_github_verified"])
+                self.assertIn(scenario["finding"], "\n".join(result["findings"]))
 
     def test_detached_worktree_verification(self):
         with tempfile.TemporaryDirectory() as tmp:

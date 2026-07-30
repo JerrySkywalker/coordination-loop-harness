@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -80,6 +81,63 @@ class Wave7ParityTests(unittest.TestCase):
         output.write_text(json.dumps(document), encoding="utf-8")
         return output
 
+    def chained_decision(
+        self,
+        root: Path,
+        *,
+        decision_id: str,
+        sequence: int,
+        previous_decision_ref: str | None,
+        action: str = "status:admit",
+    ) -> Path:
+        directory = root / "decisions" / "W7-SYNTH-001"
+        directory.mkdir(parents=True, exist_ok=True)
+        markdown = directory / f"{decision_id}.md"
+        markdown.write_text(f"# {decision_id}\n\nSynthetic authorization.\n", encoding="utf-8")
+        document = {
+            "schema_version": "coord.decision.v2",
+            "decision_id": decision_id,
+            "run_id": "W7-SYNTH-001",
+            "sequence": sequence,
+            "decision_type": "OWNER_GATE",
+            "status": "ACCEPTED",
+            "issued_by": "fixture-owner",
+            "issued_utc": "2026-01-01T00:00:00Z",
+            "decision": "Authorize the synthetic action.",
+            "rationale": "Fixture proof.",
+            "scope": ["example/synthetic-product"],
+            "conditions": ["No external mutation"],
+            "authorized_actions": [action],
+            "lease_id": None,
+            "lease_generation": None,
+            "previous_decision_ref": previous_decision_ref,
+            "markdown_sha256": sha256_file(markdown),
+        }
+        output = markdown.with_suffix(".json")
+        output.write_text(json.dumps(document), encoding="utf-8")
+        return output
+
+    def directory_link(self, link: Path, target: Path) -> None:
+        if os.name == "nt":
+            result = subprocess.run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                self.skipTest(f"Windows junction creation unavailable: {result.stderr}")
+        else:
+            link.symlink_to(target, target_is_directory=True)
+
+    def remove_directory_link(self, link: Path) -> None:
+        if not link.exists() and not link.is_symlink():
+            return
+        if os.name == "nt":
+            link.rmdir()
+        else:
+            link.unlink()
+
     def git_repository(self, base: Path) -> tuple[Path, str]:
         repo = base / "synthetic-product"
         repo.mkdir()
@@ -143,6 +201,84 @@ class Wave7ParityTests(unittest.TestCase):
             self.assertIn(
                 "missing durable object",
                 "\n".join(verify_bundle(root, "W7-SYNTH-001")["findings"]),
+            )
+
+    def test_bundle_seal_rejects_reparse_escape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = self.run_root(base)
+            external = base / "external"
+            external.mkdir()
+            (external / "external.txt").write_text("outside\n", encoding="utf-8")
+            link = root / "audits" / "W7-SYNTH-001" / "junction"
+            link.parent.mkdir(parents=True, exist_ok=True)
+            self.directory_link(link, external)
+            try:
+                with self.assertRaisesRegex(ValueError, "reparse point|symbolic link"):
+                    seal_bundle(root, "W7-SYNTH-001")
+            finally:
+                self.remove_directory_link(link)
+
+    def test_bundle_verify_rejects_reparse_escape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = self.run_root(base)
+            seal_path = seal_bundle(root, "W7-SYNTH-001")
+            external = base / "external"
+            external.mkdir()
+            external_file = external / "external.txt"
+            external_file.write_text("outside\n", encoding="utf-8")
+            link = root / "audits" / "W7-SYNTH-001" / "junction"
+            link.parent.mkdir(parents=True, exist_ok=True)
+            self.directory_link(link, external)
+            try:
+                seal = json.loads(seal_path.read_text(encoding="utf-8"))
+                seal["files"].append(
+                    {
+                        "path": "audits/W7-SYNTH-001/junction/external.txt",
+                        "sha256": sha256_file(external_file),
+                    }
+                )
+                seal_path.write_text(json.dumps(seal), encoding="utf-8")
+                verified = verify_bundle(root, "W7-SYNTH-001")
+                self.assertFalse(verified["ok"])
+                self.assertIn("reparse point", "\n".join(verified["findings"]))
+            finally:
+                self.remove_directory_link(link)
+
+    def test_bundle_seal_rejects_invalid_utf8(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.run_root(Path(tmp))
+            request = root / "requests" / "W7-SYNTH-001" / "request.md"
+            request.write_bytes(b"# Invalid UTF-8\n\xff\n")
+            with self.assertRaisesRegex(ValueError, "valid UTF-8"):
+                seal_bundle(root, "W7-SYNTH-001")
+
+    def test_decision_verification_rejects_broken_transitive_chain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.run_root(Path(tmp))
+            second = self.chained_decision(
+                root,
+                decision_id="DEC-002",
+                sequence=2,
+                previous_decision_ref=None,
+            )
+            third = self.chained_decision(
+                root,
+                decision_id="DEC-003",
+                sequence=3,
+                previous_decision_ref=second.relative_to(root).as_posix(),
+            )
+            verified = verify_decision(
+                root,
+                third,
+                run_id="W7-SYNTH-001",
+                action="status:admit",
+            )
+            self.assertFalse(verified["ok"])
+            self.assertIn(
+                "sequence greater than 1 requires previous_decision_ref",
+                "\n".join(verified["findings"]),
             )
 
     def test_decision_status_blocker_and_audit(self):
@@ -212,6 +348,52 @@ class Wave7ParityTests(unittest.TestCase):
             verified = verify_audit(root, audit_paths[0])
             self.assertTrue(verified["ok"])
             self.assertIsNone(verified["verified"]["independently_launched"])
+
+    def test_audit_verify_rejects_empty_non_pass_results(self):
+        for result in ("FAIL", "BLOCKED"):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:
+                root = self.run_root(Path(tmp))
+                audit_paths = record_audit(
+                    root,
+                    run_id="W7-SYNTH-001",
+                    audit_id=f"AUD-{result}",
+                    audit_type="EXACT_HEAD",
+                    auditor="fixture-auditor",
+                    timestamp="2026-01-01T00:00:03Z",
+                    audited_sha=SHA,
+                    result="PASS",
+                    findings=[],
+                    read_only_asserted=True,
+                    independently_launched_asserted=True,
+                )
+                document = json.loads(audit_paths[0].read_text(encoding="utf-8"))
+                document["result"] = result
+                audit_paths[0].write_text(json.dumps(document), encoding="utf-8")
+                verified = verify_audit(root, audit_paths[0])
+                self.assertFalse(verified["ok"])
+                self.assertIn(
+                    f"{result} audit requires",
+                    "\n".join(verified["findings"]),
+                )
+
+    def test_audit_record_rejects_empty_non_pass_results(self):
+        for result in ("FAIL", "BLOCKED"):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:
+                root = self.run_root(Path(tmp))
+                with self.assertRaisesRegex(ValueError, f"{result} audit requires"):
+                    record_audit(
+                        root,
+                        run_id="W7-SYNTH-001",
+                        audit_id=f"AUD-{result}",
+                        audit_type="EXACT_HEAD",
+                        auditor="fixture-auditor",
+                        timestamp="2026-01-01T00:00:03Z",
+                        audited_sha=SHA,
+                        result=result,
+                        findings=[],
+                        read_only_asserted=True,
+                        independently_launched_asserted=True,
+                    )
 
     def test_bound_goal_is_local_and_does_not_launch(self):
         with tempfile.TemporaryDirectory() as tmp:

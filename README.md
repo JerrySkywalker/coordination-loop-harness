@@ -54,19 +54,20 @@ The included attach tooling renders prompts but never launches Codex.
 - **Moving write token:** a multi-repository run can reserve an authorized set while
   allowing only one repository to be the active writer at a time.
 - **Verified owner gates:** privileged status transitions and lease operations require
-  schema-valid, accepted decisions with explicit actions, sequence, generation, and
-  Markdown hash binding.
+  schema-valid, accepted decisions with explicit actions, generation, Markdown hash
+  binding, and a complete contiguous predecessor chain back to sequence 1.
 - **Durable vs. local evidence:** requests, plans, decisions, status, outcomes, and audit
   summaries are tracked; raw logs, credentials, and local leases stay outside Git.
 - **Exact-head handoff:** goals carry exact base SHAs and validation commands.
 - **No hidden process launch:** `Prepare-ImplementerAttach.ps1` only writes a prompt file.
 - **Production deny by default:** source-code authority does not imply infrastructure apply.
 - **Sealed Run Bundles:** deterministic SHA-256 inventories reject missing, extra, changed,
-  or unhashed durable objects.
+  unhashed, non-UTF-8, symlinked, or reparse-point-escaped durable objects.
 - **Exact repository binding:** offline Git checks cover canonical root, origin, branch,
-  refs, detached worktrees, tracked dirt, and untracked files; live `gh` checks are optional.
+  refs, detached worktrees, tracked dirt, and untracked files; live `gh` checks additionally
+  bind the returned repository identity and GitHub host.
 - **Safe template evolution:** ownership-aware bootstrap is idempotent and `sync-plan`
-  reports changes without applying them.
+  distinguishes untouched template-managed files from derived edits without applying changes.
 
 ## Repository layout
 

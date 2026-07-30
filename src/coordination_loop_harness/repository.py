@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .util import canonical_repo
+
+GITHUB_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*/[A-Za-z0-9_.-]+$")
 
 
 def _git(root: Path, *args: str) -> str:
@@ -90,6 +95,31 @@ def verify_repository(
         if not expected_origin:
             findings.append("live GitHub verification requires --expected-origin")
         else:
+            expected_identity = canonical_repo(expected_origin)
+            if not GITHUB_REPOSITORY_RE.fullmatch(expected_identity):
+                findings.append(
+                    "live GitHub verification requires a github.com owner/name identity"
+                )
+                return {
+                    "ok": False,
+                    "offline": offline,
+                    "read_only": True,
+                    "git_root": str(git_root),
+                    "canonical_path": str(root),
+                    "origin": origin,
+                    "branch": branch,
+                    "detached": detached,
+                    "head": head,
+                    "local_ref": local_ref,
+                    "local_ref_sha": local_ref_sha,
+                    "cached_origin_ref": cached_origin_ref,
+                    "cached_origin_sha": cached_sha,
+                    "tracked_dirty": bool(tracked),
+                    "tracked_changes": tracked,
+                    "untracked": untracked,
+                    "live_github_verified": False,
+                    "findings": findings,
+                }
             command = [gh_command]
             if Path(gh_command).suffix.casefold() == ".py":
                 command = [sys.executable, gh_command]
@@ -101,7 +131,7 @@ def verify_repository(
                         "view",
                         canonical_repo(expected_origin),
                         "--json",
-                        "nameWithOwner",
+                        "nameWithOwner,url",
                     ],
                     check=False,
                     capture_output=True,
@@ -114,7 +144,37 @@ def verify_repository(
                 if result.returncode != 0:
                     findings.append(f"live GitHub verification failed: {result.stderr.strip()}")
                 else:
-                    live_verified = True
+                    try:
+                        metadata = json.loads(result.stdout)
+                    except json.JSONDecodeError as exc:
+                        findings.append(f"live GitHub verification returned invalid JSON: {exc}")
+                    else:
+                        actual_identity = (
+                            metadata.get("nameWithOwner")
+                            if isinstance(metadata, dict)
+                            else None
+                        )
+                        repository_url = (
+                            metadata.get("url") if isinstance(metadata, dict) else None
+                        )
+                        if (
+                            not isinstance(actual_identity, str)
+                            or canonical_repo(actual_identity) != expected_identity
+                        ):
+                            findings.append(
+                                "live GitHub repository identity mismatch: "
+                                f"expected {expected_identity}, found {actual_identity}"
+                            )
+                        if (
+                            not isinstance(repository_url, str)
+                            or urlparse(repository_url).hostname != "github.com"
+                        ):
+                            findings.append(
+                                "live GitHub repository host mismatch: "
+                                f"expected github.com, found {repository_url}"
+                            )
+                        if not findings:
+                            live_verified = True
 
     return {
         "ok": not findings,

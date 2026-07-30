@@ -9,6 +9,78 @@ from .validation import validate_document
 ACCEPTED_STATUSES = {"ACCEPTED", "MERGED"}
 
 
+def _verify_predecessor_chain(
+    root: Path,
+    decision_path: Path,
+    decision: dict[str, Any],
+    *,
+    run_id: str,
+) -> list[str]:
+    findings: list[str] = []
+    current_path = decision_path
+    current = decision
+    seen = {decision_path.resolve()}
+    while True:
+        sequence = current.get("sequence")
+        previous_ref = current.get("previous_decision_ref")
+        if not isinstance(sequence, int) or sequence < 1:
+            break
+        if sequence == 1:
+            if previous_ref is not None:
+                findings.append("sequence 1 decision must not reference a previous decision")
+            break
+        if not isinstance(previous_ref, str) or not previous_ref:
+            findings.append("sequence greater than 1 requires previous_decision_ref")
+            break
+
+        previous_path = Path(previous_ref)
+        if not previous_path.is_absolute():
+            previous_path = root / previous_path
+        try:
+            previous_path = ensure_within(
+                previous_path,
+                root,
+                label="previous_decision_ref",
+            )
+        except ValueError as exc:
+            findings.append(str(exc))
+            break
+        resolved_previous = previous_path.resolve()
+        if resolved_previous in seen:
+            findings.append("decision predecessor chain contains a cycle")
+            break
+        seen.add(resolved_previous)
+        try:
+            previous = load_json(previous_path)
+        except ValueError as exc:
+            findings.append(str(exc))
+            break
+
+        prefix = f"decision chain sequence {sequence - 1}"
+        for error in validate_document(previous, root):
+            findings.append(f"{prefix}: {error}")
+        if previous.get("schema_version") != "coord.decision.v2":
+            findings.append(f"{prefix}: decision verification requires coord.decision.v2")
+        previous_markdown = previous_path.with_suffix(".md")
+        if not previous_markdown.is_file():
+            findings.append(f"{prefix}: decision Markdown companion missing")
+        elif previous.get("markdown_sha256") != sha256_file(previous_markdown):
+            findings.append(f"{prefix}: decision Markdown SHA-256 binding mismatch")
+        if previous.get("run_id") != run_id:
+            findings.append(f"{prefix}: decision run_id mismatch")
+        if previous.get("sequence") != sequence - 1:
+            findings.append(f"{prefix}: decision sequence is not contiguous")
+        if previous.get("status") not in ACCEPTED_STATUSES:
+            findings.append(f"{prefix}: decision is not accepted or merged")
+
+        current_path = previous_path
+        current = previous
+        if current_path == decision_path:
+            findings.append("decision predecessor chain contains a cycle")
+            break
+    return findings
+
+
 def verify_decision(
     root: Path,
     decision_path: Path,
@@ -38,35 +110,14 @@ def verify_decision(
     if sequence == 1 and previous_ref is not None:
         findings.append("sequence 1 decision must not reference a previous decision")
     if isinstance(sequence, int) and sequence > 1:
-        if not isinstance(previous_ref, str) or not previous_ref:
-            findings.append("sequence greater than 1 requires previous_decision_ref")
-        else:
-            previous_path = Path(previous_ref)
-            if not previous_path.is_absolute():
-                previous_path = root / previous_path
-            try:
-                previous_path = ensure_within(
-                    previous_path,
-                    root,
-                    label="previous_decision_ref",
-                )
-                previous = load_json(previous_path)
-            except ValueError as exc:
-                findings.append(str(exc))
-            else:
-                for error in validate_document(previous, root):
-                    findings.append(f"previous decision: {error}")
-                previous_markdown = previous_path.with_suffix(".md")
-                if not previous_markdown.is_file():
-                    findings.append("previous decision Markdown companion missing")
-                elif previous.get("markdown_sha256") != sha256_file(previous_markdown):
-                    findings.append("previous decision Markdown SHA-256 binding mismatch")
-                if previous.get("run_id") != run_id:
-                    findings.append("previous decision run_id mismatch")
-                if previous.get("sequence") != sequence - 1:
-                    findings.append("previous decision sequence is not contiguous")
-                if previous.get("status") not in ACCEPTED_STATUSES:
-                    findings.append("previous decision is not accepted or merged")
+        findings.extend(
+            _verify_predecessor_chain(
+                root,
+                decision_path,
+                decision,
+                run_id=run_id,
+            )
+        )
     if action not in decision.get("authorized_actions", []):
         findings.append(f"decision does not authorize action: {action}")
     if lease_id is not None and decision.get("lease_id") != lease_id:

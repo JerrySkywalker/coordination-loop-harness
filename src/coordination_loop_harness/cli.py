@@ -178,6 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--template-repository", required=True)
     bootstrap.add_argument("--template-version", required=True)
     bootstrap.add_argument("--template-sha", required=True)
+    bootstrap.add_argument("--target-repository")
+    bootstrap.add_argument("--gh-command", default="gh")
     bootstrap.add_argument("--dry-run", action="store_true")
     bootstrap.add_argument("--safe-mode", choices=("preserve-active",))
 
@@ -344,6 +346,8 @@ def main(argv: list[str] | None = None) -> int:
                 template_sha=args.template_sha,
                 dry_run=args.dry_run,
                 safe_mode=args.safe_mode,
+                target_repository=args.target_repository,
+                gh_command=args.gh_command,
             )
             _print_json(result)
             return 0

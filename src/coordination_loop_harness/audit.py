@@ -45,6 +45,16 @@ IGNORED_DIRECTORIES = {
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 
 
+def _audit_result_semantic_findings(result: object, finding_count: int) -> list[str]:
+    if result == "PASS" and finding_count != 0:
+        return ["PASS audit cannot contain findings"]
+    if result == "FAIL" and finding_count == 0:
+        return ["FAIL audit requires at least one finding"]
+    if result == "BLOCKED" and finding_count == 0:
+        return ["BLOCKED audit requires at least one explicit blocker reason"]
+    return []
+
+
 def iter_durable_json(root: Path) -> Iterable[Path]:
     for directory in ("requests", "plans", "runs", "decisions", "audits"):
         base = root / directory
@@ -90,6 +100,10 @@ def validate_repository(root: Path) -> list[str]:
     for path in iter_durable_json(root):
         for error in validate_json_file(path, root):
             findings.append(f"{path.relative_to(root)}: {error}")
+    provenance_path = root / ".coord-template.json"
+    if provenance_path.exists():
+        for error in validate_json_file(provenance_path, root):
+            findings.append(f"{provenance_path.relative_to(root)}: {error}")
 
     for path in sorted(iter_publishable_files(root)):
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -126,6 +140,9 @@ def record_audit(
 ) -> list[Path]:
     require_safe_id(run_id, "run_id")
     require_safe_id(audit_id, "audit_id")
+    semantic_findings = _audit_result_semantic_findings(result, len(findings))
+    if semantic_findings:
+        raise ValueError("Audit result semantics invalid: " + "; ".join(semantic_findings))
     directory = root / "audits" / run_id
     markdown_path = directory / f"{audit_id}.md"
     json_path = directory / f"{audit_id}.json"
@@ -198,8 +215,12 @@ def verify_audit(root: Path, audit_path: Path) -> dict[str, Any]:
         findings.append("audit Markdown SHA-256 binding mismatch")
     if audit.get("finding_count") != len(audit.get("findings", [])):
         findings.append("finding_count does not match findings")
-    if audit.get("result") == "PASS" and audit.get("finding_count") != 0:
-        findings.append("PASS audit cannot contain findings")
+    findings.extend(
+        _audit_result_semantic_findings(
+            audit.get("result"),
+            len(audit.get("findings", [])),
+        )
+    )
     return {
         "ok": not findings,
         "audit": str(audit_path),

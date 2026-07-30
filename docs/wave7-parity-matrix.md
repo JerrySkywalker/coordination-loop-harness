@@ -19,8 +19,8 @@ private repository names, endpoints, credentials, or production coupling.
 | Manifest | Partial | Implemented | Deterministic inventory plus sealed durable-file hashes. |
 | Status | Partial | Implemented | Legal state transitions, history, generation checks, and privileged gates. |
 | Outcome | Partial | Implemented | Strict final result and exact-head summary. |
-| Decisions | Schema only | Implemented | Schema, sequence, authorization, lease-generation, and Markdown binding verification. |
-| Audits | Schema only | Implemented | Record and verify exact-head/exact-main results with asserted versus verified independence. |
+| Decisions | Schema only | Implemented | Schema, complete predecessor chain, authorization, lease-generation, and Markdown binding verification. |
+| Audits | Schema only | Implemented | Record and verify result semantics and exact-head/exact-main results with asserted versus verified independence. |
 | Markdown/JSON hash binding | Missing | Implemented | SHA-256 companion binding with deterministic UTF-8 handling. |
 | Exact repository binding | Missing | Implemented | Git root, canonical path, origin, branch, input SHA, cached origin ref, and worktree checks. |
 | Bound Goal | Missing | Implemented | Local-only export of the execution contract and exact repository evidence. |
@@ -32,12 +32,12 @@ private repository names, endpoints, credentials, or production coupling.
 | Blockers and escalation | Missing | Implemented | Stable fingerprint, recurrence, retry limit, and deterministic escalation flags. |
 | Single writer | Implemented | Implemented | Exactly one active write repository is enforced per active lease. |
 | Repository-set leases | Partial | Implemented | Overlap, decision authorization, and optimistic lease generation are enforced. |
-| Sealed Run Bundle | Missing | Implemented | Missing, extra, changed, or unhashed durable objects fail verification. |
-| Repository verification | Missing | Implemented | Offline/read-only local verification with optional fakeable `gh` live checks. |
+| Sealed Run Bundle | Missing | Implemented | Missing, extra, changed, unhashed, non-UTF-8, symlinked, reparse-point, or escaped durable objects fail closed. |
+| Repository verification | Missing | Implemented | Offline/read-only local verification with optional fakeable `gh` identity and GitHub-host checks. |
 | Status transition engine | Missing | Implemented | `PLANNED`, `ADMITTED`, `RUNNING`, `BLOCKED`, `OWNER_ACTION_REQUIRED`, `COMPLETE`, and `ABORTED`. |
-| Derived repository bootstrap | Missing | Intentionally generalized | Idempotent ownership-aware rendering for any synthetic derived repository. |
-| Template synchronization | Missing | Intentionally generalized | Non-mutating conflict and safe-update planning; automatic apply is excluded. |
-| GitHub bootstrap workflow | Missing | Intentionally generalized | Repository-local workflow dispatch creates a bootstrap branch and Draft PR only. |
+| Derived repository bootstrap | Missing | Intentionally generalized | Idempotent ownership-aware rendering with checkout/tree-bound template provenance. |
+| Template synchronization | Missing | Intentionally generalized | Prior managed hashes drive non-mutating conflict and safe-update planning; automatic apply is excluded. |
+| GitHub bootstrap workflow | Missing | Intentionally generalized | Validated environment-bound dispatch creates a bootstrap branch and Draft PR only. |
 | Wave7 parity replay | Missing | Intentionally generalized | Secret-free fixture uses temporary repositories and fake GitHub tooling. |
 | Production deployment/apply | Not present | Not applicable | The harness is a coordination protocol; production apply remains denied. |
 | Automatic template sync apply | Not present | Deferred | v0.2.0 produces a complete plan but never silently applies it. |
@@ -49,13 +49,15 @@ private repository names, endpoints, credentials, or production coupling.
 The v0.2.0 classifications are backed by the synthetic parity replay and the
 repository validation suite:
 
-- bundle verification exercises unchanged, changed, extra, and missing objects;
+- bundle verification exercises unchanged, changed, extra, missing, invalid UTF-8, and
+  junction/reparse-point objects;
 - temporary Git repositories cover origin, branch, local ref, cached origin ref,
   detached worktree, dirty/untracked classification, and a fake `gh` command;
-- the parity fixture covers Decision, Status, Blocker, Bound Goal, attach, Audit,
-  no-launch, and secret-free behavior;
-- bootstrap tests cover all four ownership classes, idempotence, active-run
-  fail-closed behavior, dry-run, sync planning, and the workflow contract;
+- the parity fixture covers complete Decision chains, Status, Blocker, Bound Goal,
+  attach, Audit result semantics, no-launch, and secret-free behavior;
+- bootstrap tests cover all four ownership classes, idempotence, provenance binding,
+  active-run fail-closed behavior, dry-run, safe-update/conflict planning, and the
+  workflow contract;
 - package build and a clean Python 3.12 wheel installation pass.
 
 The `Deferred` and `Not applicable` rows remain explicit limitations. This

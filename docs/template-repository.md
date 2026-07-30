@@ -14,5 +14,11 @@ GitHub CLI session.
 
 The v0.2 `bootstrap-derived-repository.yml` workflow is for a repository that already exists from
 the template. It uses the repository-scoped `GITHUB_TOKEN`, requires `contents: write` and
-`pull-requests: write`, creates a dedicated branch, validates the result, and opens a Draft pull
-request. It never creates the top-level repository or writes directly to main.
+`pull-requests: write`, validates dispatch inputs, binds the derived checkout tree to the claimed
+template commit on `github.com`, creates a dedicated branch, validates the result, and opens a
+Draft pull request. Dispatch values enter shell steps only through quoted environment variables.
+It never creates the top-level repository or writes directly to main.
+
+`.coord-template.json` records the exact template identity and the rendered hashes of
+template-managed files. A later non-mutating sync plan reports `safe-update` only when the current
+derived file still matches its recorded hash; a derived edit remains a `conflict`.
