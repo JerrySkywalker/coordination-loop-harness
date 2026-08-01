@@ -38,7 +38,16 @@ class PathNormalizationTests(unittest.TestCase):
         )
 
     def test_posix_path_keeps_platform_semantics(self):
-        self.assertEqual("/tmp/example", canonical_scope("/tmp/example"))
+        raw = "/tmp/example"
+        expected = str(Path(raw).resolve()) if os.name == "posix" else raw
+        self.assertEqual(expected, canonical_scope(raw))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX filesystem alias test")
+    def test_posix_aliases_share_resolved_identity(self):
+        raw = "/tmp/example"
+        resolved = str(Path(raw).resolve())
+        self.assertEqual(canonical_scope(raw), canonical_scope(resolved))
+        self.assertTrue(paths_overlap(raw, resolved))
 
     def test_reparse_or_symlink_resolution_and_escape_is_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
