@@ -208,7 +208,8 @@ the template. See [Template repository guide](docs/template-repository.md).
 
 ## Project status
 
-`v0.2.0` is a reviewable release candidate. It intentionally does not:
+`v0.2.1` is a reviewable patch release. It repairs GitHub Template provenance validation without
+moving the immutable v0.2.0 tag. It intentionally does not:
 
 - start or control Codex processes;
 - call ChatGPT Web automatically;

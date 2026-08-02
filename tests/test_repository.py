@@ -8,7 +8,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coordination_loop_harness.repository import verify_repository
+from coordination_loop_harness.repository import (
+    verify_repository,
+    verify_template_repository_provenance,
+)
 
 
 class RepositoryVerificationTests(unittest.TestCase):
@@ -43,6 +46,121 @@ class RepositoryVerificationTests(unittest.TestCase):
             check=True,
         )
         return repo, head
+
+    def fake_template_gh(
+        self,
+        base: Path,
+        *,
+        target_template: str = "example/template",
+        template_tree: str,
+        fail_endpoint: str | None = None,
+    ) -> Path:
+        fake_gh = base / "fake-template-gh.py"
+        fake_gh.write_text(
+            "import sys\n"
+            f"target_template = {target_template!r}\n"
+            f"template_tree = {template_tree!r}\n"
+            f"fail_endpoint = {fail_endpoint!r}\n"
+            "endpoint = next((arg for arg in sys.argv if arg.startswith('repos/')), '')\n"
+            "if endpoint == fail_endpoint:\n"
+            "    print('synthetic API failure', file=sys.stderr)\n"
+            "    raise SystemExit(1)\n"
+            "if endpoint == 'repos/example/derived':\n"
+            "    print(target_template)\n"
+            "elif endpoint.startswith('repos/example/template/git/commits/'):\n"
+            "    print(template_tree)\n"
+            "else:\n"
+            "    print('unexpected endpoint', file=sys.stderr)\n"
+            "    raise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        return fake_gh
+
+    def template_provenance(
+        self,
+        repo: Path,
+        gh_command: Path,
+        template_sha: str,
+    ) -> dict[str, object]:
+        return verify_template_repository_provenance(
+            repo,
+            target_repository="example/derived",
+            template_repository="example/template",
+            template_exact_sha=template_sha,
+            gh_command=str(gh_command),
+        )
+
+    def test_template_provenance_accepts_rest_match_without_event_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo, template_sha = self.repository(base)
+            tree = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            result = self.template_provenance(
+                repo,
+                self.fake_template_gh(base, template_tree=tree),
+                template_sha,
+            )
+            self.assertTrue(result["ok"])
+            self.assertEqual("github-rest-template_repository", result["provenance_source"])
+
+    def test_template_provenance_rejects_empty_rest_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo, template_sha = self.repository(base)
+            gh = self.fake_template_gh(base, target_template="", template_tree="0" * 40)
+            with self.assertRaisesRegex(ValueError, "does not identify"):
+                self.template_provenance(repo, gh, template_sha)
+
+    def test_template_provenance_rejects_rest_source_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo, template_sha = self.repository(base)
+            gh = self.fake_template_gh(
+                base,
+                target_template="example/other-template",
+                template_tree="0" * 40,
+            )
+            with self.assertRaisesRegex(ValueError, "template source mismatch"):
+                self.template_provenance(repo, gh, template_sha)
+
+    def test_template_provenance_rejects_tree_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo, template_sha = self.repository(base)
+            gh = self.fake_template_gh(base, template_tree="0" * 40)
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                self.template_provenance(repo, gh, template_sha)
+
+    def test_template_provenance_fails_closed_on_api_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo, template_sha = self.repository(base)
+            gh = self.fake_template_gh(
+                base,
+                template_tree="0" * 40,
+                fail_endpoint="repos/example/derived",
+            )
+            with self.assertRaisesRegex(ValueError, "REST provenance check failed"):
+                self.template_provenance(repo, gh, template_sha)
+
+    def test_non_template_with_matching_tree_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo, template_sha = self.repository(base)
+            tree = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            gh = self.fake_template_gh(base, target_template="", template_tree=tree)
+            with self.assertRaisesRegex(ValueError, "does not identify"):
+                self.template_provenance(repo, gh, template_sha)
 
     def test_offline_exact_binding_and_dirty_classification(self):
         with tempfile.TemporaryDirectory() as tmp:

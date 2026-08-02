@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 - 2026-08-02
+
+- Fixed derived-repository provenance validation to use canonical GitHub REST template metadata
+  instead of the incomplete `workflow_dispatch` event snapshot.
+- Kept exact template-commit tree binding and made API errors, missing provenance, source
+  mismatches, and tree mismatches fail closed.
+- Refused a repeated bootstrap dispatch while an earlier bootstrap Draft pull request remains
+  open, preventing duplicate derived-state branches.
+- Added regression coverage for genuine Template derivation and copied-tree non-Template
+  repositories.
+
 ## 0.2.0 - 2026-07-30
 
 - Added deterministic sealed Run Bundles with Markdown/JSON SHA-256 binding.

@@ -27,6 +27,107 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _command(command: str) -> list[str]:
+    if Path(command).suffix.casefold() == ".py":
+        return [sys.executable, command]
+    return [command]
+
+
+def _gh_api_value(
+    gh_command: str,
+    endpoint: str,
+    jq: str,
+    *,
+    label: str,
+) -> str:
+    try:
+        result = subprocess.run(
+            [
+                *_command(gh_command),
+                "api",
+                "--hostname",
+                "github.com",
+                endpoint,
+                "--jq",
+                jq,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+    except OSError as exc:
+        raise ValueError(f"{label} failed: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise ValueError(f"{label} failed: {detail}")
+    return result.stdout.strip()
+
+
+def verify_template_repository_provenance(
+    root: Path,
+    *,
+    target_repository: str,
+    template_repository: str,
+    template_exact_sha: str,
+    gh_command: str = "gh",
+) -> dict[str, Any]:
+    root = root.resolve()
+    target_identity = canonical_repo(target_repository)
+    template_identity = canonical_repo(template_repository)
+    if not GITHUB_REPOSITORY_RE.fullmatch(target_identity):
+        raise ValueError("target_repository must use github.com owner/name form")
+    if not GITHUB_REPOSITORY_RE.fullmatch(template_identity):
+        raise ValueError("template_repository must use github.com owner/name form")
+    if not re.fullmatch(r"[0-9a-f]{40}", template_exact_sha):
+        raise ValueError("template_exact_sha must be a lowercase 40-character Git SHA")
+
+    git_root = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
+    if git_root != root:
+        raise ValueError(f"template provenance requires the exact Git root: {git_root}")
+    checkout_tree = _git(root, "rev-parse", "HEAD^{tree}")
+
+    actual_template = _gh_api_value(
+        gh_command,
+        f"repos/{target_identity}",
+        ".template_repository.full_name // empty",
+        label="target repository REST provenance check",
+    )
+    if not actual_template:
+        raise ValueError(
+            "target repository REST metadata does not identify a GitHub Template source"
+        )
+    if canonical_repo(actual_template) != template_identity:
+        raise ValueError(
+            "target repository template source mismatch: "
+            f"expected {template_identity}, found {actual_template}"
+        )
+
+    template_tree = _gh_api_value(
+        gh_command,
+        f"repos/{template_identity}/git/commits/{template_exact_sha}",
+        ".tree.sha",
+        label="template commit REST tree check",
+    )
+    if not re.fullmatch(r"[0-9a-f]{40}", template_tree):
+        raise ValueError("template commit REST tree check returned an invalid tree SHA")
+    if checkout_tree != template_tree:
+        raise ValueError(
+            "derived checkout tree does not match template commit tree: "
+            f"checkout {checkout_tree}, template {template_tree}"
+        )
+    return {
+        "ok": True,
+        "read_only": True,
+        "target_repository": target_identity,
+        "template_repository": template_identity,
+        "template_exact_sha": template_exact_sha,
+        "checkout_tree": checkout_tree,
+        "template_tree": template_tree,
+        "provenance_source": "github-rest-template_repository",
+    }
+
+
 def verify_repository(
     root: Path,
     *,
