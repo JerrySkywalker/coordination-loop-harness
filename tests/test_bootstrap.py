@@ -19,6 +19,7 @@ class BootstrapTests(unittest.TestCase):
         shutil.copytree(ROOT / "schemas", template / "schemas")
         shutil.copytree(ROOT / "templates", template / "templates")
         shutil.copy(ROOT / "TEMPLATE_VERSION", template / "TEMPLATE_VERSION")
+        (template / "TEMPLATE_VERSION").write_text("0.2.0\n", encoding="utf-8")
         subprocess.run(
             ["git", "init", "-b", "main", str(template)],
             check=True,
