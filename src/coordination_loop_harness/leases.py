@@ -4,11 +4,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .decisions import verify_decision
 from .util import (
     admission_mutex,
+    canonical_path,
     canonical_repo,
     canonical_scope,
+    ensure_within,
     load_json,
+    paths_overlap,
+    require_safe_id,
     utc_now,
     write_json_atomic,
 )
@@ -23,8 +28,10 @@ class Overlap:
 
 
 def _active_lease_files(lock_root: Path, *, excluding: str | None = None) -> list[Path]:
+    lock_root = canonical_path(lock_root)
     result: list[Path] = []
     for path in sorted(lock_root.glob("*.lease.json")):
+        path = ensure_within(path, lock_root, label="active lease file", must_exist=True)
         data = load_json(path)
         if data.get("state") != "ACTIVE":
             continue
@@ -49,11 +56,15 @@ def _sets(lease: dict[str, Any]) -> dict[str, set[str]]:
                 paths.add(canonical_scope(item[key]))
     paths.update(canonical_scope(item) for item in lease.get("local_scopes", []) if item)
     infrastructure = {
-        str(item).strip().casefold() for item in lease.get("infrastructure_scopes", []) if str(item).strip()
+        str(item).strip().casefold()
+        for item in lease.get("infrastructure_scopes", [])
+        if str(item).strip()
     }
-    coordination = {
-        canonical_repo(lease["coordination_repository"])
-    } if lease.get("coordination_repository") else set()
+    coordination = (
+        {canonical_repo(lease["coordination_repository"])}
+        if lease.get("coordination_repository")
+        else set()
+    )
     repositories.update(coordination)
     return {
         "repository": repositories,
@@ -64,12 +75,15 @@ def _sets(lease: dict[str, Any]) -> dict[str, set[str]]:
 
 
 def _paths_overlap(left: str, right: str) -> bool:
-    if left == right:
-        return True
-    return left.startswith(right + "/") or right.startswith(left + "/")
+    return paths_overlap(left, right)
 
 
-def find_overlaps(candidate: dict[str, Any], lock_root: Path, *, excluding: str | None = None) -> list[Overlap]:
+def find_overlaps(
+    candidate: dict[str, Any],
+    lock_root: Path,
+    *,
+    excluding: str | None = None,
+) -> list[Overlap]:
     candidate_sets = _sets(candidate)
     overlaps: list[Overlap] = []
     for path in _active_lease_files(lock_root, excluding=excluding):
@@ -99,14 +113,18 @@ def _validate_lease(data: dict[str, Any], repo_root: Path) -> None:
     if coordination in identities:
         raise ValueError("The coordination repository cannot also be a product repository")
 
-    writers = [canonical_repo(item["repository"]) for item in repositories if item.get("mode") == "WRITE"]
+    writers = [
+        canonical_repo(item["repository"]) for item in repositories if item.get("mode") == "WRITE"
+    ]
     active_writer = data.get("active_writer_repository")
     if data.get("state") == "ACTIVE":
         if not data.get("decision_ref"):
             raise ValueError("An ACTIVE lease requires decision_ref")
         if active_writer is None:
             if writers:
-                raise ValueError("A lease with no active writer must not contain WRITE repositories")
+                raise ValueError(
+                    "A lease with no active writer must not contain WRITE repositories"
+                )
         else:
             if len(writers) != 1 or canonical_repo(active_writer) != writers[0]:
                 raise ValueError(
@@ -119,11 +137,32 @@ def _validate_lease(data: dict[str, Any], repo_root: Path) -> None:
 
 def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = None) -> Path:
     repo_root = repository_root(repo_root)
+    lock_root = canonical_path(lock_root)
     candidate = load_json(candidate_path)
     _validate_lease(candidate, repo_root)
     if candidate["state"] != "ACTIVE" or candidate["generation"] != 1:
         raise ValueError("A new lease must have state=ACTIVE and generation=1")
-    lease_path = lock_root / f"{candidate['lease_id']}.lease.json"
+    decision = verify_decision(
+        repo_root,
+        ensure_within(
+            repo_root / candidate["decision_ref"],
+            repo_root,
+            label="lease decision_ref",
+        ),
+        run_id=candidate["run_id"],
+        action="lease:acquire",
+        lease_id=candidate["lease_id"],
+        lease_generation=1,
+    )
+    if not decision["ok"]:
+        raise ValueError(
+            "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
+        )
+    lease_path = ensure_within(
+        lock_root / f"{candidate['lease_id']}.lease.json",
+        lock_root,
+        label="new lease file",
+    )
 
     with admission_mutex(lock_root):
         overlaps = find_overlaps(candidate, lock_root)
@@ -132,7 +171,7 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
                 f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps
             )
             raise RuntimeError(f"Repository-set overlap detected: {detail}")
-        write_json_atomic(lease_path, candidate, create_new=True)
+        write_json_atomic(lease_path, candidate, create_new=True, trusted_root=lock_root)
     return lease_path
 
 
@@ -144,12 +183,19 @@ def replace(
     repo_root: Path | None = None,
 ) -> Path:
     repo_root = repository_root(repo_root)
+    lock_root = canonical_path(lock_root)
     candidate = load_json(candidate_path)
     _validate_lease(candidate, repo_root)
-    lease_path = lock_root / f"{candidate['lease_id']}.lease.json"
+    lease_path = ensure_within(
+        lock_root / f"{candidate['lease_id']}.lease.json",
+        lock_root,
+        label="replacement lease file",
+    )
 
     with admission_mutex(lock_root):
         current = load_json(lease_path)
+        if current.get("lease_id") != candidate["lease_id"]:
+            raise RuntimeError("Lease file is not bound to the requested lease_id")
         if current.get("state") != "ACTIVE":
             raise RuntimeError("Only an ACTIVE lease can be replaced")
         if current.get("generation") != expected_generation:
@@ -163,13 +209,29 @@ def replace(
             raise ValueError("Use release() to close a lease")
         if not candidate.get("decision_ref"):
             raise ValueError("Lease replacement requires decision_ref")
+        decision = verify_decision(
+            repo_root,
+            ensure_within(
+                repo_root / candidate["decision_ref"],
+                repo_root,
+                label="lease decision_ref",
+            ),
+            run_id=candidate["run_id"],
+            action="lease:expand",
+            lease_id=candidate["lease_id"],
+            lease_generation=candidate["generation"],
+        )
+        if not decision["ok"]:
+            raise ValueError(
+                "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
+            )
         overlaps = find_overlaps(candidate, lock_root, excluding=candidate["lease_id"])
         if overlaps:
             detail = "; ".join(
                 f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps
             )
             raise RuntimeError(f"Repository-set overlap detected: {detail}")
-        write_json_atomic(lease_path, candidate)
+        write_json_atomic(lease_path, candidate, trusted_root=lock_root)
     return lease_path
 
 
@@ -180,9 +242,17 @@ def release(
     expected_generation: int,
     outcome_ref: str,
 ) -> Path:
-    lease_path = lock_root / f"{lease_id}.lease.json"
+    lease_id = require_safe_id(lease_id, "lease_id")
+    lock_root = canonical_path(lock_root)
+    lease_path = ensure_within(
+        lock_root / f"{lease_id}.lease.json",
+        lock_root,
+        label="released lease file",
+    )
     with admission_mutex(lock_root):
         current = load_json(lease_path)
+        if current.get("lease_id") != lease_id:
+            raise RuntimeError("Lease file is not bound to the requested lease_id")
         if current.get("state") != "ACTIVE":
             raise RuntimeError("Lease is not ACTIVE")
         if current.get("generation") != expected_generation:
@@ -195,11 +265,21 @@ def release(
         current["released_utc"] = utc_now()
         current["outcome_ref"] = outcome_ref
         current["active_writer_repository"] = None
-        write_json_atomic(lease_path, current)
+        write_json_atomic(lease_path, current, trusted_root=lock_root)
     return lease_path
 
 
 def list_leases(lock_root: Path) -> list[dict[str, Any]]:
     if not lock_root.exists():
         return []
-    return [load_json(path) for path in sorted(lock_root.glob("*.lease.json"))]
+    lock_root = canonical_path(lock_root, must_exist=True)
+    leases: list[dict[str, Any]] = []
+    for path in sorted(lock_root.glob("*.lease.json")):
+        safe_path = ensure_within(
+            path,
+            lock_root,
+            label="listed lease file",
+            must_exist=True,
+        )
+        leases.append(load_json(safe_path))
+    return leases

@@ -8,7 +8,6 @@ from jsonschema import Draft202012Validator
 
 from .util import load_json
 
-
 SCHEMA_BY_VERSION = {
     "coord.request.v1": "request.v1.schema.json",
     "coord.plan.v1": "plan.v1.schema.json",
@@ -18,7 +17,12 @@ SCHEMA_BY_VERSION = {
     "coord.outcome.v1": "outcome.v1.schema.json",
     "coord.decision.v1": "decision.v1.schema.json",
     "coord.audit.v1": "audit.v1.schema.json",
+    "coord.audit.v2": "audit.v2.schema.json",
+    "coord.decision.v2": "decision.v2.schema.json",
+    "coord.status.v2": "status.v2.schema.json",
+    "coord.bundle-seal.v1": "bundle-seal.v1.schema.json",
     "coord.repo-set-lease.v1": "repo-set-lease.v1.schema.json",
+    "coord.template-provenance.v1": "template-provenance.v1.schema.json",
 }
 
 
@@ -46,7 +50,10 @@ def validate_document(document: dict[str, Any], repo_root: Path) -> list[str]:
     validator = Draft202012Validator(schema)
     return [
         f"{'.'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}"
-        for error in sorted(validator.iter_errors(document), key=lambda item: list(item.absolute_path))
+        for error in sorted(
+            validator.iter_errors(document),
+            key=lambda item: list(item.absolute_path),
+        )
     ]
 
 

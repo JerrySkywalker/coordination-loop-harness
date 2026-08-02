@@ -53,13 +53,21 @@ The included attach tooling renders prompts but never launches Codex.
   a new lease file is created with create-new semantics.
 - **Moving write token:** a multi-repository run can reserve an authorized set while
   allowing only one repository to be the active writer at a time.
-- **Owner-gated scope changes:** lease replacement requires a durable decision reference
-  and optimistic generation checking.
+- **Verified owner gates:** privileged status transitions and lease operations require
+  schema-valid, accepted decisions with explicit actions, generation, Markdown hash
+  binding, and a complete contiguous predecessor chain back to sequence 1.
 - **Durable vs. local evidence:** requests, plans, decisions, status, outcomes, and audit
   summaries are tracked; raw logs, credentials, and local leases stay outside Git.
 - **Exact-head handoff:** goals carry exact base SHAs and validation commands.
 - **No hidden process launch:** `Prepare-ImplementerAttach.ps1` only writes a prompt file.
 - **Production deny by default:** source-code authority does not imply infrastructure apply.
+- **Sealed Run Bundles:** deterministic SHA-256 inventories reject missing, extra, changed,
+  unhashed, non-UTF-8, symlinked, or reparse-point-escaped durable objects.
+- **Exact repository binding:** offline Git checks cover canonical root, origin, branch,
+  refs, detached worktrees, tracked dirt, and untracked files; live `gh` checks additionally
+  bind the returned repository identity and GitHub host.
+- **Safe template evolution:** ownership-aware bootstrap is idempotent and `sync-plan`
+  distinguishes untouched template-managed files from derived edits without applying changes.
 
 ## Repository layout
 
@@ -136,6 +144,32 @@ clh validate --root .
 python -m unittest discover -s tests -v
 ```
 
+### 6. Seal and verify the Run Bundle
+
+```bash
+clh bundle seal --root . --run-id EXAMPLE-001
+clh bundle verify --root . --run-id EXAMPLE-001
+```
+
+### 7. Export a local Bound Goal
+
+```bash
+clh bind-goal \
+  --root . \
+  --run-id EXAMPLE-001 \
+  --repository-root ../product \
+  --state-root .coord-local \
+  --stable-branch main \
+  --expected-input-sha 0123456789012345678901234567890123456789
+```
+
+This writes `bound-goal.md`, `coordinator-manifest.json`, and
+`implementer-attach.md` below the local state root. It never starts Codex.
+
+See the [command reference](docs/command-reference.md), [v0.1 migration
+guide](docs/migration-v0.1-to-v0.2.md), and [Wave7 capability
+matrix](docs/wave7-parity-matrix.md).
+
 ## Lease expansion for phased multi-repository work
 
 Do not acquire every repository merely because a future phase may need it. Start with the
@@ -174,7 +208,7 @@ the template. See [Template repository guide](docs/template-repository.md).
 
 ## Project status
 
-`v0.1.0` is an auditable minimum viable harness. It intentionally does not:
+`v0.2.0` is a reviewable release candidate. It intentionally does not:
 
 - start or control Codex processes;
 - call ChatGPT Web automatically;
@@ -182,6 +216,8 @@ the template. See [Template repository guide](docs/template-repository.md).
 - apply production infrastructure;
 - replace GitHub branch protection or code review;
 - provide distributed locking across untrusted hosts without a shared lock root.
+- automatically apply template synchronization plans.
+- claim that process independence is proven when it is only self-declared.
 
 ## License
 

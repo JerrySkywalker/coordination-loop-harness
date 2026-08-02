@@ -9,7 +9,6 @@ from pathlib import Path
 from coordination_loop_harness.audit import validate_repository
 from coordination_loop_harness.runs import init_run, render_attach
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

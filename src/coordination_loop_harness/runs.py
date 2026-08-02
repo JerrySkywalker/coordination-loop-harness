@@ -84,9 +84,10 @@ def init_run(
         "production_mutation": False,
     }
     status: dict[str, Any] = {
-        "schema_version": "coord.status.v1",
+        "schema_version": "coord.status.v2",
         "run_id": run_id,
         "revision": 1,
+        "generation": 1,
         "state": "PLANNED",
         "checkpoint": "RUN_MATERIALIZED",
         "active_phase": None,
@@ -94,6 +95,7 @@ def init_run(
         "lease_id": None,
         "product_writes_started": False,
         "updated_utc": created_utc,
+        "history": [],
     }
     outcome: dict[str, Any] = {
         "schema_version": "coord.outcome.v1",
@@ -119,14 +121,18 @@ def init_run(
     targets["request_md"].write_text(
         _markdown_heading(
             f"{run_id} — Request",
-            f"**Title:** {title}\n\n**Requested by:** {requested_by}\n\n## Objective\n\n{objective}\n",
+            (
+                f"**Title:** {title}\n\n**Requested by:** {requested_by}"
+                f"\n\n## Objective\n\n{objective}\n"
+            ),
         ),
         encoding="utf-8",
     )
     targets["plan_md"].write_text(
         _markdown_heading(
             f"{run_id} — Plan",
-            "## Planned repository set\n\n" + "\n".join(f"- `{repo}`" for repo in repositories)
+            "## Planned repository set\n\n"
+            + "\n".join(f"- `{repo}`" for repo in repositories)
             + "\n\n## Phases\n\n- P1: initial implementation; one write repository at a time.\n",
         ),
         encoding="utf-8",

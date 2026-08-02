@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Derived repository template provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "template_repository",
+    "template_version",
+    "template_exact_sha",
+    "project_name",
+    "project_slug",
+    "ownership_manifest_sha256",
+    "managed_files"
+  ],
+  "properties": {
+    "schema_version": {"const": "coord.template-provenance.v1"},
+    "template_repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*/[A-Za-z0-9_.-]+$"
+    },
+    "template_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "template_exact_sha": {"$ref": "#/$defs/sha"},
+    "project_name": {"type": "string", "minLength": 1},
+    "project_slug": {"$ref": "#/$defs/id"},
+    "ownership_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "managed_files": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/managedFile"},
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "managedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

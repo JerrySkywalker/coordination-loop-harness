@@ -53,12 +53,18 @@ Prompt 文件，不会启动 Codex。
   create-new 语义写入。
 - **移动式写令牌：**多仓父运行可以预先规划仓库集合，但任何时刻只允许一个
   `active_writer_repository`。
-- **Owner Gate 扩张：**lease 变更必须携带耐久 decision 引用，并检查 generation。
+- **可验证 Owner Gate：**特权状态迁移和 lease 操作必须使用通过 Schema、动作、
+  sequence、generation 与 Markdown 哈希绑定校验的已接受 Decision。
 - **耐久状态与本地证据分离：**请求、计划、决策、状态、结果与审计摘要可提交；
   原始日志、凭据与本地 lease 不进入 Git。
 - **exact-head 交接：**Goal 记录 exact base SHA 与验证命令。
 - **禁止隐藏启动：**`Prepare-ImplementerAttach.ps1` 只写 Prompt，不启动进程。
 - **生产默认拒绝：**拥有源码写权限不等于拥有基础设施 Apply 权限。
+- **密封 Run Bundle：**确定性 SHA-256 清单会拒绝缺失、额外、变更或未哈希的耐久对象。
+- **精确仓库绑定：**离线 Git 校验覆盖 canonical root、origin、branch、ref、detached
+  worktree、tracked dirt 与 untracked 文件；在线 `gh` 校验为可选项。
+- **安全模板演进：**按 ownership 分类的 bootstrap 可重复执行，`sync-plan` 只报告、
+  不应用变更。
 
 ## 目录结构
 
@@ -135,6 +141,31 @@ clh validate --root .
 python -m unittest discover -s tests -v
 ```
 
+### 6. 密封并校验 Run Bundle
+
+```bash
+clh bundle seal --root . --run-id EXAMPLE-001
+clh bundle verify --root . --run-id EXAMPLE-001
+```
+
+### 7. 导出本地 Bound Goal
+
+```bash
+clh bind-goal \
+  --root . \
+  --run-id EXAMPLE-001 \
+  --repository-root ../product \
+  --state-root .coord-local \
+  --stable-branch main \
+  --expected-input-sha 0123456789012345678901234567890123456789
+```
+
+它会在本地状态根下写入 `bound-goal.md`、`coordinator-manifest.json` 和
+`implementer-attach.md`，绝不会启动 Codex。
+
+详见[命令参考](docs/command-reference.md)、[v0.1 迁移说明](docs/migration-v0.1-to-v0.2.md)
+与 [Wave7 能力矩阵](docs/wave7-parity-matrix.md)。
+
 ## 多仓分阶段开发时如何扩张 lease
 
 不要因为未来阶段可能需要某仓库，就在项目开始时一次性锁住所有仓库。应从最小活动集合开始，
@@ -171,7 +202,7 @@ Run Manifest 都记录 `template_version` 和 `template_exact_sha`，而不是�
 
 ## 当前状态
 
-`v0.1.0` 是可审计的最小版本。它有意不做以下事情：
+`v0.2.0` 是可审阅的发布候选。它有意不做以下事情：
 
 - 自动启动或控制 Codex；
 - 自动操作 ChatGPT 网页端；
@@ -179,6 +210,8 @@ Run Manifest 都记录 `template_version` 和 `template_exact_sha`，而不是�
 - Apply 生产基础设施；
 - 替代 GitHub 分支保护与 Code Review；
 - 在没有共享 lock root 的不可信多主机之间提供分布式锁。
+- 自动应用模板同步计划；
+- 在只有自我声明时声称已证明进程独立性。
 
 ## 许可证
 

@@ -1,0 +1,35 @@
+{
+  "schema_version": "coord.template-ownership.v1",
+  "files": [
+    {
+      "path": "README.md",
+      "source": "templates/derived/README.md.tmpl",
+      "classification": "render-once"
+    },
+    {
+      "path": "README.zh-CN.md",
+      "source": "templates/derived/README.zh-CN.md.tmpl",
+      "classification": "render-once"
+    },
+    {
+      "path": "AGENTS.md",
+      "source": "templates/derived/AGENTS.md.tmpl",
+      "classification": "render-once"
+    },
+    {
+      "path": "coord-project.json",
+      "source": "templates/derived/coord-project.json.tmpl",
+      "classification": "derived-owned"
+    },
+    {
+      "path": ".coord-template-lock.json",
+      "source": "templates/derived/template-lock.json.tmpl",
+      "classification": "template-managed"
+    },
+    {
+      "path": "templates/ownership-manifest.json",
+      "source": "templates/ownership-manifest.json",
+      "classification": "template-source-only"
+    }
+  ]
+}

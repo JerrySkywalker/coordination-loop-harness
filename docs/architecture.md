@@ -13,3 +13,16 @@ boundary, with a durable owner decision and optimistic generation checking.
 
 The harness does not broker model API calls. It is deliberately a repository protocol plus a small
 local CLI.
+
+## v0.2 integrity layers
+
+1. Strict schemas reject undeclared durable-object properties.
+2. Companion Markdown and JSON are bound by SHA-256.
+3. A sealed Run Bundle inventories every durable run object and fails on drift.
+4. Bound Goal export combines the durable goal with read-only Git evidence and optional lease data.
+5. Privileged transitions consume verified owner decisions, not reference strings.
+6. Local leases and raw evidence remain outside the sealed durable plane.
+
+Template bootstrap is a separate derived-repository plane. Ownership classes determine whether a
+file is template-managed, rendered once, derived-owned, or template-source-only. Synchronization
+stops at a non-mutating plan.
