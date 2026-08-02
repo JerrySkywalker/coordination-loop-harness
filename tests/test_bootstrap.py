@@ -390,11 +390,12 @@ class BootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("git rev-parse HEAD", workflow)
-        self.assertIn("git rev-parse 'HEAD^{tree}'", workflow)
         self.assertIn("git remote get-url origin", workflow)
-        self.assertIn("gh api --hostname github.com", workflow)
-        self.assertIn("template_repository.full_name", workflow)
+        self.assertNotIn("github.event.repository.template_repository", workflow)
+        self.assertIn("repository template-provenance", workflow)
         self.assertIn('--target-repository "$TARGET_REPOSITORY"', workflow)
+        self.assertIn("existing_bootstrap_pr_count", workflow)
+        self.assertIn("An open bootstrap pull request already exists", workflow)
 
     def test_workflow_contract(self):
         workflow = (ROOT / ".github" / "workflows" / "bootstrap-derived-repository.yml").read_text(

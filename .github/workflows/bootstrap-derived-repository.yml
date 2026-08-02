@@ -40,7 +40,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
-          EVENT_TEMPLATE_REPOSITORY: ${{ github.event.repository.template_repository.full_name }}
           PROJECT_NAME: ${{ inputs.project_name }}
           PROJECT_SLUG: ${{ inputs.project_slug }}
           TEMPLATE_REPOSITORY: ${{ inputs.template_repository }}
@@ -54,7 +53,6 @@ jobs:
             exit 1
           fi
           checkout_head="$(git rev-parse HEAD)"
-          checkout_tree="$(git rev-parse 'HEAD^{tree}')"
           checkout_origin="$(git remote get-url origin)"
           if [ "$checkout_head" != "$GITHUB_SHA" ]; then
             echo "Checked-out HEAD does not match GITHUB_SHA" >&2
@@ -65,18 +63,17 @@ jobs:
             --expected-origin "$TARGET_REPOSITORY" \
             --expected-sha "$checkout_head" \
             --no-offline
-          if [ -z "$EVENT_TEMPLATE_REPOSITORY" ] ||
-             [ "${EVENT_TEMPLATE_REPOSITORY,,}" != "${TEMPLATE_REPOSITORY,,}" ]; then
-            echo "Template repository claim does not match GitHub derivation metadata" >&2
-            exit 1
-          fi
-          template_tree="$(
-            gh api --hostname github.com \
-              "repos/$TEMPLATE_REPOSITORY/git/commits/$TEMPLATE_EXACT_SHA" \
-              --jq .tree.sha
+          clh repository template-provenance \
+            --repository-root . \
+            --target-repository "$TARGET_REPOSITORY" \
+            --template-repository "$TEMPLATE_REPOSITORY" \
+            --template-exact-sha "$TEMPLATE_EXACT_SHA"
+          existing_bootstrap_pr_count="$(
+            gh api "repos/$TARGET_REPOSITORY/pulls?state=open&per_page=100" \
+              --jq '[.[] | select(.head.ref | startswith("bootstrap/"))] | length'
           )"
-          if [ "$checkout_tree" != "$template_tree" ]; then
-            echo "Derived checkout tree does not match the claimed template commit" >&2
+          if [ "$existing_bootstrap_pr_count" != "0" ]; then
+            echo "An open bootstrap pull request already exists; refusing duplicate bootstrap" >&2
             exit 1
           fi
           if [ -z "$checkout_origin" ]; then

@@ -202,7 +202,8 @@ Run Manifest 都记录 `template_version` 和 `template_exact_sha`，而不是�
 
 ## 当前状态
 
-`v0.2.0` 是可审阅的发布候选。它有意不做以下事情：
+`v0.2.1` 是可审阅的补丁发布；它修复 GitHub Template provenance 验证，并且不移动不可变的
+v0.2.0 tag。它有意不做以下事情：
 
 - 自动启动或控制 Codex；
 - 自动操作 ChatGPT 网页端；

@@ -13,7 +13,7 @@ from .bootstrap import bootstrap_repository, sync_plan
 from .bundles import seal_bundle, verify_bundle
 from .decisions import verify_decision
 from .leases import acquire, find_overlaps, list_leases, release, replace
-from .repository import verify_repository
+from .repository import verify_repository, verify_template_repository_provenance
 from .runs import init_run, render_attach
 from .status import transition_status
 from .util import load_json
@@ -107,6 +107,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     repository_verify.add_argument("--offline", action=argparse.BooleanOptionalAction, default=True)
     repository_verify.add_argument("--gh-command", default="gh")
+    repository_provenance = repository_sub.add_parser(
+        "template-provenance",
+        help="Verify derived-repository Template provenance using GitHub REST metadata",
+    )
+    repository_provenance.add_argument("--repository-root", type=_path, required=True)
+    repository_provenance.add_argument("--target-repository", required=True)
+    repository_provenance.add_argument("--template-repository", required=True)
+    repository_provenance.add_argument("--template-exact-sha", required=True)
+    repository_provenance.add_argument("--gh-command", default="gh")
 
     decision = sub.add_parser("decision", help="Verify durable owner authorization")
     decision_sub = decision.add_subparsers(dest="decision_command", required=True)
@@ -260,17 +269,26 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "repository":
-            result = verify_repository(
-                args.repository_root,
-                expected_origin=args.expected_origin,
-                stable_branch=args.stable_branch,
-                expected_sha=args.expected_sha,
-                local_ref=args.local_ref,
-                cached_origin_ref=args.cached_origin_ref,
-                require_detached=args.require_detached,
-                offline=args.offline,
-                gh_command=args.gh_command,
-            )
+            if args.repository_command == "verify":
+                result = verify_repository(
+                    args.repository_root,
+                    expected_origin=args.expected_origin,
+                    stable_branch=args.stable_branch,
+                    expected_sha=args.expected_sha,
+                    local_ref=args.local_ref,
+                    cached_origin_ref=args.cached_origin_ref,
+                    require_detached=args.require_detached,
+                    offline=args.offline,
+                    gh_command=args.gh_command,
+                )
+            else:
+                result = verify_template_repository_provenance(
+                    args.repository_root,
+                    target_repository=args.target_repository,
+                    template_repository=args.template_repository,
+                    template_exact_sha=args.template_exact_sha,
+                    gh_command=args.gh_command,
+                )
             _print_json(result)
             return 0 if result["ok"] else 1
 
