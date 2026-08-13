@@ -100,7 +100,63 @@ def find_overlaps(
     return overlaps
 
 
-def _validate_lease(data: dict[str, Any], repo_root: Path) -> None:
+def _validate_coordination_self_write(
+    data: dict[str, Any], repositories: list[dict[str, Any]], coordination: str
+) -> None:
+    """Validate the narrow finalization exception for coordination repositories.
+
+    A coordination repository is normally only the durable mailbox.  A phase
+    replacement may make it the sole writer to record a final outcome, provided
+    the candidate remains exactly bound and cannot reserve another write surface.
+    """
+
+    coordination_entries = [
+        item for item in repositories if canonical_repo(item["repository"]) == coordination
+    ]
+    if len(coordination_entries) != 1:
+        raise ValueError(
+            "Coordination self-write requires exactly one coordination repository entry"
+        )
+    coordination_entry = coordination_entries[0]
+    if coordination_entry.get("mode") != "WRITE":
+        raise ValueError("Coordination self-write requires the coordination repository to be WRITE")
+    if (
+        data.get("active_writer_repository") is None
+        or canonical_repo(data["active_writer_repository"]) != coordination
+    ):
+        raise ValueError(
+            "Coordination self-write requires active_writer_repository to match "
+            "coordination_repository"
+        )
+    writers = [
+        canonical_repo(item["repository"]) for item in repositories if item.get("mode") == "WRITE"
+    ]
+    if writers != [coordination]:
+        raise ValueError(
+            "Coordination self-write requires the coordination repository to be the sole WRITE "
+            "repository"
+        )
+    if any(
+        canonical_repo(item["repository"]) != coordination and item.get("mode") != "READ"
+        for item in repositories
+    ):
+        raise ValueError("Coordination self-write requires every other repository to be READ")
+    for binding in ("canonical_path", "worktree_root", "exact_sha"):
+        value = coordination_entry.get(binding)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"Coordination self-write requires exact coordination repository binding: {binding}"
+            )
+    if data.get("state") != "ACTIVE":
+        raise ValueError("Coordination self-write requires state=ACTIVE")
+
+
+def _validate_lease(
+    data: dict[str, Any],
+    repo_root: Path,
+    *,
+    allow_coordination_self_write: bool = False,
+) -> None:
     errors = validate_document(data, repo_root)
     if errors:
         raise ValueError("Lease validation failed:\n- " + "\n- ".join(errors))
@@ -111,7 +167,9 @@ def _validate_lease(data: dict[str, Any], repo_root: Path) -> None:
         raise ValueError("Lease repositories must be unique")
     coordination = canonical_repo(data["coordination_repository"])
     if coordination in identities:
-        raise ValueError("The coordination repository cannot also be a product repository")
+        if not allow_coordination_self_write:
+            raise ValueError("The coordination repository cannot also be a product repository")
+        _validate_coordination_self_write(data, repositories, coordination)
 
     writers = [
         canonical_repo(item["repository"]) for item in repositories if item.get("mode") == "WRITE"
@@ -185,7 +243,7 @@ def replace(
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
     candidate = load_json(candidate_path)
-    _validate_lease(candidate, repo_root)
+    _validate_lease(candidate, repo_root, allow_coordination_self_write=True)
     lease_path = ensure_within(
         lock_root / f"{candidate['lease_id']}.lease.json",
         lock_root,
