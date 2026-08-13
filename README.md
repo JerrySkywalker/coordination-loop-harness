@@ -7,7 +7,8 @@ Run, Goal, Decision, Lease, bundle, CLI, or derived-repository behavior:
 
 - `coord.harness-model.v1` defines the generic A/B/P/L and V/E/F/G axes,
   budget-ledger/no-borrow semantics, progress semantics, and protected-state
-  invariants.
+  invariants. The canonical generic Model instance is
+  [`models/coord.harness-model.v1.json`](models/coord.harness-model.v1.json).
 - `coord.profile-pack.v1` binds concrete Baseline/Profile values to that Model.
   Product-specific profile packs remain outside CLH.
 

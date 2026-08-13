@@ -14,36 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def model() -> dict[str, object]:
-    return {
-        "schema_version": "coord.harness-model.v1",
-        "model_id": "coord.harness-model.v1",
-        "axes": {
-            "A": ["A0", "A1", "A2", "A3", "A4", "A5", "OWNER"],
-            "B": ["B0", "B1", "B2", "B3", "B4"],
-            "P": ["P_INIT", "P0", "P1", "P2", "P3"],
-            "V": ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7"],
-            "E": ["E0", "E1", "E2", "E3", "E4", "E5", "E6"],
-            "F": ["F0", "F1", "F2", "F3", "F4", "F5"],
-            "G": ["G0", "G1", "G2", "G3", "G4"],
-            "L": ["L0", "L1", "L2", "L3", "L4", "L5"],
-        },
-        "proof_vector_axes": ["V", "E", "F", "G"],
-        "budget_ledger": {
-            "tuple_fields": ["window_cap", "maximum_renewals", "lifetime_cap"],
-            "no_borrow": True,
-            "replenishment_requires_lifetime_cap": True,
-        },
-        "progress_semantics": {
-            "initial_states": ["P_INIT"],
-            "advancing_states": ["P0", "P1", "P2", "P3"],
-            "identical_failure_is_not_progress": True,
-        },
-        "protected_state_semantics": {
-            "authority_never_expands_automatically": True,
-            "protected_retry_requires_verified_rollback": True,
-            "owner_actions_require_owner_decision": True,
-        },
-    }
+    return json.loads((ROOT / "models" / "coord.harness-model.v1.json").read_text(encoding="utf-8"))
 
 
 def profile_pack() -> dict[str, object]:
@@ -81,6 +52,11 @@ class HarnessModelTests(unittest.TestCase):
         self.assertEqual([], validate_profile_pack(pack, generic_model, ROOT))
         self.assertEqual([], validate_document(generic_model, ROOT))
         self.assertEqual([], validate_document(pack, ROOT))
+
+    def test_checked_in_generic_model_is_the_canonical_contract(self) -> None:
+        generic_model = model()
+        self.assertEqual("coord.harness-model.v1", generic_model["model_id"])
+        self.assertEqual([], validate_harness_model(generic_model, ROOT))
 
     def test_profile_pack_rejects_values_outside_model(self) -> None:
         generic_model = model()
