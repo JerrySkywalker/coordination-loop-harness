@@ -1,5 +1,23 @@
 # Coordination Loop Harness
 
+## v0.3 generic Harness contracts
+
+Version 0.3 adds two portable, versioned contracts without changing the v0.2.1
+Run, Goal, Decision, Lease, bundle, CLI, or derived-repository behavior:
+
+- `coord.harness-model.v1` defines the generic A/B/P/L and V/E/F/G axes,
+  budget-ledger/no-borrow semantics, progress semantics, and protected-state
+  invariants. The canonical generic Model instance is
+  [`models/coord.harness-model.v1.json`](models/coord.harness-model.v1.json).
+- `coord.profile-pack.v1` binds concrete Baseline/Profile values to that Model.
+  Product-specific profile packs remain outside CLH.
+
+Validate a Model and optional Profile Pack with:
+
+```powershell
+clh harness validate --model harness-model.json --profile-pack profile-pack.json
+```
+
 [简体中文](README.zh-CN.md)
 
 > An unofficial, open-source repository template for durable, human-supervised

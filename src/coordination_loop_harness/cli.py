@@ -12,6 +12,7 @@ from .blockers import evaluate_blocker
 from .bootstrap import bootstrap_repository, sync_plan
 from .bundles import seal_bundle, verify_bundle
 from .decisions import verify_decision
+from .harness_model import validate_harness_model, validate_profile_pack
 from .leases import acquire, find_overlaps, list_leases, release, replace
 from .repository import verify_repository, verify_template_repository_provenance
 from .runs import init_run, render_attach
@@ -44,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     validate = sub.add_parser("validate", help="Validate one JSON document or the repository")
     validate.add_argument("--root", type=_path, default=Path.cwd())
     validate.add_argument("--file", type=_path)
+
+    harness = sub.add_parser(
+        "harness", help="Validate generic Harness Model and Profile Pack contracts"
+    )
+    harness_sub = harness.add_subparsers(dest="harness_command", required=True)
+    harness_validate = harness_sub.add_parser("validate")
+    harness_validate.add_argument("--root", type=_path, default=Path.cwd())
+    harness_validate.add_argument("--model", type=_path, required=True)
+    harness_validate.add_argument("--profile-pack", type=_path)
 
     lease = sub.add_parser("lease", help="Manage local repository-set leases")
     lease_sub = lease.add_subparsers(dest="lease_command", required=True)
@@ -228,6 +238,15 @@ def main(argv: list[str] | None = None) -> int:
             findings = (
                 validate_json_file(args.file, root) if args.file else validate_repository(root)
             )
+            _print_json({"ok": not findings, "findings": findings})
+            return 0 if not findings else 1
+
+        if args.command == "harness":
+            root = repository_root(args.root)
+            model = load_json(args.model)
+            findings = validate_harness_model(model, root)
+            if args.profile_pack is not None:
+                findings.extend(validate_profile_pack(load_json(args.profile_pack), model, root))
             _print_json({"ok": not findings, "findings": findings})
             return 0 if not findings else 1
 

@@ -29,6 +29,7 @@ class CliTests(unittest.TestCase):
             ["audit", "verify", "--help"],
             ["bootstrap-repository", "--help"],
             ["template", "sync-plan", "--help"],
+            ["harness", "validate", "--help"],
         ]
         for arguments in commands:
             with self.subTest(arguments=arguments):
