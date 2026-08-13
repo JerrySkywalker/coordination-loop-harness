@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- Added generic Harness Model and Profile Pack validation contracts while
+  preserving v0.2.1 repository and CLI compatibility.
+
 ## 0.2.1 - 2026-08-02
 
 - Fixed derived-repository provenance validation to use canonical GitHub REST template metadata
