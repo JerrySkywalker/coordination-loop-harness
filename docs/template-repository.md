@@ -1,32 +1,22 @@
 # Template repository guide
 
-1. Publish this repository as public.
-2. In GitHub Settings, enable **Template repository**.
-3. Create derived coordination repositories from the default branch only.
-4. Replace `template_repository`, `template_version`, and `template_exact_sha` in each run manifest.
-5. Do not merge ordinary branches from this template into derived repositories: template-derived
-   repositories have unrelated histories.
-6. Upgrade shared schemas/scripts through a reviewed synchronization pull request, never by silently
-   rewriting active run files.
+> **V5 status:** historical CLH template guidance retained for migration context. CLT is the current bootstrap/distribution product. Remote GitHub repository creation is `DENY_BY_DEFAULT` and is not an ordinary CLH/CLT/agent capability.
 
-`Publish-PublicTemplate.ps1` can create and mark the repository when run from an authenticated local
-GitHub CLI session.
+## Current v5 rule
 
-The v0.2.1 `bootstrap-derived-repository.yml` workflow is for a repository that already exists from
-the template. It uses the repository-scoped `GITHUB_TOKEN`, requires `contents: write` and
-`pull-requests: write`, validates dispatch inputs, verifies canonical Template provenance through
-GitHub REST metadata, binds the derived checkout tree to the claimed template commit tree on
-`github.com`, creates a dedicated branch, validates the result, and opens a Draft pull request.
-The dispatch event snapshot is not treated as canonical repository provenance, and user input alone
-cannot establish provenance. API failure, absent or mismatched REST provenance, and tree mismatch
-all fail closed. A second dispatch also fails closed while an earlier bootstrap Draft pull request
-is open. Dispatch values enter shell steps only through quoted environment variables. The workflow
-never creates the top-level repository or writes directly to main.
+- CLH does not create remote repositories.
+- CLT owns future starter/bootstrap/distribution behavior.
+- Source-write, push, or PR authority does not imply remote repository create/fork/archive/delete/transfer authority.
+- Subagents never receive remote repository lifecycle authority.
+- Tests use local temporary repositories/worktrees by default.
+- `scripts/Publish-PublicTemplate.ps1` is disabled/fail-closed and is retained only so legacy callers cannot silently create remote resources.
 
-The v0.2.0 release used the `workflow_dispatch` repository snapshot for Template provenance. That
-snapshot can omit `template_repository`, so affected consumers should upgrade to v0.2.1; the
-immutable v0.2.0 tag is not moved.
+If a future product/release genuinely requires a new remote repository, that lifecycle operation must be separately Owner-controlled with explicit durable authority outside ordinary CLH/CLT bootstrap execution.
 
-`.coord-template.json` records the exact template identity and the rendered hashes of
-template-managed files. A later non-mutating sync plan reports `safe-update` only when the current
-derived file still matches its recorded hash; a derived edit remains a `conflict`.
+## Historical v0.2 behavior
+
+Earlier CLH releases used GitHub Template repositories and a repository-scoped `bootstrap-derived-repository.yml` workflow. That workflow acted only inside an already-existing repository, validated template provenance, created a dedicated branch, and opened a Draft PR. It did not create the top-level repository.
+
+The immutable v0.2/v0.2.1 release history and provenance semantics remain historical evidence. They are not v5 remote-lifecycle authority and do not make CLH the long-term distribution owner.
+
+`.coord-template.json` and related historical template locks continue to describe old template provenance where needed for migration/history. V5 CLH/CLT separation is governed by `docs/V5_PRODUCT_DIRECTION.md` and the Program Roadmap v5.

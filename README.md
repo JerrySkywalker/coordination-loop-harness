@@ -1,16 +1,26 @@
 # Coordination Loop Harness
 
+Coordination Loop Harness (CLH) is the provider-neutral durable coordination kernel of the Coordination Loop product family.
+
+The product topology is fixed as:
+
+- CLH — durable coordination contracts and validation;
+- CLE — authoritative DAG/scheduling/policy control plane;
+- CLF — execution/worker/provider plane;
+- CLT — bootstrap/distribution/starter product.
+
+CLH is not an agent runtime and is not tied to ChatGPT Web, Codex, DeepSeek Harness, OpenCode, Claude Code, Hermes, or any other provider.
+
+See [CLH v5 Product Direction](docs/V5_PRODUCT_DIRECTION.md) for the current architecture boundary.
+
 ## v0.3 generic Harness contracts
 
-Version 0.3 adds two portable, versioned contracts without changing the v0.2.1
-Run, Goal, Decision, Lease, bundle, CLI, or derived-repository behavior:
+Version 0.3 includes portable, versioned generic contracts including:
 
-- `coord.harness-model.v1` defines the generic A/B/P/L and V/E/F/G axes,
-  budget-ledger/no-borrow semantics, progress semantics, and protected-state
-  invariants. The canonical generic Model instance is
-  [`models/coord.harness-model.v1.json`](models/coord.harness-model.v1.json).
-- `coord.profile-pack.v1` binds concrete Baseline/Profile values to that Model.
-  Product-specific profile packs remain outside CLH.
+- `coord.harness-model.v1` for generic authority/budget/proof/progress semantics;
+- `coord.profile-pack.v1` for concrete compatible profile values supplied externally.
+
+Product/operator-specific profile values remain external to CLH.
 
 Validate a Model and optional Profile Pack with:
 
@@ -18,225 +28,88 @@ Validate a Model and optional Profile Pack with:
 clh harness validate --model harness-model.json --profile-pack profile-pack.json
 ```
 
-[简体中文](README.zh-CN.md)
+## What CLH owns
 
-> An unofficial, open-source repository template for durable, human-supervised
-> **ChatGPT Web ↔ Codex CLI** development loops.
+CLH provides durable, machine-verifiable coordination primitives for long-running agent-assisted development, including:
 
-Coordination Loop Harness turns a chat-driven development process into an auditable
-repository workflow. It gives the web architect, local implementers, auditors, and
-human owner a shared durable mailbox without pretending that chat context is a database
-or that multiple coding agents can safely write the same repository at once.
+- Requests/Goals/Decisions/Runs;
+- repository-set/resource leases;
+- exact repository/head/worktree verification;
+- authority and budget envelopes;
+- durable status/outcome/audit objects;
+- sealed Run Bundles;
+- safe handoff/admission tooling;
+- generic Harness Model/Profile Pack formats.
 
-This project is not affiliated with or endorsed by OpenAI.
+Its purpose is to make work identity, authority, scope, provenance, and handoff durable across sessions and agents.
 
-## Why this exists
+## What CLH does not own
 
-Long-running AI-assisted development tends to fail at the coordination boundary:
+CLH does not:
 
-- decisions live only in chat history;
-- a new Codex session cannot prove the exact repository baseline;
-- multiple sessions accidentally write the same checkout or repository;
-- production permission is confused with source-code permission;
-- raw logs and secrets leak into durable artifacts;
-- an attach script quietly starts another agent before the owner reviews the prompt.
+- schedule the authoritative development DAG — that belongs to CLE;
+- start or manage coding-agent provider sessions — that belongs to CLF;
+- own the starter/distribution product — that belongs to CLT;
+- apply production infrastructure by default;
+- imply permission to create remote GitHub repositories;
+- require user-specific governance repositories.
 
-This template makes those boundaries explicit.
+## SkyBridge
 
-## Mental model
-
-```text
-Human owner / ChatGPT Web
-        │ request, architecture, owner decisions
-        ▼
-Coordination repository (this template)
-        │ durable run bundle, exact-SHA contracts, audits
-        ▼
-Local repo-set lease admission
-        │ one active writer per repository set
-        ▼
-Codex CLI implementer / auditor / supervisor
-        │ commits, pull requests, exact-head evidence
-        └────────────── feedback to the owner ──────────────┘
-```
-
-The coordination repository is a **durable mailbox**, not an autonomous agent server.
-The included attach tooling renders prompts but never launches Codex.
+SkyBridge is a frozen external historical precursor, not a CLH dependency or v5 compatibility target. V5 work must not access SkyBridge source/runtime or preserve/migrate SkyBridge interfaces.
 
 ## Core guarantees
 
-- **Repository-set exclusivity:** active leases reject overlapping repositories,
-  worktree roots, local scopes, coordination repositories, or infrastructure scopes.
-- **Atomic admission:** a directory mutex serializes admission and lease expansion;
-  a new lease file is created with create-new semantics.
-- **Moving write token:** a multi-repository run can reserve an authorized set while
-  allowing only one repository to be the active writer at a time.
-- **Verified owner gates:** privileged status transitions and lease operations require
-  schema-valid, accepted decisions with explicit actions, generation, Markdown hash
-  binding, and a complete contiguous predecessor chain back to sequence 1.
-- **Durable vs. local evidence:** requests, plans, decisions, status, outcomes, and audit
-  summaries are tracked; raw logs, credentials, and local leases stay outside Git.
-- **Exact-head handoff:** goals carry exact base SHAs and validation commands.
-- **No hidden process launch:** `Prepare-ImplementerAttach.ps1` only writes a prompt file.
-- **Production deny by default:** source-code authority does not imply infrastructure apply.
-- **Sealed Run Bundles:** deterministic SHA-256 inventories reject missing, extra, changed,
-  unhashed, non-UTF-8, symlinked, or reparse-point-escaped durable objects.
-- **Exact repository binding:** offline Git checks cover canonical root, origin, branch,
-  refs, detached worktrees, tracked dirt, and untracked files; live `gh` checks additionally
-  bind the returned repository identity and GitHub host.
-- **Safe template evolution:** ownership-aware bootstrap is idempotent and `sync-plan`
-  distinguishes untouched template-managed files from derived edits without applying changes.
+- repository/resource admission is explicit and fail-closed;
+- durable authority does not widen automatically;
+- owner-gated operations bind durable decisions/generations where required;
+- exact repository identity/head/handoff is mechanically verified;
+- raw logs, credentials, local leases, and transient evidence stay outside Git;
+- sealed bundles detect missing/extra/changed durable objects;
+- production authority remains disabled by default.
 
 ## Repository layout
 
 ```text
-schemas/        JSON Schemas for requests, plans, goals, decisions, status, outcomes,
-                audits, manifests, and repository-set leases
-templates/      Human-editable starter artifacts for a derived coordination repository
-requests/       Durable owner requests
-plans/          Plans, goals, and manifests
-runs/           Status and outcome records
-decisions/      Owner gates and scope changes
-audits/         Sanitized audit summaries
-handoffs/       Rendered attach prompts
-scripts/        PowerShell wrappers and one-time publishing helper
-src/            `clh` command-line implementation
-tests/          Cross-platform unit tests
-.coord-local/   Suggested local-only state root (ignored)
+schemas/        durable coordination protocol schemas
+models/         generic Harness model artifacts
+templates/      legacy/current scaffold assets pending CLH/CLT v5 separation
+requests/       durable owner requests
+plans/          plans/goals/manifests
+runs/           durable status/outcome records
+decisions/      durable owner gates/scope changes
+audits/         sanitized audit summaries
+handoffs/       rendered handoff artifacts
+scripts/        helper wrappers/tooling
+src/            clh package implementation
+tests/          cross-platform tests
+.coord-local/   local-only transient state (ignored)
 ```
 
-## Quick start
-
-### 1. Install the harness locally
+## Development and validation
 
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
 python -m pip install -e .[dev]
-```
-
-### 2. Create a run bundle
-
-```bash
-clh init-run \
-  --root . \
-  --run-id EXAMPLE-001 \
-  --title "Example repository change" \
-  --requested-by "owner" \
-  --objective "Implement and audit one bounded change." \
-  --repository example/product
-```
-
-### 3. Prepare a candidate lease
-
-Copy `templates/repo-set-lease.example.json`, replace placeholders, then run:
-
-```bash
-clh lease inspect \
-  --candidate .coord-local/EXAMPLE-001.candidate.json \
-  --lock-root .coord-local/locks
-
-clh lease acquire \
-  --candidate .coord-local/EXAMPLE-001.candidate.json \
-  --lock-root .coord-local/locks \
-  --repo-root .
-```
-
-### 4. Render the Implementer attach prompt
-
-```bash
-clh render-attach \
-  --root . \
-  --run-id EXAMPLE-001 \
-  --lease .coord-local/locks/EXAMPLE-001.lease.json
-```
-
-Review `handoffs/EXAMPLE-001/implementer-attach.md`, then paste it into the intended
-Codex CLI session yourself.
-
-### 5. Validate the repository
-
-```bash
 clh validate --root .
 python -m unittest discover -s tests -v
 ```
 
-### 6. Seal and verify the Run Bundle
+See the [command reference](docs/command-reference.md), [security model](docs/security-model.md), and [design rationale](docs/design-rationale.md) for the existing implementation.
 
-```bash
-clh bundle seal --root . --run-id EXAMPLE-001
-clh bundle verify --root . --run-id EXAMPLE-001
-```
+## V5 direction
 
-### 7. Export a local Bound Goal
+V5 keeps the proven durable coordination kernel while:
 
-```bash
-clh bind-goal \
-  --root . \
-  --run-id EXAMPLE-001 \
-  --repository-root ../product \
-  --state-root .coord-local \
-  --stable-branch main \
-  --expected-input-sha 0123456789012345678901234567890123456789
-```
+- evolving resource/lease semantics for safe per-repository writers;
+- preserving exact identity admission;
+- moving active starter/distribution ownership toward CLT;
+- removing provider-specific product positioning;
+- keeping all external agent runtimes replaceable below the CLF boundary.
 
-This writes `bound-goal.md`, `coordinator-manifest.json`, and
-`implementer-attach.md` below the local state root. It never starts Codex.
-
-See the [command reference](docs/command-reference.md), [v0.1 migration
-guide](docs/migration-v0.1-to-v0.2.md), and [Wave7 capability
-matrix](docs/wave7-parity-matrix.md).
-
-## Lease expansion for phased multi-repository work
-
-Do not acquire every repository merely because a future phase may need it. Start with the
-smallest active set. At a phase boundary:
-
-1. stop product writes;
-2. merge or freeze the current exact main SHA;
-3. merge an owner decision describing the new scope;
-4. inspect all active leases;
-5. create a candidate with `generation + 1` and `decision_ref`;
-6. run `clh lease replace` with `--expected-generation`;
-7. resume with exactly one `active_writer_repository`.
-
-This allows a product train to run beside an unrelated repository-health train without
-weakening single-writer guarantees.
-
-## Security boundary
-
-Never commit:
-
-- API keys, tokens, cookies, credentials, private keys, or pairing links;
-- full production logs or request/response bodies;
-- generated runtime configuration containing secrets;
-- local lease files or admission mutexes;
-- copied product repositories or worktrees.
-
-The built-in scanner is a narrow guardrail, not a replacement for a dedicated secret
-scanner. See [Security model](docs/security-model.md) and [Design rationale](docs/design-rationale.md).
-
-## GitHub template repository
-
-GitHub template-derived repositories copy the template structure and files into a new,
-unrelated history. The template therefore records `template_version` and
-`template_exact_sha` in each run manifest instead of assuming ordinary Git merges from
-the template. See [Template repository guide](docs/template-repository.md).
-
-## Project status
-
-`v0.2.1` is a reviewable patch release. It repairs GitHub Template provenance validation without
-moving the immutable v0.2.0 tag. It intentionally does not:
-
-- start or control Codex processes;
-- call ChatGPT Web automatically;
-- manage cloud credentials;
-- apply production infrastructure;
-- replace GitHub branch protection or code review;
-- provide distributed locking across untrusted hosts without a shared lock root.
-- automatically apply template synchronization plans.
-- claim that process independence is proven when it is only self-declared.
+Remote repository creation remains outside ordinary CLH source/test authority, and subagents never receive remote repository lifecycle authority.
 
 ## License
 

@@ -1,21 +1,22 @@
 # 模板仓库指南
 
-1. 将本仓库发布为 Public；
-2. 在 GitHub Settings 中启用 **Template repository**；
-3. 派生协调仓库时默认只复制主分支；
-4. 在每个 Run Manifest 中替换 `template_repository`、`template_version` 和
-   `template_exact_sha`；
-5. 不要从模板仓库向派生仓库普通 merge：二者历史不相关；
-6. 公共 Schema/Script 升级必须通过独立同步 PR，不能静默改写活动 Run 文件。
+> **V5 状态：**本文件保留为 CLH 早期 Template 设计的迁移/历史说明。当前 Bootstrap/Distribution 产品是 CLT。远端 GitHub 仓库创建默认拒绝，不属于普通 CLH/CLT/Agent 能力。
 
-在已登录 GitHub CLI 的本机执行 `Publish-PublicTemplate.ps1`，可以创建公开仓库并将其标记为模板。
+## V5 当前规则
 
-v0.2.1 的 `bootstrap-derived-repository.yml` 仅用于已经由模板创建的仓库。它使用仓库范围
-`GITHUB_TOKEN`，需要 `contents: write` 与 `pull-requests: write`，通过 GitHub REST 元数据
-验证规范 Template 来源，并把派生 checkout tree 绑定到声明的模板 commit tree。workflow
-dispatch 事件快照不被视为规范仓库来源，用户输入本身也不能建立 provenance。API 失败、
-REST 来源为空或不匹配、tree 不匹配都会 fail closed。已有 bootstrap Draft PR 时，第二次
-dispatch 也会在创建新分支前 fail closed。该工作流不会创建顶层仓库，也不会直接写 main。
+- CLH 不负责创建远端仓库；
+- CLT 负责未来 Starter / Bootstrap / Distribution；
+- 源码写入、Push 或 PR 权限不等于远端仓库 Create/Fork/Archive/Delete/Transfer 权限；
+- Subagent 永远没有远端仓库生命周期权限；
+- 测试默认使用本地临时仓库/Worktree；
+- `scripts/Publish-PublicTemplate.ps1` 已 fail-closed 禁用，仅用于阻止历史调用者静默创建远端资源。
 
-v0.2.0 使用 `workflow_dispatch` 仓库快照验证 Template 来源；该快照可能缺少
-`template_repository`。受影响的使用者应升级到 v0.2.1；不可变的 v0.2.0 tag 不会移动。
+如果未来发布流程确实需要创建新的远端仓库，必须由普通 CLH/CLT Bootstrap 之外的 Owner-controlled 生命周期流程，以显式耐久 Authority 单独授权。
+
+## 历史 v0.2 行为
+
+早期 CLH 使用 GitHub Template repository，并提供 repository-scoped `bootstrap-derived-repository.yml`。该 Workflow 只在**已经存在**的仓库内验证 Template provenance、创建独立分支并打开 Draft PR；它本身不会创建顶层 GitHub 仓库。
+
+不可变的 v0.2/v0.2.1 发布历史和 provenance 语义继续作为历史证据保留，但不构成 V5 远端仓库生命周期授权，也不意味着 CLH 仍是长期 Distribution Owner。
+
+当前 CLH/CLT 分工以 `docs/V5_PRODUCT_DIRECTION.md` 和 Program Roadmap v5 为准。
