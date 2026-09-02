@@ -15,4 +15,14 @@
 - Tests use temporary local repositories/directories by default. Remote GitHub repository creation is not authorized by ordinary source/test work.
 - Subagents never receive remote repository lifecycle authority.
 - Production mutation remains disabled by default.
+
+## Frontend-independent development
+
+- No external AI frontend, including Orca or an equivalent AI IDE, desktop-agent, web-agent, or orchestration UI, is a CLH or Coordination Loop product member or dependency.
+- CLH development must not invoke an external frontend CLI/UI/daemon, delegate review or subagent lifecycle to it, or create/use frontend-owned workspaces or terminals.
+- CLH development worktrees must remain owner/Coordination-Loop controlled; exactly one intentional writer may own this repository at a time.
+- Read-only review/research may use fresh direct process-isolated read-only Codex processes or an explicitly approved Coordination Loop execution boundary.
+- Future execution agents belong behind the capability-bounded CLF provider boundary. A frontend does not become a CLF provider merely because it can launch agents.
+- These rules do not restrict unrelated Owner use of external frontend tools outside Coordination Loop work.
+
 - Read `docs/V5_PRODUCT_DIRECTION.md` before v5 implementation work.
