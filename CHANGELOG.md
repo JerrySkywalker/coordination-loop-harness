@@ -9,7 +9,17 @@
   refusal, Git-native admission guards, stable repository snapshots,
   crash-safe create-new publication, and independently authorized terminal
   candidates with hashed outcomes and distinct stale-recovery authority. The
-  canonical JSON boundary now rejects duplicate keys and non-finite numbers.
+  canonical JSON boundary now rejects duplicate keys, every floating-point
+  value, and integers outside the interoperable safe range.
+- Closed Goal 07 ownership aliases with suffix-free v2 repository identities,
+  bounded portable path syntax plus native mutation admission, strict canonical
+  decision scopes, exact filename/declared-id handling, explicit terminal
+  repository roots, and default-deny unknown or malformed lease schemas.
+- Bound writer admission to one Git common directory and stable filesystem
+  identities while guarding common/per-worktree configuration, worktree admin,
+  packed refs, HEAD, index, and the active branch through publication. Legacy
+  v1 coordination self-write behavior remains compatible under the same live
+  writer checks.
 - Removed the active CLH derived-repository workflow and froze the legacy local
   renderer as a compatibility-only surface; CLT now owns active bootstrap and
   distribution behavior.

@@ -27,9 +27,10 @@ canonical candidate SHA-256 and use a sequence equal to that generation.
 The generic decision schema deliberately remains compatible with historical v1
 lease decisions, so schema validity alone is not v2 lease authority. A v2
 operation always performs the cross-document digest comparison.
-Canonical v2 JSON rejects duplicate object keys and non-finite numbers. It is
-encoded as UTF-8 with sorted object keys, non-ASCII characters emitted
-directly, compact separators, and exactly one trailing LF.
+Canonical v2 JSON rejects duplicate object keys, every floating-point value,
+and integers outside `[-(2^53-1), 2^53-1]`. It is encoded as UTF-8 with sorted
+object keys, non-ASCII characters emitted directly, compact separators, and
+exactly one trailing LF.
 
 ## Coordination self-write finalization
 
@@ -39,8 +40,10 @@ durable final outcome.  That narrow candidate must be `ACTIVE`, bind the exact
 coordination repository path, worktree, and SHA, match
 `active_writer_repository`, keep every other repository `READ`, and pass the
 normal owner-decision, generation, overlap, local-scope, and infrastructure
-checks. It must use v2; legacy v1 metadata cannot request this exception.
-`acquire` never permits it.
+checks. New claims use v2. Historical v1 replacement behavior remains
+compatible, but CLH now applies the same live Git/common-directory,
+clean-worktree, filesystem-identity, and publication-guard checks to that
+narrow legacy path. `acquire` never permits the exception.
 
 This is a cooperative lock. Every writer must use the same shared lock root and respect it. It is
 not a consensus system for mutually untrusted machines.
@@ -51,9 +54,16 @@ New Coordination Loop per-repository writers use `coord.repo-set-lease.v2`.
 V2 preserves exclusive mutable resources while allowing READ/READ repository,
 path, branch, and shared Program observations. Any access pair containing WRITE
 conflicts. Writer admission verifies the exact origin, branch, HEAD, clean
-worktree, and full resource decision scope. Final admission holds the Git index,
-HEAD, config, and active-branch locks across a stable snapshot recheck, overlap
-scan, and atomic lease publish. All serialized paths are absolute, and
+worktree, shared Git common directory, filesystem identities, and full resource
+decision scope. Scope entries must be canonical and unique; a strict superset
+is allowed, but its extra entries do not reserve lease resources. Final
+admission holds the Git index, HEAD, common and per-worktree config,
+worktree-admin, packed-ref, and active-branch locks, and verifies their owned
+identities and markers across a stable snapshot recheck, overlap scan, and
+atomic lease publish. All serialized paths use the bounded v2 drive-or-POSIX
+absolute grammar. UNC/device namespaces, double-root spellings, and POSIX
+backslashes are denied; mutation additionally requires the native host dialect.
+Portable read-only observation is not mutation admission. In addition,
 replacement preserves the lease identity/version while directly chaining its
 accepted decision. Duplicate lease ids conflict independently of resource
 identity.
@@ -65,6 +75,8 @@ uses `lease:release`; an already expired lease requires the distinct
 `lease:release-stale` authority. Invalid terminal evidence is
 `UNKNOWN_FAIL_CLOSED` and remains blocking for parsed overlapping resources. An
 opaque record also preserves the exact lease id encoded by its canonical
-filename, without becoming a machine-wide lock. See
+filename, without becoming a machine-wide lock. V2 terminal verification needs
+an explicit repository root and never inherits the current directory. Unknown
+schema versions cannot fall through to legacy replacement or release. See
 [`REPOSITORY_OWNERSHIP_V2.md`](REPOSITORY_OWNERSHIP_V2.md) for the complete
 Minimum-V1 contract. V1 leases retain the conservative behavior above.

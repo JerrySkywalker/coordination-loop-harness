@@ -2,7 +2,9 @@
   "schema_version": "repo-set-lease-v2-negative-semantics.v1",
   "bases": {
     "active": "compatibility/repo-set-lease.v2/positive/candidate-digest.json#/candidate",
-    "terminal": "compatibility/repo-set-lease.v2/positive/terminal-release.json#/terminal_candidate"
+    "terminal": "compatibility/repo-set-lease.v2/positive/terminal-release.json#/terminal_candidate",
+    "release_decision": "compatibility/repo-set-lease.v2/positive/terminal-release.json#/release_decision",
+    "active_decision": "compatibility/repo-set-lease.v2/positive/terminal-release.json#/active_decision"
   },
   "document_cases": [
     {
@@ -212,6 +214,121 @@
       "expected_layer": "SCHEMA_REJECT"
     },
     {
+      "case": "active-generation-outside-safe-integer-range",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/generation",
+          "value": 9007199254740992
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-generation-integral-float",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/generation",
+          "value": 1.0
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "active-unc-worktree",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "\\\\server\\share\\writer"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-device-worktree",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "\\\\?\\V:\\src\\writer"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-double-slash-posix-worktree",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "//tmp/writer"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-posix-worktree-with-backslash",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "/tmp/writer\\alias"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-repository-clone-suffix",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/repository",
+          "value": "example/clh.GIT"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-repository-transport-form",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/repository",
+          "value": "git@GITHUB.COM:example/clh"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "terminal-duplicate-canonical-repository",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/repositories/-",
+          "value": {
+            "repository": "EXAMPLE/CLH",
+            "mode": "READ",
+            "canonical_path": "V:/src/coordination-loop-harness",
+            "worktree_root": "V:/src/_worktrees/vector/coordination-loop-harness",
+            "branch_ref": "refs/heads/agent/vector",
+            "exact_sha": "1111111111111111111111111111111111111111"
+          }
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
       "case": "active-writer-value-mismatch",
       "base": "active",
       "patch": [
@@ -222,6 +339,81 @@
         }
       ],
       "expected_layer": "SEMANTIC_REJECT"
+    }
+  ],
+  "decision_cases": [
+    {
+      "case": "decision-sequence-outside-safe-integer-range",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sequence",
+          "value": 9007199254740992
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "decision-sequence-integral-float",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sequence",
+          "value": 2.0
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "decision-lease-generation-outside-safe-integer-range",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/lease_generation",
+          "value": 9007199254740992
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "decision-lease-generation-integral-float",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/lease_generation",
+          "value": 2.0
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "decision-predecessor-sequence-integral-float",
+      "base": "active_decision",
+      "target": "PREDECESSOR",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sequence",
+          "value": 1.0
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    }
+  ],
+  "positive_authority_cases": [
+    {
+      "case": "strict-canonical-superset-scope",
+      "extra_scope": "host:extra-read-envelope",
+      "expected": "AUTHORIZATION_ACCEPT"
+    },
+    {
+      "case": "canonical-infrastructure-scope-with-slash",
+      "extra_scope": "runner:host/foo",
+      "expected": "AUTHORIZATION_ACCEPT"
     }
   ],
   "authority_cases": [
@@ -238,6 +430,22 @@
     {
       "case": "lease-decision-null-candidate-digest",
       "digest_state": "NULL",
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "lease-decision-blank-scope-entry",
+      "scope_entry": " ",
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "lease-decision-duplicate-scope-entry",
+      "scope_entry": "example/clh",
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "lease-decision-noncanonical-scope-entry",
+      "replace_scope_entry": "example/clh",
+      "scope_entry": "Example/CLH",
       "expected": "AUTHORIZATION_REJECT"
     },
     {

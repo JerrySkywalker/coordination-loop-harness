@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .util import ensure_within, load_json, require_safe_id, sha256_file
+from .util import ensure_within, is_safe_json_integer, load_json, require_safe_id, sha256_file
 from .validation import validate_document
 
 ACCEPTED_STATUSES = {"ACCEPTED", "MERGED"}
@@ -23,7 +23,8 @@ def _verify_predecessor_chain(
     while True:
         sequence = current.get("sequence")
         previous_ref = current.get("previous_decision_ref")
-        if not isinstance(sequence, int) or sequence < 1:
+        if not is_safe_json_integer(sequence) or sequence < 1:
+            findings.append("decision predecessor sequence must be a positive safe integer")
             break
         if sequence == 1:
             if previous_ref is not None:
@@ -104,13 +105,13 @@ def verify_decision(
         findings.append(f"run_id mismatch: expected {run_id}")
     if decision.get("status") not in ACCEPTED_STATUSES:
         findings.append("decision status must be ACCEPTED or MERGED")
-    if not isinstance(decision.get("sequence"), int) or decision.get("sequence", 0) < 1:
-        findings.append("decision sequence must be a positive integer")
+    if not is_safe_json_integer(decision.get("sequence")) or decision.get("sequence", 0) < 1:
+        findings.append("decision sequence must be a positive safe integer")
     sequence = decision.get("sequence")
     previous_ref = decision.get("previous_decision_ref")
     if sequence == 1 and previous_ref is not None:
         findings.append("sequence 1 decision must not reference a previous decision")
-    if isinstance(sequence, int) and sequence > 1:
+    if is_safe_json_integer(sequence) and sequence > 1:
         findings.extend(
             _verify_predecessor_chain(
                 root,
@@ -121,6 +122,11 @@ def verify_decision(
         )
     if action not in decision.get("authorized_actions", []):
         findings.append(f"decision does not authorize action: {action}")
+    decision_lease_generation = decision.get("lease_generation")
+    if decision_lease_generation is not None and not is_safe_json_integer(
+        decision_lease_generation
+    ):
+        findings.append("non-null lease_generation must be a safe integer")
     if require_candidate_digest:
         decision_lease_id = decision.get("lease_id")
         if not isinstance(decision_lease_id, str):
@@ -130,11 +136,8 @@ def verify_decision(
                 require_safe_id(decision_lease_id, "decision lease_id")
             except ValueError as exc:
                 findings.append(str(exc))
-        if (
-            not isinstance(decision.get("lease_generation"), int)
-            or decision.get("lease_generation", 0) < 1
-        ):
-            findings.append("lease decision requires a positive lease_generation")
+        if not is_safe_json_integer(decision_lease_generation) or decision_lease_generation < 1:
+            findings.append("lease decision requires a positive safe-integer lease_generation")
         digest = decision.get("lease_candidate_sha256")
         if (
             not isinstance(digest, str)

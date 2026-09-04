@@ -3,7 +3,7 @@
   "protocol": "coord.repo-set-lease.v2",
   "canonical_owner": "CLH",
   "canonicalization": "utf-8-json-with-lf-normalization-for-artifact-hashes",
-  "lease_candidate_canonicalization": "utf-8-reject-duplicate-keys-and-non-finite-numbers-sort-keys-compact-ensure-ascii-false-one-trailing-lf",
+  "lease_candidate_canonicalization": "utf-8-reject-duplicate-keys-all-floats-and-integers-outside-json-safe-range-sort-keys-compact-ensure-ascii-false-one-trailing-lf",
   "semantic_validator": "coordination_loop_harness.leases",
   "digest_algorithm": "sha256",
   "artifact_hash_input": "file-bytes-with-crlf-normalized-to-lf",
@@ -13,6 +13,10 @@
   "legacy_policy": "coord.repo-set-lease.v1-semantics-unchanged",
   "draft_v2_migration_policy": "pre-acceptance-v2-records-are-never-auto-upgraded-and-remain-fail-closed-until-reviewed-migration",
   "decision_binding_policy": "generic-decision-v2-schema-is-not-v2-lease-authority; consumers-require-and-compare-the-exact-candidate-digest",
+  "decision_scope_policy": "nonblank-unique-canonical-superset; extra-entries-do-not-reserve-resources",
+  "v2_repository_identity": "lowercase-suffix-free-owner/name",
+  "v2_path_policy": "portable-drive-or-single-posix-root; mutations-require-host-native; unc-device-double-root-and-posix-backslash-denied",
+  "terminal_observation_policy": "explicit-repository-root-no-ambient-cwd",
   "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
   "source_import_prohibited": true,
   "dgf_writer_lease_dependency": false,
@@ -29,11 +33,11 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
-      "sha256": "2c492a8a962a5d75daf933432a37807f66a0cde1ce038ef688b2734278fb6901"
+      "sha256": "530e5045204d2696b00cdb03c2e9884bfc92caba4474995c1f2cc07a3f77cc85"
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
-      "sha256": "0c791a40ae8e4d798cf04030f8a7eaf6ed25b8143117069d75615b9c59373c8e"
+      "sha256": "ac0baee1ea1901d25002681ee988aa6a45485128913e57d7c0c0885392d3c7aa"
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/shared-program-disjoint-writers.json",
@@ -45,43 +49,43 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "ca2bf392fa355743997a672ee547310cc5cee7884ddd62e74ac570e19e361766"
+      "sha256": "52b47289901dcd8b3b2b05bffd5903945cf4b7f87f9404fecd1ac9ea3958ceb4"
     },
     {
       "path": "docs/command-reference.md",
-      "sha256": "89250c399daaa1ac73cc844a68ea69cff479b44e33e5bab8ecc3b25e5c0c9994"
+      "sha256": "5397871e33eaebc82c7cb0f2b3e2676b793f81225e835061ccc4492a4787dc1d"
     },
     {
       "path": "docs/leases.md",
-      "sha256": "8800a1a1cbb5d26e6c0624e98569b61f107c31a05ca797a65173eccac2c7c542"
+      "sha256": "8b53eff29241fe39eea02a5ee12a90907c524c1183b09b08df8a00312f1041a8"
     },
     {
       "path": "schemas/decision.v2.schema.json",
-      "sha256": "31d65e671deeb5773e5421da46d707a35acfde0ef5c8a6b8f72f45d12208053b"
+      "sha256": "09dcf44e01a9a655354e2142a3a232aa5b1da7d718ac024f3a7f09ca66d4f354"
     },
     {
       "path": "schemas/repo-set-lease.v2.schema.json",
-      "sha256": "d119f32071a978bc8b0b588f03dd72c4da9552d72f98353f76b3c950f2211958"
+      "sha256": "1a775bd4393e268ed7f518c88a67b298c067199df762f398cfd9e87a5663d13e"
     },
     {
       "path": "src/coordination_loop_harness/cli.py",
-      "sha256": "006a7a2f8386d52a3f203db93f54b7f25b6f7ebc80679b9542dd7f1cdddc4fc2"
+      "sha256": "2aceda1bf0d2d27deca0d18b4aabd0b47cad62075c622a0b499fb306c5be2457"
     },
     {
       "path": "src/coordination_loop_harness/decisions.py",
-      "sha256": "8feee3fab895387fc74bdfb9f9cd3872f4af0bee466e4a587e278be679252691"
+      "sha256": "f6363e3ca4ae54e4621fa7bd370f98a44491152765192029ba7f062dad6f287f"
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "7f8fc385b86f654115dfa56aa480f9fb4a7ae2f700b8af25a6048072ebc143df"
+      "sha256": "627959c5a72084da4db327b11ed889e0b3997a00b9db793dd2b7077c977f94e5"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
-      "sha256": "12d6f6f3ace971ed0ff1a7e21eac6b9a11fb53801c5ce66ca01141f2261a9a74"
+      "sha256": "2c5510d30c75d4203ff99d29a355f419bc0bd68433e448eb6008a31211a63734"
     },
     {
       "path": "src/coordination_loop_harness/util.py",
-      "sha256": "81437c6f94392bfc1d37c2c2b672d20a68857e65b4a0e49fda9ddb46325c470a"
+      "sha256": "4debbc11ca1c52de173975147aa1cb6068f48c54183c2f4050d70e63ddd25b06"
     },
     {
       "path": "src/coordination_loop_harness/validation.py",
@@ -93,15 +97,15 @@
     },
     {
       "path": "tests/test_cli.py",
-      "sha256": "b414e4b97022a30057a66ae243d996dc1192d6a01df4b22cb5d857502b016923"
+      "sha256": "bc7c8d3b01ba05dabaedf9dfd81d03949e94d5536b92a4aaba8b292bcc766ab5"
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "8df0f6f0f77152371d9fac398ce49ab9ff73eeacf757900287a034e72958f051"
+      "sha256": "fc4578315e243d0375884caba5c854c21b5fe32353fb1c1fafe332733a67ade0"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "0fd0587ef64874379597e0e9fb3f7b9ce1a504906cc31316d6b033743d2adccc"
+      "sha256": "4d1f79cb29bc1e95ac5d486325a7ed5c0ae4d72bf08696c61507aacf8b19fb6d"
     },
     {
       "path": "tests/test_repository.py",
@@ -109,7 +113,7 @@
     },
     {
       "path": "tests/test_util.py",
-      "sha256": "c9c8ce298b6c9efcad41ceacaf16c0fed26af92255824b78f4463faf590c54d5"
+      "sha256": "69c664b9705d29ca5a6ec8a224a2a6c21510adfaed4019ce32ca3f2d75fa490a"
     }
   ],
   "positive_cases": [
@@ -143,16 +147,37 @@
     "extra-property",
     "branch-ref-parent-component",
     "read-branch-ref-parent-component",
+    "active-generation-outside-safe-integer-range",
+    "active-generation-integral-float",
+    "active-unc-worktree",
+    "active-device-worktree",
+    "active-double-slash-posix-worktree",
+    "active-posix-worktree-with-backslash",
+    "active-repository-clone-suffix",
+    "active-repository-transport-form",
+    "terminal-duplicate-canonical-repository",
     "active-writer-value-mismatch",
+    "decision-sequence-outside-safe-integer-range",
+    "decision-sequence-integral-float",
+    "decision-lease-generation-outside-safe-integer-range",
+    "decision-lease-generation-integral-float",
+    "decision-predecessor-sequence-integral-float",
     "candidate-digest-mismatch",
     "lease-decision-missing-candidate-digest",
     "lease-decision-null-candidate-digest",
+    "lease-decision-blank-scope-entry",
+    "lease-decision-duplicate-scope-entry",
+    "lease-decision-noncanonical-scope-entry",
     "release-decision-wrong-lease-id",
     "release-decision-wrong-generation",
     "normal-action-cannot-release-stale",
     "release-decision-cannot-mix-terminal-actions",
     "release-must-directly-follow-active-decision"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:b06b6085e2db85d691d6d8f9fa1b9bc1749b5881b1fd82bc3f27bf5a1b44a078",
-  "artifact_set_sha256": "b06b6085e2db85d691d6d8f9fa1b9bc1749b5881b1fd82bc3f27bf5a1b44a078"
+  "positive_authority_cases": [
+    "strict-canonical-superset-scope",
+    "canonical-infrastructure-scope-with-slash"
+  ],
+  "producer_artifact_id": "repo-set-lease.v2+sha256:dad431e112103917f0f66407c1d11a61fd49c77d21f52e724da31a5b69fdfe37",
+  "artifact_set_sha256": "dad431e112103917f0f66407c1d11a61fd49c77d21f52e724da31a5b69fdfe37"
 }

@@ -59,6 +59,31 @@ class CliTests(unittest.TestCase):
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
 
+    def test_read_only_v2_lease_commands_do_not_inherit_ambient_repo_root(self):
+        parser = cli.build_parser()
+        inspect = parser.parse_args(
+            [
+                "lease",
+                "inspect",
+                "--candidate",
+                "candidate.json",
+                "--lock-root",
+                "locks",
+            ]
+        )
+        observation = parser.parse_args(
+            [
+                "lease",
+                "observe",
+                "--lease-id",
+                "LEASE-1",
+                "--lock-root",
+                "locks",
+            ]
+        )
+        self.assertIsNone(inspect.repo_root)
+        self.assertIsNone(observation.repo_root)
+
     def test_release_rejects_ambiguous_candidate_and_legacy_outcome(self):
         result = subprocess.run(
             [

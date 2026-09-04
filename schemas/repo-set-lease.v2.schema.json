@@ -43,7 +43,8 @@
     },
     "generation": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "maximum": 9007199254740991
     },
     "created_utc": {
       "$ref": "#/$defs/timestamp"
@@ -328,7 +329,8 @@
         "properties": {
           "generation": {
             "type": "integer",
-            "minimum": 2
+            "minimum": 2,
+            "maximum": 9007199254740991
           },
           "active_writer_repository": {
             "type": "null"
@@ -372,11 +374,11 @@
     "absolutePath": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?:[A-Za-z]:[\\\\/]|\\\\\\\\|/)"
+      "pattern": "^(?:[A-Za-z]:[\\\\/][^\\u0000]*|/(?!/)[^\\\\\\u0000]*)$"
     },
     "repositoryName": {
       "type": "string",
-      "pattern": "^[^/\\s]+/[^/\\s]+$",
+      "pattern": "^(?!.*\\.[Gg][Ii][Tt]$)[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$",
       "minLength": 3
     },
     "id": {

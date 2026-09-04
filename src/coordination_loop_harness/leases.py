@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
+import stat
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,21 +13,25 @@ from pathlib import Path
 from typing import Any
 
 from .decisions import verify_decision
-from .repository import verify_repository
+from .repository import _repository_identity_snapshot, verify_repository
 from .util import (
     admission_mutex,
     canonical_json_bytes,
     canonical_path,
     canonical_repo,
+    canonical_repo_v2,
     canonical_scope,
     ensure_within,
     is_absolute_scope,
+    is_native_absolute_scope,
+    is_safe_json_integer,
+    is_v2_absolute_scope,
     load_json,
-    paths_overlap,
     require_safe_id,
     sha256_bytes,
     sha256_file,
     utc_now,
+    windows_device_scope_alias,
     write_json_atomic,
 )
 from .validation import repository_root, validate_document
@@ -39,6 +45,8 @@ class Overlap:
 
 
 _V2_SCHEMA = "coord.repo-set-lease.v2"
+_V1_SCHEMA = "coord.repo-set-lease.v1"
+_SUPPORTED_LEASE_SCHEMAS = {_V1_SCHEMA, _V2_SCHEMA}
 
 
 def lease_candidate_sha256(data: dict[str, Any]) -> str:
@@ -97,22 +105,15 @@ def _validate_outcome_binding(data: dict[str, Any], repo_root: Path) -> None:
 
 def _terminal_record_is_valid(data: dict[str, Any], repo_root: Path | None = None) -> bool:
     schema_version = data.get("schema_version")
-    if schema_version == "coord.repo-set-lease.v1":
-        return (
-            data.get("state") == "RELEASED"
-            and data.get("active_writer_repository") is None
-            and isinstance(data.get("released_utc"), str)
-            and bool(data.get("released_utc"))
-            and isinstance(data.get("outcome_ref"), str)
-            and bool(data.get("outcome_ref"))
-        )
+    if schema_version == _V1_SCHEMA:
+        return _legacy_terminal_record_is_valid(data)
     if repo_root is None:
         return False
     try:
         if validate_document(data, repo_root):
             return False
         if schema_version == _V2_SCHEMA:
-            _validate_v2_lifecycle(data)
+            _validate_lease(data, repo_root, allow_coordination_self_write=True)
             if data.get("state") != "RELEASED":
                 return False
             _validate_terminal_release(data, repo_root)
@@ -122,43 +123,170 @@ def _terminal_record_is_valid(data: dict[str, Any], repo_root: Path | None = Non
     return False
 
 
+def _legacy_record_is_valid(data: dict[str, Any]) -> bool:
+    """Validate historical v1 structure without ambient schema authority."""
+
+    required = {
+        "schema_version",
+        "lease_id",
+        "run_id",
+        "state",
+        "generation",
+        "created_utc",
+        "owner",
+        "coordination_repository",
+        "repositories",
+        "local_scopes",
+        "infrastructure_scopes",
+        "active_writer_repository",
+        "decision_ref",
+    }
+    allowed = required | {"released_utc", "outcome_ref"}
+    if not required.issubset(data) or not set(data).issubset(allowed):
+        return False
+    try:
+        require_safe_id(data["lease_id"], "lease_id")
+        require_safe_id(data["run_id"], "run_id")
+    except (TypeError, ValueError):
+        return False
+    if (
+        data.get("state") not in {"ACTIVE", "RELEASED"}
+        or type(data.get("generation")) is not int
+        or data["generation"] < 1
+        or not isinstance(data.get("owner"), str)
+        or not data["owner"]
+        or not isinstance(data.get("created_utc"), str)
+        or re.match(r"^\d{4}-\d{2}-\d{2}T", data["created_utc"]) is None
+        or not _repository_name_is_structural(data.get("coordination_repository"))
+        or not isinstance(data.get("decision_ref"), (str, type(None)))
+        or not isinstance(data.get("released_utc"), (str, type(None)))
+        or not isinstance(data.get("outcome_ref"), (str, type(None)))
+    ):
+        return False
+    repositories = data.get("repositories")
+    if not isinstance(repositories, list) or not repositories:
+        return False
+    identities: list[str] = []
+    writers: list[str] = []
+    allowed_repository_keys = {
+        "repository",
+        "mode",
+        "canonical_path",
+        "worktree_root",
+        "exact_sha",
+    }
+    for item in repositories:
+        if (
+            not isinstance(item, dict)
+            or not {"repository", "mode"}.issubset(item)
+            or not set(item).issubset(allowed_repository_keys)
+            or not _repository_name_is_structural(item.get("repository"))
+            or item.get("mode") not in {"READ", "WRITE"}
+        ):
+            return False
+        for field in ("canonical_path", "worktree_root"):
+            if item.get(field) is not None and not isinstance(item.get(field), str):
+                return False
+        exact_sha = item.get("exact_sha")
+        if exact_sha is not None and (
+            not isinstance(exact_sha, str) or re.fullmatch(r"[0-9a-f]{40}", exact_sha) is None
+        ):
+            return False
+        identity = canonical_repo(item["repository"])
+        identities.append(identity)
+        if item["mode"] == "WRITE":
+            writers.append(identity)
+    if len(identities) != len(set(identities)):
+        return False
+    coordination = canonical_repo(data["coordination_repository"])
+    active_writer = data.get("active_writer_repository")
+    if data["state"] == "ACTIVE":
+        if not isinstance(data.get("decision_ref"), str) or not data["decision_ref"]:
+            return False
+        if active_writer is None:
+            if writers:
+                return False
+        elif (
+            not isinstance(active_writer, str)
+            or len(writers) != 1
+            or canonical_repo(active_writer) != writers[0]
+        ):
+            return False
+        if coordination in identities and writers != [coordination]:
+            return False
+    elif active_writer is not None:
+        return False
+    for field in ("local_scopes", "infrastructure_scopes"):
+        values = data.get(field)
+        if (
+            not isinstance(values, list)
+            or any(not isinstance(value, str) for value in values)
+            or len(values) != len(set(values))
+        ):
+            return False
+    return True
+
+
+def _legacy_terminal_record_is_valid(data: dict[str, Any]) -> bool:
+    return (
+        _legacy_record_is_valid(data)
+        and data.get("state") == "RELEASED"
+        and isinstance(data.get("released_utc"), str)
+        and bool(data["released_utc"])
+        and isinstance(data.get("outcome_ref"), str)
+        and bool(data["outcome_ref"])
+    )
+
+
+def _repository_name_is_structural(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[^/\s]+/[^/\s]+", value) is not None
+
+
 def _active_leases(
     lock_root: Path,
     *,
     excluding_path: Path | None = None,
     repo_root: Path | None = None,
-) -> list[tuple[Path, dict[str, Any]]]:
+) -> list[tuple[Path, dict[str, Any], str]]:
     lock_root = canonical_path(lock_root)
     validation_root = repository_root(repo_root) if repo_root is not None else None
     excluded = canonical_path(excluding_path) if excluding_path is not None else None
-    result: list[tuple[Path, dict[str, Any]]] = []
-    for path in sorted(lock_root.glob("*.lease.json")):
-        path = ensure_within(path, lock_root, label="active lease file", must_exist=True)
+    result: list[tuple[Path, dict[str, Any], str]] = []
+    for discovered_path in sorted(lock_root.glob("*.lease.json")):
+        inferred_id = discovered_path.name.removesuffix(".lease.json")
+        try:
+            path = ensure_within(
+                discovered_path,
+                lock_root,
+                label="active lease file",
+                must_exist=True,
+            )
+        except (OSError, TypeError, ValueError):
+            result.append((discovered_path, {"state": "UNKNOWN_OPAQUE"}, inferred_id))
+            continue
         if excluded is not None and path == excluded:
             continue
         try:
+            if not path.is_file():
+                raise ValueError("Lease record is not a regular file")
             data = load_json(path)
-        except ValueError:
+        except (OSError, TypeError, ValueError):
             # The canonical filename still supplies one exact identity even
             # when a torn record has no parseable resource set. Preserve that
             # lease-id conflict without inventing a machine-wide lock.
-            inferred_id = path.name.removesuffix(".lease.json")
-            result.append((path, {"lease_id": inferred_id, "state": "UNKNOWN_OPAQUE"}))
+            result.append((path, {"state": "UNKNOWN_OPAQUE"}, inferred_id))
             continue
-        if data.get("state") == "RELEASED" and data.get("schema_version") == (
-            "coord.repo-set-lease.v1"
-        ):
-            if _terminal_record_is_valid(data):
+        if data.get("state") == "RELEASED" and data.get("schema_version") == _V1_SCHEMA:
+            if data.get("lease_id") == inferred_id and _terminal_record_is_valid(data):
                 continue
         if data.get("state") == "RELEASED" and data.get("schema_version") == _V2_SCHEMA:
-            if validation_root is None:
-                try:
-                    validation_root = repository_root()
-                except ValueError:
-                    validation_root = None
-            if validation_root is not None and _terminal_record_is_valid(data, validation_root):
+            if (
+                data.get("lease_id") == inferred_id
+                and validation_root is not None
+                and _terminal_record_is_valid(data, validation_root)
+            ):
                 continue
-        result.append((path, data))
+        result.append((path, data, inferred_id))
     return result
 
 
@@ -167,35 +295,51 @@ def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
     repositories: dict[str, str] = {}
     paths: dict[str, str] = {}
     branches: dict[str, str] = {}
-    for item in lease.get("repositories", []):
+    raw_repositories = lease.get("repositories")
+    repository_items = raw_repositories if isinstance(raw_repositories, list) else []
+    for item in repository_items:
         if not isinstance(item, dict) or not isinstance(item.get("repository"), str):
             continue
-        repository = canonical_repo(item["repository"])
+        repository_identities = _repository_overlap_identities(item["repository"])
         mode = item.get("mode") if shared_access else "WRITE"
         if mode not in {"READ", "WRITE"}:
             mode = "WRITE"
-        _merge_access(repositories, repository, mode)
+        for identity in repository_identities:
+            _merge_access(repositories, identity, mode)
         for key in ("canonical_path", "worktree_root"):
             if isinstance(item.get(key), str) and item[key].strip():
-                _merge_access(paths, canonical_scope(item[key]), mode)
+                for identity in _scope_overlap_identities(item[key]):
+                    _merge_access(paths, identity, mode)
         branch_ref = item.get("branch_ref")
         if isinstance(branch_ref, str) and branch_ref.strip():
-            _merge_access(branches, f"{repository}:{branch_ref.casefold()}", mode)
-    for item in lease.get("local_scopes", []):
-        if item:
-            _merge_access(paths, canonical_scope(item), "WRITE")
+            for identity in repository_identities:
+                _merge_access(branches, f"{identity}:{branch_ref.casefold()}", mode)
+    raw_local_scopes = lease.get("local_scopes")
+    local_scopes = raw_local_scopes if isinstance(raw_local_scopes, list) else []
+    for item in local_scopes:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        for identity in _scope_overlap_identities(item):
+            _merge_access(paths, identity, "WRITE")
+    raw_infrastructure = lease.get("infrastructure_scopes")
+    infrastructure_items = raw_infrastructure if isinstance(raw_infrastructure, list) else []
     infrastructure = {
-        str(item).strip().casefold(): "WRITE"
-        for item in lease.get("infrastructure_scopes", [])
-        if str(item).strip()
+        item.strip().casefold(): "WRITE"
+        for item in infrastructure_items
+        if isinstance(item, str) and item.strip()
     }
     coordination: dict[str, str] = {}
-    if lease.get("coordination_repository"):
-        coordination_repository = canonical_repo(lease["coordination_repository"])
-        coordination_mode = repositories.get(coordination_repository, "READ")
-        if not shared_access:
-            coordination_mode = "WRITE"
-        coordination[coordination_repository] = coordination_mode
+    if (
+        isinstance(lease.get("coordination_repository"), str)
+        and lease["coordination_repository"].strip()
+    ):
+        for coordination_repository in _repository_overlap_identities(
+            lease["coordination_repository"]
+        ):
+            coordination_mode = repositories.get(coordination_repository, "READ")
+            if not shared_access:
+                coordination_mode = "WRITE"
+            coordination[coordination_repository] = coordination_mode
     return {
         "repository": repositories,
         "path": paths,
@@ -206,7 +350,40 @@ def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
 
 
 def _paths_overlap(left: str, right: str) -> bool:
-    return paths_overlap(left, right)
+    if left == right:
+        return True
+    left_prefix = left if left.endswith("/") else left + "/"
+    right_prefix = right if right.endswith("/") else right + "/"
+    return left.startswith(right_prefix) or right.startswith(left_prefix)
+
+
+def _repository_overlap_identities(value: str) -> tuple[str, ...]:
+    return tuple(sorted({canonical_repo(value), canonical_repo_v2(value)}))
+
+
+def _scope_overlap_identities(value: str) -> tuple[str, ...]:
+    """Return conservative host aliases for active-record overlap scanning."""
+
+    identities: set[str] = set()
+    try:
+        identities.add(canonical_scope(value))
+    except (OSError, TypeError, ValueError):
+        pass
+    raw = value.strip()
+    device_alias = windows_device_scope_alias(raw)
+    if device_alias is not None:
+        try:
+            identities.add(canonical_scope(device_alias))
+        except (OSError, TypeError, ValueError):
+            pass
+    try:
+        if os.name == "nt" and raw.startswith("/") and not raw.startswith("//"):
+            identities.add(str(canonical_path(raw)).replace("\\", "/").casefold())
+        elif os.name == "posix" and raw.startswith("//"):
+            identities.add(str(canonical_path(raw)))
+    except (OSError, TypeError, ValueError):
+        pass
+    return tuple(sorted(identity for identity in identities if identity))
 
 
 def find_overlaps(
@@ -229,15 +406,24 @@ def find_overlaps(
         excluding_path = legacy_path
     candidate_sets = _sets(candidate)
     overlaps: list[Overlap] = []
-    for path, other in _active_leases(
+    for _path, other, inferred_id in _active_leases(
         lock_root,
         excluding_path=excluding_path,
         repo_root=repo_root,
     ):
         other_sets = _sets(other)
-        lease_id = str(other.get("lease_id", path.stem))
-        if other.get("lease_id") == candidate.get("lease_id"):
-            overlaps.append(Overlap(lease_id, "lease_id", lease_id))
+        declared_id = other.get("lease_id")
+        if not isinstance(declared_id, str):
+            declared_id = None
+        else:
+            try:
+                declared_id = require_safe_id(declared_id, "existing lease_id")
+            except ValueError:
+                declared_id = None
+        lease_id = declared_id or inferred_id
+        candidate_id = candidate.get("lease_id")
+        if candidate_id in {inferred_id, declared_id}:
+            overlaps.append(Overlap(lease_id, "lease_id", str(candidate_id)))
         candidate_repositories = _combined_repository_access(candidate_sets)
         other_repositories = _combined_repository_access(other_sets)
         for value in sorted(candidate_repositories.keys() & other_repositories.keys()):
@@ -270,8 +456,11 @@ def _validate_coordination_self_write(
     the candidate remains exactly bound and cannot reserve another write surface.
     """
 
+    canonicalizer = (
+        canonical_repo_v2 if data.get("schema_version") == _V2_SCHEMA else canonical_repo
+    )
     coordination_entries = [
-        item for item in repositories if canonical_repo(item["repository"]) == coordination
+        item for item in repositories if canonicalizer(item["repository"]) == coordination
     ]
     if len(coordination_entries) != 1:
         raise ValueError(
@@ -282,14 +471,14 @@ def _validate_coordination_self_write(
         raise ValueError("Coordination self-write requires the coordination repository to be WRITE")
     if (
         data.get("active_writer_repository") is None
-        or canonical_repo(data["active_writer_repository"]) != coordination
+        or canonicalizer(data["active_writer_repository"]) != coordination
     ):
         raise ValueError(
             "Coordination self-write requires active_writer_repository to match "
             "coordination_repository"
         )
     writers = [
-        canonical_repo(item["repository"]) for item in repositories if item.get("mode") == "WRITE"
+        canonicalizer(item["repository"]) for item in repositories if item.get("mode") == "WRITE"
     ]
     if writers != [coordination]:
         raise ValueError(
@@ -297,7 +486,7 @@ def _validate_coordination_self_write(
             "repository"
         )
     if any(
-        canonical_repo(item["repository"]) != coordination and item.get("mode") != "READ"
+        canonicalizer(item["repository"]) != coordination and item.get("mode") != "READ"
         for item in repositories
     ):
         raise ValueError("Coordination self-write requires every other repository to be READ")
@@ -311,7 +500,28 @@ def _validate_coordination_self_write(
         raise ValueError("Coordination self-write requires state=ACTIVE")
 
 
+def _is_coordination_self_write(data: dict[str, Any]) -> bool:
+    coordination = data.get("coordination_repository")
+    repositories = data.get("repositories")
+    if not isinstance(coordination, str) or not isinstance(repositories, list):
+        return False
+    canonicalizer = (
+        canonical_repo_v2 if data.get("schema_version") == _V2_SCHEMA else canonical_repo
+    )
+    coordination_identity = canonicalizer(coordination)
+    return any(
+        isinstance(item, dict)
+        and isinstance(item.get("repository"), str)
+        and canonicalizer(item["repository"]) == coordination_identity
+        and item.get("mode") == "WRITE"
+        for item in repositories
+    )
+
+
 def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
+    generation = data.get("generation")
+    if not is_safe_json_integer(generation) or generation < 1:
+        raise ValueError("A v2 lease generation must be a positive safe integer")
     created = _timestamp(data.get("created_utc"), label="created_utc")
     heartbeat = _timestamp(data.get("heartbeat_utc"), label="heartbeat_utc")
     expires = _timestamp(data.get("expires_utc"), label="expires_utc")
@@ -330,16 +540,27 @@ def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
         if not isinstance(item, dict) or not isinstance(item.get("repository"), str):
             raise ValueError("A v2 lease contains an invalid repository binding")
         if item.get("mode") == "WRITE":
-            writers.append(canonical_repo(item["repository"]))
+            writers.append(canonical_repo_v2(item["repository"]))
         for key in ("canonical_path", "worktree_root"):
             value = item.get(key)
-            if value is not None and (not isinstance(value, str) or not is_absolute_scope(value)):
+            if value is not None and (
+                not isinstance(value, str) or not is_v2_absolute_scope(value)
+            ):
                 raise ValueError(f"A v2 lease requires an absolute {key}")
+            if value is not None:
+                try:
+                    canonical_scope(value)
+                except (OSError, TypeError, ValueError) as exc:
+                    raise ValueError(f"A v2 lease contains an invalid {key}: {exc}") from exc
     if len(writers) > 1:
         raise ValueError("A v2 lease cannot contain more than one WRITE repository")
     for value in data.get("local_scopes", []):
-        if not isinstance(value, str) or not is_absolute_scope(value):
+        if not isinstance(value, str) or not is_v2_absolute_scope(value):
             raise ValueError("A v2 lease requires absolute local_scopes")
+        try:
+            canonical_scope(value)
+        except (OSError, TypeError, ValueError) as exc:
+            raise ValueError(f"A v2 lease contains an invalid local_scope: {exc}") from exc
     active_writer = data.get("active_writer_repository")
     if state == "ACTIVE":
         terminal_fields = (
@@ -358,7 +579,11 @@ def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
                 raise ValueError(
                     "A lease with no active writer must not contain WRITE repositories"
                 )
-        elif len(writers) != 1 or canonical_repo(active_writer) != writers[0]:
+        elif (
+            not isinstance(active_writer, str)
+            or len(writers) != 1
+            or canonical_repo_v2(active_writer) != writers[0]
+        ):
             raise ValueError(
                 "ACTIVE leases require exactly one WRITE repository matching "
                 "active_writer_repository"
@@ -427,6 +652,28 @@ def _writer_branch_name(branch_ref: str) -> str:
     return branch
 
 
+def _writer_branch_ref(data: dict[str, Any], writer: dict[str, Any]) -> str:
+    branch_ref = writer.get("branch_ref")
+    if isinstance(branch_ref, str):
+        _writer_branch_name(branch_ref)
+        return branch_ref
+    if data.get("schema_version") != _V1_SCHEMA or not _is_coordination_self_write(data):
+        raise ValueError("Writer branch_ref is not a valid local branch reference")
+    writer_root = canonical_path(writer["worktree_root"], must_exist=True)
+    result = subprocess.run(
+        ["git", "--no-optional-locks", "-C", str(writer_root), "symbolic-ref", "--quiet", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+    if result.returncode != 0:
+        raise ValueError("Legacy coordination self-write requires an attached writer branch")
+    branch_ref = result.stdout.strip()
+    _writer_branch_name(branch_ref)
+    return branch_ref
+
+
 def _git_metadata_roots(root: Path) -> tuple[Path, ...]:
     roots: set[Path] = set()
     for arguments in (
@@ -458,7 +705,11 @@ def _path_within_any_root(path: Path, roots: tuple[Path, ...]) -> bool:
 
 
 def _writer_git_lock_paths(data: dict[str, Any]) -> tuple[Path, ...]:
-    if data.get("schema_version") != _V2_SCHEMA or data.get("state") != "ACTIVE":
+    schema_version = data.get("schema_version")
+    needs_binding = schema_version == _V2_SCHEMA or (
+        schema_version == _V1_SCHEMA and _is_coordination_self_write(data)
+    )
+    if not needs_binding or data.get("state") != "ACTIVE":
         return ()
     writers = [item for item in data["repositories"] if item["mode"] == "WRITE"]
     if not writers:
@@ -468,12 +719,14 @@ def _writer_git_lock_paths(data: dict[str, Any]) -> tuple[Path, ...]:
     # Validate the untrusted ref before passing it to `git --git-path`; Git
     # deliberately resolves `..` components and could otherwise point outside
     # its metadata directories.
-    branch = _writer_branch_name(writer["branch_ref"])
+    branch = _writer_branch_name(_writer_branch_ref(data, writer))
     metadata_roots = _git_metadata_roots(writer_root)
     names = (
         "index.lock",
         "HEAD.lock",
         "config.lock",
+        "config.worktree.lock",
+        "locked",
         "packed-refs.lock",
         f"refs/heads/{branch}.lock",
     )
@@ -485,7 +738,9 @@ def _writer_git_lock_paths(data: dict[str, Any]) -> tuple[Path, ...]:
 
 
 @contextmanager
-def _writer_git_admission_guard(data: dict[str, Any]) -> Iterator[frozenset[Path]]:
+def _writer_git_admission_guard(
+    data: dict[str, Any],
+) -> Iterator[dict[Path, tuple[tuple[int, int], str]]]:
     """Hold Git-native mutation guards across final admission publication."""
 
     paths = _writer_git_lock_paths(data)
@@ -516,15 +771,14 @@ def _writer_git_admission_guard(data: dict[str, Any]) -> Iterator[frozenset[Path
             except FileExistsError as exc:
                 raise ValueError(f"writer worktree has an active Git lock: {path}") from exc
             marker = (
-                "coord.repo-set-lease.v2 admission "
-                f"pid={os.getpid()} nonce={secrets.token_hex(16)}\n"
+                f"coord.repo-set-lease admission pid={os.getpid()} nonce={secrets.token_hex(16)}\n"
             )
             stat = os.fstat(handle.fileno())
             handles.append((path, handle, (stat.st_dev, stat.st_ino), marker))
             handle.write(marker)
             handle.flush()
             os.fsync(handle.fileno())
-        yield frozenset(path for path, _, _, _ in handles)
+        yield {path: (identity, marker) for path, _, identity, marker in handles}
     except BaseException as exc:
         body_error = exc
         raise
@@ -579,9 +833,13 @@ def _writer_git_admission_guard(data: dict[str, Any]) -> Iterator[frozenset[Path
 def _validate_writer_binding(
     data: dict[str, Any],
     *,
-    admitted_git_locks: frozenset[Path] = frozenset(),
+    admitted_git_locks: dict[Path, tuple[tuple[int, int], str]] | None = None,
 ) -> None:
-    if data.get("schema_version") != _V2_SCHEMA or data.get("state") != "ACTIVE":
+    schema_version = data.get("schema_version")
+    needs_binding = schema_version == _V2_SCHEMA or (
+        schema_version == _V1_SCHEMA and _is_coordination_self_write(data)
+    )
+    if not needs_binding or data.get("state") != "ACTIVE":
         return
     writers = [item for item in data["repositories"] if item["mode"] == "WRITE"]
     if not writers:
@@ -589,7 +847,14 @@ def _validate_writer_binding(
     writer = writers[0]
     canonical_root = canonical_path(writer["canonical_path"], must_exist=True)
     writer_root = canonical_path(writer["worktree_root"], must_exist=True)
-    branch = _writer_branch_name(writer["branch_ref"])
+    branch = _writer_branch_name(_writer_branch_ref(data, writer))
+    canonical_identity = _repository_identity_snapshot(canonical_root)
+    writer_identity = _repository_identity_snapshot(writer_root)
+    if (
+        canonical_identity["common_dir_path"] != writer_identity["common_dir_path"]
+        or canonical_identity["common_dir_identity"] != writer_identity["common_dir_identity"]
+    ):
+        raise ValueError("Writer worktree must belong to the canonical repository common Git dir")
     canonical_result = verify_repository(
         canonical_root,
         expected_origin=writer["repository"],
@@ -602,7 +867,7 @@ def _validate_writer_binding(
     writer_result = verify_repository(
         writer_root,
         expected_origin=writer["repository"],
-        stable_branch=branch,
+        stable_branch=branch if schema_version == _V2_SCHEMA else None,
         expected_sha=writer["exact_sha"],
         require_detached=False,
         offline=True,
@@ -612,9 +877,33 @@ def _validate_writer_binding(
         findings.append("writer worktree has tracked changes")
     if writer_result["untracked"]:
         findings.append("writer worktree has untracked files")
-    for lock_path in _writer_git_lock_paths(data):
-        if lock_path.exists() and lock_path not in admitted_git_locks:
-            findings.append(f"writer worktree has an active Git lock: {lock_path}")
+    final_canonical_identity = _repository_identity_snapshot(canonical_root)
+    final_writer_identity = _repository_identity_snapshot(writer_root)
+    if canonical_identity != final_canonical_identity:
+        findings.append("canonical repository filesystem identity changed during verification")
+    if writer_identity != final_writer_identity:
+        findings.append("writer worktree filesystem identity changed during verification")
+    expected_git_locks = set(_writer_git_lock_paths(data))
+    if admitted_git_locks is None:
+        for lock_path in expected_git_locks:
+            if lock_path.exists() or lock_path.is_symlink():
+                findings.append(f"writer worktree has an active Git lock: {lock_path}")
+    else:
+        if expected_git_locks != set(admitted_git_locks):
+            findings.append("writer Git metadata lock paths changed during admission")
+        for lock_path, (identity, marker) in admitted_git_locks.items():
+            try:
+                metadata = lock_path.lstat()
+                content = lock_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                findings.append(f"owned Git admission lock is unavailable: {lock_path}: {exc}")
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                findings.append(f"owned Git admission lock is not a regular file: {lock_path}")
+            if (metadata.st_dev, metadata.st_ino) != identity:
+                findings.append(f"owned Git admission lock identity changed: {lock_path}")
+            if content != marker:
+                findings.append(f"owned Git admission lock content changed: {lock_path}")
     if findings:
         raise ValueError("Writer repository binding failed:\n- " + "\n- ".join(findings))
 
@@ -625,7 +914,14 @@ def _validate_decision_scope(data: dict[str, Any], decision: dict[str, Any]) -> 
     supplied = decision.get("scope")
     if not isinstance(supplied, list):
         raise ValueError("Lease decision scope is not a list")
-    scopes = {scope.strip() for scope in supplied if isinstance(scope, str) and scope.strip()}
+    if any(not isinstance(scope, str) or not scope or scope != scope.strip() for scope in supplied):
+        raise ValueError("Lease decision scope entries must be non-empty canonical strings")
+    canonical_entries = [_canonical_decision_scope_entry(scope) for scope in supplied]
+    if supplied != canonical_entries:
+        raise ValueError("Lease decision scope entries must use canonical resource identity")
+    if len(canonical_entries) != len(set(canonical_entries)):
+        raise ValueError("Lease decision scope entries must be unique")
+    scopes = set(canonical_entries)
     resource_sets = _sets(data)
     required = {resource for category in resource_sets.values() for resource in category}
     missing = sorted(required - scopes)
@@ -641,6 +937,35 @@ def _validate_decision_scope(data: dict[str, Any], decision: dict[str, Any]) -> 
             "Lease decision candidate SHA-256 binding mismatch: "
             f"expected {actual_digest}, found {expected_digest}"
         )
+
+
+def _canonical_decision_scope_entry(scope: str) -> str:
+    if is_v2_absolute_scope(scope):
+        return canonical_scope(scope)
+    if is_absolute_scope(scope):
+        raise ValueError("Lease decision path scope is not valid v2 absolute-path syntax")
+    branch_marker = ":refs/heads/"
+    lowered = scope.casefold()
+    marker_index = lowered.find(branch_marker)
+    if marker_index > 0:
+        repository = scope[:marker_index]
+        branch = scope[marker_index + 1 :]
+        return f"{_canonical_v2_repository_scope(repository)}:{branch.casefold()}"
+    if ":" in scope:
+        return scope.casefold()
+    if scope.count("/") == 1:
+        return _canonical_v2_repository_scope(scope)
+    return scope.casefold()
+
+
+def _canonical_v2_repository_scope(value: str) -> str:
+    canonical = canonical_repo_v2(value)
+    if re.fullmatch(
+        r"[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*",
+        canonical,
+    ) is None or canonical.endswith(".git"):
+        raise ValueError("Lease decision repository scope is not canonical owner/name syntax")
+    return canonical
 
 
 def _validate_terminal_release(
@@ -735,28 +1060,39 @@ def _validate_lease(
     repo_root: Path,
     *,
     allow_coordination_self_write: bool = False,
+    require_native_paths: bool = False,
 ) -> None:
     errors = validate_document(data, repo_root)
     if errors:
         raise ValueError("Lease validation failed:\n- " + "\n- ".join(errors))
     if data.get("schema_version") == _V2_SCHEMA:
         _validate_v2_lifecycle(data)
+        if require_native_paths:
+            for item in data["repositories"]:
+                for key in ("canonical_path", "worktree_root"):
+                    value = item.get(key)
+                    if value is not None and not is_native_absolute_scope(value):
+                        raise ValueError(f"A v2 lease requires a host-native absolute {key}")
+            for value in data["local_scopes"]:
+                if not is_native_absolute_scope(value):
+                    raise ValueError("A v2 lease requires host-native absolute local_scopes")
 
     repositories = data.get("repositories", [])
-    identities = [canonical_repo(item["repository"]) for item in repositories]
+    canonicalizer = (
+        canonical_repo_v2 if data.get("schema_version") == _V2_SCHEMA else canonical_repo
+    )
+    identities = [canonicalizer(item["repository"]) for item in repositories]
     if len(identities) != len(set(identities)):
         raise ValueError("Lease repositories must be unique")
-    coordination = canonical_repo(data["coordination_repository"])
+    coordination = canonicalizer(data["coordination_repository"])
     if coordination in identities:
-        if data.get("schema_version") != _V2_SCHEMA:
-            raise ValueError("Coordination self-write requires coord.repo-set-lease.v2")
         if not allow_coordination_self_write:
             raise ValueError("The coordination repository cannot also be a product repository")
         if data.get("state") == "ACTIVE":
             _validate_coordination_self_write(data, repositories, coordination)
         else:
             writers = [
-                canonical_repo(item["repository"])
+                canonicalizer(item["repository"])
                 for item in repositories
                 if item.get("mode") == "WRITE"
             ]
@@ -767,7 +1103,7 @@ def _validate_lease(
 
     if data.get("schema_version") != _V2_SCHEMA:
         writers = [
-            canonical_repo(item["repository"])
+            canonicalizer(item["repository"])
             for item in repositories
             if item.get("mode") == "WRITE"
         ]
@@ -780,7 +1116,7 @@ def _validate_lease(
                     raise ValueError(
                         "A lease with no active writer must not contain WRITE repositories"
                     )
-            elif len(writers) != 1 or canonical_repo(active_writer) != writers[0]:
+            elif len(writers) != 1 or canonicalizer(active_writer) != writers[0]:
                 raise ValueError(
                     "ACTIVE leases require exactly one WRITE repository matching "
                     "active_writer_repository"
@@ -793,7 +1129,8 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
     candidate = load_json(candidate_path)
-    _validate_lease(candidate, repo_root)
+    _validate_lease(candidate, repo_root, require_native_paths=True)
+    is_v2 = candidate.get("schema_version") == _V2_SCHEMA
     if candidate["state"] != "ACTIVE" or candidate["generation"] != 1:
         raise ValueError("A new lease must have state=ACTIVE and generation=1")
     decision_path = ensure_within(
@@ -808,14 +1145,14 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
         action="lease:acquire",
         lease_id=candidate["lease_id"],
         lease_generation=1,
-        require_candidate_digest=candidate.get("schema_version") == _V2_SCHEMA,
+        require_candidate_digest=is_v2,
     )
     if not decision["ok"]:
         raise ValueError(
             "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
         )
     _validate_decision_scope(candidate, decision)
-    if decision.get("sequence") != candidate["generation"]:
+    if is_v2 and decision.get("sequence") != candidate["generation"]:
         raise ValueError("Acquisition decision sequence must match the lease generation")
     _validate_writer_binding(candidate)
     lease_path = ensure_within(
@@ -832,14 +1169,14 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
             action="lease:acquire",
             lease_id=candidate["lease_id"],
             lease_generation=1,
-            require_candidate_digest=candidate.get("schema_version") == _V2_SCHEMA,
+            require_candidate_digest=is_v2,
         )
         if not decision["ok"]:
             raise ValueError(
                 "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
             )
         _validate_decision_scope(candidate, decision)
-        if decision.get("sequence") != candidate["generation"]:
+        if is_v2 and decision.get("sequence") != candidate["generation"]:
             raise ValueError("Acquisition decision sequence must match the lease generation")
         with _writer_git_admission_guard(candidate) as git_locks:
             _validate_writer_binding(candidate, admitted_git_locks=git_locks)
@@ -849,6 +1186,7 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
                     f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps
                 )
                 raise RuntimeError(f"Repository-set overlap detected: {detail}")
+            _validate_writer_binding(candidate, admitted_git_locks=git_locks)
             write_json_atomic(lease_path, candidate, create_new=True, trusted_root=lock_root)
     return lease_path
 
@@ -863,7 +1201,12 @@ def replace(
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
     candidate = load_json(candidate_path)
-    _validate_lease(candidate, repo_root, allow_coordination_self_write=True)
+    _validate_lease(
+        candidate,
+        repo_root,
+        allow_coordination_self_write=True,
+        require_native_paths=True,
+    )
     lease_path = ensure_within(
         lock_root / f"{candidate['lease_id']}.lease.json",
         lock_root,
@@ -885,7 +1228,12 @@ def replace(
         if is_v2:
             if current.get("schema_version") != _V2_SCHEMA:
                 raise ValueError("A v2 replacement requires an existing v2 lease")
-            _validate_lease(current, repo_root, allow_coordination_self_write=True)
+            _validate_lease(
+                current,
+                repo_root,
+                allow_coordination_self_write=True,
+                require_native_paths=True,
+            )
             for field in (
                 "schema_version",
                 "run_id",
@@ -895,8 +1243,13 @@ def replace(
             ):
                 if candidate.get(field) != current.get(field):
                     raise ValueError(f"Replacement must preserve lease identity field: {field}")
-        elif current.get("schema_version") == _V2_SCHEMA:
-            raise ValueError("Replacement schema_version cannot downgrade a v2 lease to legacy")
+        else:
+            current_schema = current.get("schema_version")
+            candidate_schema = candidate.get("schema_version")
+            if current_schema not in _SUPPORTED_LEASE_SCHEMAS:
+                raise ValueError(f"Unsupported current lease schema_version: {current_schema}")
+            if current_schema != candidate_schema:
+                raise ValueError("Replacement must preserve lease schema_version")
         if candidate.get("generation") != expected_generation + 1:
             raise ValueError("Replacement generation must equal expected_generation + 1")
         if candidate.get("state") != "ACTIVE":
@@ -978,6 +1331,7 @@ def replace(
                     f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps
                 )
                 raise RuntimeError(f"Repository-set overlap detected: {detail}")
+            _validate_writer_binding(candidate, admitted_git_locks=git_locks)
             write_json_atomic(lease_path, candidate, trusted_root=lock_root)
     return lease_path
 
@@ -1009,13 +1363,24 @@ def release(
                 f"Lease generation mismatch: expected {expected_generation}, "
                 f"found {current.get('generation')}"
             )
-        if current.get("schema_version") == _V2_SCHEMA:
+        current_schema = current.get("schema_version")
+        if current_schema == _V2_SCHEMA:
             repo_root = repository_root(repo_root)
-            _validate_lease(current, repo_root, allow_coordination_self_write=True)
+            _validate_lease(
+                current,
+                repo_root,
+                allow_coordination_self_write=True,
+                require_native_paths=True,
+            )
             if candidate_path is None:
                 raise ValueError("A v2 release requires an exact terminal candidate")
             candidate = load_json(candidate_path)
-            _validate_lease(candidate, repo_root, allow_coordination_self_write=True)
+            _validate_lease(
+                candidate,
+                repo_root,
+                allow_coordination_self_write=True,
+                require_native_paths=True,
+            )
             if candidate.get("lease_id") != lease_id:
                 raise ValueError("Terminal candidate lease_id does not match the requested lease")
             if candidate.get("state") != "RELEASED":
@@ -1056,17 +1421,50 @@ def release(
                         f"expected {expected_authority}"
                     )
                 _validate_terminal_release(candidate, repo_root, observed_now=now)
+                _validate_writer_binding(current, admitted_git_locks=git_locks)
                 write_json_atomic(lease_path, candidate, trusted_root=lock_root)
-        else:
+        elif current_schema == _V1_SCHEMA:
             if not isinstance(outcome_ref, str) or not outcome_ref:
                 raise ValueError("A legacy release requires outcome_ref")
-            current["state"] = "RELEASED"
-            current["generation"] = expected_generation + 1
-            current["released_utc"] = utc_now()
-            current["outcome_ref"] = outcome_ref
-            current["active_writer_repository"] = None
-            write_json_atomic(lease_path, current, trusted_root=lock_root)
+            if _is_coordination_self_write(current):
+                repo_root = repository_root(repo_root)
+                _validate_lease(current, repo_root, allow_coordination_self_write=True)
+                with _writer_git_admission_guard(current) as git_locks:
+                    _validate_writer_binding(current, admitted_git_locks=git_locks)
+                    _write_legacy_release(
+                        lease_path,
+                        current,
+                        expected_generation=expected_generation,
+                        outcome_ref=outcome_ref,
+                        lock_root=lock_root,
+                    )
+            else:
+                _write_legacy_release(
+                    lease_path,
+                    current,
+                    expected_generation=expected_generation,
+                    outcome_ref=outcome_ref,
+                    lock_root=lock_root,
+                )
+        else:
+            raise ValueError(f"Unsupported current lease schema_version: {current_schema}")
     return lease_path
+
+
+def _write_legacy_release(
+    lease_path: Path,
+    current: dict[str, Any],
+    *,
+    expected_generation: int,
+    outcome_ref: str,
+    lock_root: Path,
+) -> None:
+    current["state"] = "RELEASED"
+    current["generation"] = expected_generation + 1
+    current["released_utc"] = utc_now()
+    current["outcome_ref"] = outcome_ref
+    current["active_writer_repository"] = None
+    write_json_atomic(lease_path, current, trusted_root=lock_root)
 
 
 def observe(
@@ -1080,22 +1478,42 @@ def observe(
 
     lease_id = require_safe_id(lease_id, "lease_id")
     lock_root = canonical_path(lock_root, must_exist=True)
-    lease_path = ensure_within(
-        lock_root / f"{lease_id}.lease.json",
-        lock_root,
-        label="observed lease file",
-        must_exist=True,
-    )
-    lease = load_json(lease_path)
-    if lease.get("lease_id") != lease_id:
-        raise RuntimeError("Lease file is not bound to the requested lease_id")
     findings: list[str] = []
+    requested_path = lock_root / f"{lease_id}.lease.json"
+    if not requested_path.exists() and not requested_path.is_symlink():
+        raise ValueError(f"Lease file not found: {requested_path}")
+    try:
+        lease_path = ensure_within(
+            requested_path,
+            lock_root,
+            label="observed lease file",
+            must_exist=True,
+        )
+        if not lease_path.is_file():
+            raise ValueError("Lease record is not a regular file")
+        lease = load_json(lease_path)
+    except (OSError, TypeError, ValueError) as exc:
+        return {
+            "lease_id": lease_id,
+            "state": None,
+            "ownership_status": "UNKNOWN_FAIL_CLOSED",
+            "active_writer_repository": None,
+            "generation": None,
+            "automatic_reclaim": False,
+            "path": str(requested_path),
+            "findings": [str(exc)],
+        }
+    if lease.get("lease_id") != lease_id:
+        findings.append("Lease file is not bound to the requested lease_id")
     if lease.get("schema_version") == _V2_SCHEMA:
-        try:
-            validation_root = repository_root(repo_root)
-        except ValueError as exc:
-            validation_root = None
-            findings.append(str(exc))
+        validation_root = None
+        if repo_root is None:
+            findings.append("Cannot verify a v2 lease without explicit repo_root")
+        else:
+            try:
+                validation_root = repository_root(repo_root)
+            except ValueError as exc:
+                findings.append(str(exc))
         if validation_root is not None:
             findings.extend(validate_document(lease, validation_root))
         try:
@@ -1106,8 +1524,10 @@ def observe(
                 _validate_terminal_release(lease, validation_root)
         except (OSError, TypeError, ValueError) as exc:
             findings.append(str(exc))
-    elif lease.get("schema_version") == "coord.repo-set-lease.v1":
-        if lease.get("state") == "RELEASED" and not _terminal_record_is_valid(lease):
+    elif lease.get("schema_version") == _V1_SCHEMA:
+        if not _legacy_record_is_valid(lease):
+            findings.append("Legacy lease structure or lifecycle is invalid")
+        elif lease.get("state") == "RELEASED" and not _terminal_record_is_valid(lease):
             findings.append("Legacy terminal lease evidence is incomplete")
     else:
         findings.append(f"Unsupported lease schema_version: {lease.get('schema_version')}")
@@ -1117,7 +1537,7 @@ def observe(
         status = "TERMINAL_RELEASED"
     elif lease.get("state") != "ACTIVE":
         status = "UNKNOWN_FAIL_CLOSED"
-    elif lease.get("schema_version") == "coord.repo-set-lease.v1":
+    elif lease.get("schema_version") == _V1_SCHEMA:
         status = "ACTIVE_LEGACY"
     else:
         observed = _timestamp(observed_utc or utc_now(), label="observed_utc")

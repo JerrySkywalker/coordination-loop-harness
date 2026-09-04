@@ -36,13 +36,28 @@ New `coord.repo-set-lease.v2` operations additionally bind the complete
 canonical lease candidate in `lease_candidate_sha256`. V2 release uses a
 generation-advanced terminal candidate, a distinct directly chained release
 decision, and a repository-relative outcome SHA-256. Existing v1 lease
-semantics remain unchanged.
+semantics remain unchanged, including historical Decision sequencing,
+case-sensitive `.git` suffix handling, and coordination self-write replacement.
+The latter now receives exact live Git/common-dir, clean-worktree,
+filesystem-identity, and Git publication-guard validation.
+
+New v2 decisions use a non-empty, unique canonical scope covering every lease
+resource. A strict scope superset is valid, but extra authorization entries do
+not add resources to the lease. Repository identities use lowercase,
+suffix-free `owner/name` syntax. Canonical candidates reject all floating-point
+values and integers outside `[-(2^53-1), 2^53-1]`.
 
 Goal 07 tightened the previously unaccepted v2 custody draft before its first
 release. Draft v2 records without `release_decision_ref`, `release_authority`,
-and `outcome_sha256` are intentionally invalid. Review and migrate such local
-custody records explicitly; the harness does not infer terminal authority or
-silently widen an old draft record.
+and `outcome_sha256`, with unknown schema versions, noncanonical repository
+aliases, unsafe integers/floats, or now-denied path namespaces are intentionally
+invalid. V2 paths use a drive-qualified Windows or single-root POSIX grammar;
+UNC/device namespaces, double roots, and POSIX backslashes are denied. Review
+and migrate such local custody records explicitly; the harness does not infer
+terminal authority, inherit the process working directory, silently widen an
+old draft record, or fall through to v1 mutation behavior.
+V2 terminal observation requires an explicit repository root to verify its
+decision and outcome; it never uses the ambient working directory.
 
 ## Bundle sealing
 
@@ -56,6 +71,10 @@ clh bundle verify --root . --run-id EXAMPLE-001
 Re-sealing is an explicit operation after an intentional durable change.
 
 ## Derived repositories
+
+Active starter, bootstrap, and distribution ownership moves to CLT for
+Minimum-V1. CLH retains only its provider-neutral durable coordination kernel
+and frozen compatibility interfaces.
 
 Run `clh bootstrap-repository --dry-run` first. Render-once and derived-owned
 files are preserved, active run directories are never overwritten, and template

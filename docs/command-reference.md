@@ -38,7 +38,9 @@ or authorization failures.
 
 ## Repository-set leases
 
-- `clh lease inspect` is non-mutating.
+- `clh lease inspect` is non-mutating. Supply `--repo-root` when the result must
+  prove and exclude valid v2 terminal records; omission deliberately yields
+  fail-closed evidence rather than inheriting the current directory.
 - `clh lease acquire` requires a verified `lease:acquire` decision.
 - `clh lease replace` requires `lease:expand` authorization and the next generation.
 - `clh lease release` keeps the legacy v1 outcome-reference form. V2 requires
@@ -47,8 +49,10 @@ or authorization failures.
   the repository-relative outcome hash.
 - `clh lease list` reads a local lock root.
 - `clh lease observe` reports `ACTIVE`, `STALE_ACTIVE`, `TERMINAL_RELEASED`, or
-  `UNKNOWN_FAIL_CLOSED` without reclaiming or mutating a lease. Use
-  `--repo-root` to validate v2 decision and outcome lineage.
+  `UNKNOWN_FAIL_CLOSED` without reclaiming or mutating a lease. An explicit
+  `--repo-root` is required to validate v2 decisions and terminal outcome
+  lineage; omission never falls back to the current directory and therefore
+  reports `UNKNOWN_FAIL_CLOSED` for v2 evidence.
 
 ## Frozen local compatibility
 

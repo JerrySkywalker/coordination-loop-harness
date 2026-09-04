@@ -25,10 +25,15 @@ and conflicts with active observations of that repository.
 `local_scopes` and `infrastructure_scopes` are exclusive mutable reservations.
 They never become shared merely because repository observations are shared.
 Overlapping parent/child paths conflict whenever either path is WRITE.
-Every v2 repository path, worktree path, and local scope is absolute so its
-identity cannot change with a process working directory. Host path
-canonicalization covers volume roots, POSIX roots, dot segments, separators,
-and case-insensitive Windows identity.
+Every v2 repository path, worktree path, and local scope uses a portable,
+absolute grammar so its identity cannot change with a process working
+directory. The serialized grammar admits a drive-qualified Windows path or a
+single-root POSIX path. It rejects UNC and device namespaces, double-leading
+separators, and backslashes in POSIX paths because those spellings cannot be
+given one bounded cross-host identity. A mutating operation additionally
+requires every declared path to use the current host's native dialect.
+Read-only observation keeps the portable grammar so another host can still
+report ownership; that classification is not mutation admission.
 
 Each ACTIVE lease still permits zero or one writer. Across a common lock root,
 the intended upper bound is one writer for each product repository and any
@@ -46,15 +51,18 @@ twice around atomic admission:
   worktree path, repository-qualified branch, local scope, infrastructure
   scope, and coordination repository reserved by the lease;
 - the decision binds the complete candidate using SHA-256 over canonical JSON
-  (UTF-8, duplicate object keys and non-finite numbers rejected, sorted object
+  (UTF-8, duplicate object keys, every floating-point value, and integers
+  outside the interoperable range `[-(2^53-1), 2^53-1]` rejected; sorted object
   keys, non-ASCII characters emitted directly, no insignificant whitespace,
   and one trailing LF), so access mode, owner, expiry, paths, branch, and exact
   SHA cannot change after authorization;
 - `canonical_path` and `worktree_root` are exact Git roots with the declared
-  origin identity;
+  origin identity, belong to the same canonical Git common directory, and
+  retain the same filesystem identities throughout verification;
 - the writer is on the exact `branch_ref` and `exact_sha`;
 - the writer worktree has no tracked or untracked changes;
-- no exact-worktree Git index, HEAD, configuration, or active-branch lock
+- no exact-worktree Git index, HEAD, common configuration, worktree
+  configuration, worktree administrative, packed-ref, or active-branch lock
   already exists;
 - no active lease has a conflicting repository, path, branch, local, or
   infrastructure resource.
@@ -66,15 +74,17 @@ release consumer must require a non-null digest and compare it with the exact
 canonical candidate. Missing, null, or mismatched digests fail closed.
 
 Metadata is not treated as proof of the live worktree. Inside the common
-admission mutex, CLH exclusively creates the normal Git lock files for the
-index, HEAD, common configuration, packed refs, and active branch, re-verifies
-a bracketed repository snapshot, scans overlaps, and publishes the lease before
-releasing those guards. Every derived lock path is contained within the exact
-worktree or common Git metadata root. A mismatch fails before the lease file is
-published. An
-interrupted guard intentionally remains fail-closed for manual inspection; it
-is never reclaimed from PID or elapsed time. Lease files and admission mutexes
-remain local state outside Git.
+admission mutex, CLH exclusively creates the Git lock files for the index,
+HEAD, common `config`, per-worktree `config.worktree`, the worktree
+administrative `locked` marker, packed refs, and active branch. Each lock has a
+unique marker and captured filesystem identity. CLH then re-verifies the exact
+common-directory and worktree identities, scans overlaps, rechecks the complete
+lock set and marker contents, and publishes the lease before releasing those
+guards. Every derived lock path is contained within the exact worktree or
+common Git metadata root. A mismatch fails before the lease file is published.
+An interrupted or replaced guard intentionally remains fail-closed for manual
+inspection; it is never reclaimed from PID or elapsed time. Lease files and
+admission mutexes remain local state outside Git.
 
 The transient admission mutex directory is intentionally empty. Normal release
 removes only that empty directory; it never enumerates or unlinks children. A
@@ -93,11 +103,15 @@ by a process that ignores both Git and the shared CL lease protocol are outside
 this cooperative-lock boundary. The bracketed snapshot still detects changes
 that occur during normal verification.
 
-Decision scope entries use the same canonical strings as overlap identity:
-`owner/name` for repositories, an absolute canonical path for path resources,
+Decision scope entries must be non-empty, unique canonical strings using the
+same identities as overlap evaluation: suffix-free lowercase `owner/name` for
+repositories, an absolute canonical path for path resources,
 `owner/name:refs/heads/branch` for branches, and the case-normalized resource
 string for infrastructure. The coordination repository is also named as
-`owner/name`.
+`owner/name`. The decision scope may be a strict superset of the candidate's
+resource set, but extra envelope entries neither widen nor reserve resources in
+the candidate lease. Blank, duplicate, alias, or noncanonical entries fail
+closed.
 
 Replacement preserves the lease schema version, run id, owner, creation time,
 and coordination repository. Its decision must directly reference the current
@@ -126,22 +140,35 @@ candidate instead declares `STALE_RECOVERY` and the decision must authorize
 `lease:release-stale`. Backdating a candidate cannot downgrade the authority
 required by the live clock.
 
-Only a record whose schema, lifecycle, release lineage, candidate digest, and
-outcome content all verify is classified and skipped as `TERMINAL_RELEASED`.
+Only a record whose schema, lifecycle, release lineage, candidate digest,
+outcome content, declared lease id, and canonical filename all verify is
+classified and skipped as `TERMINAL_RELEASED`. V2 lineage and outcome proof
+also require an explicit repository root; observation never falls back to the
+process working directory.
 Every other terminal-looking record is `UNKNOWN_FAIL_CLOSED` and remains
 potentially active for overlap checks. It blocks only resources that can be
 parsed and positively overlap the candidate. An opaque invalid JSON record has
 no provable resource set and never becomes a global lock, but its canonical
-filename still reserves that exact `lease_id`. It remains available for
-explicit operator inspection.
+filename still reserves that exact `lease_id`. A parseable mismatched record
+also retains its declared identity and resources conservatively. It remains
+available for explicit operator inspection. Missing, null, malformed, or
+future schema versions are never silently treated as v1 during replacement or
+release.
 
 ## Compatibility
 
 - `coord.repo-set-lease.v1` keeps its conservative all-overlap behavior.
-- Coordination-repository self-write is a v2-only replacement so legacy v1
-  metadata cannot bypass exact live writer binding.
+- Historical v1 coordination-repository self-write replacement remains
+  compatible, including its original decision sequencing and repository-name
+  normalization. It now receives the same exact live repository/common-dir,
+  clean-worktree, filesystem-identity, and Git-guard checks; `acquire` still
+  cannot introduce a coordination self-write.
+- New v2 repository identities use canonical suffix-free `owner/name` syntax.
+  Conservative overlap scanning recognizes legacy and pre-acceptance aliases
+  without changing the stored meaning of a valid v1 lease.
 - New per-repository writer claims use v2 and its exact compatibility artifact.
-- Pre-acceptance v2 custody drafts missing the Goal 07 terminal fields are not
+- Pre-acceptance v2 custody drafts missing the Goal 07 terminal fields, using
+  now-invalid path or repository aliases, or carrying an unknown schema are not
   auto-upgraded. They remain fail-closed until an explicit reviewed migration
   supplies a fresh candidate and valid decision chain.
 - The compatibility artifact includes exact overlap, canonical candidate

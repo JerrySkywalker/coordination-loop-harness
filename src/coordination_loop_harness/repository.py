@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +67,38 @@ def _optional_ref_sha(root: Path, ref: str | None) -> tuple[str | None, str | No
         return _git(root, "rev-parse", "--verify", ref), None
     except ValueError as exc:
         return None, f"cached origin ref unavailable: {ref}: {exc}"
+
+
+def _path_identity(path: Path, *, follow_symlinks: bool = False) -> tuple[int, int, int]:
+    metadata = path.stat() if follow_symlinks else path.lstat()
+    return metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode)
+
+
+def _repository_identity_snapshot(root: Path) -> dict[str, object]:
+    """Capture path and filesystem identity for one exact Git worktree."""
+
+    root = root.resolve(strict=True)
+    locator = root / ".git"
+    git_dir = Path(_git(root, "rev-parse", "--absolute-git-dir")).resolve(strict=True)
+    common_dir = Path(
+        _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    ).resolve(strict=True)
+    return {
+        "root_path": str(root),
+        "root_identity": _path_identity(root, follow_symlinks=True),
+        "git_locator_path": str(locator),
+        "git_locator_identity": _path_identity(locator),
+        "git_dir_path": str(git_dir),
+        "git_dir_identity": _path_identity(git_dir, follow_symlinks=True),
+        "common_dir_path": str(common_dir),
+        "common_dir_identity": _path_identity(common_dir, follow_symlinks=True),
+    }
+
+
+def _identity_changes(
+    before: dict[str, object], after: dict[str, object], *, prefix: str = ""
+) -> list[str]:
+    return [f"{prefix}{key}" for key in before if before[key] != after.get(key)]
 
 
 def _command(command: str) -> list[str]:
@@ -183,6 +216,7 @@ def verify_repository(
 ) -> dict[str, Any]:
     root = root.resolve()
     findings: list[str] = []
+    identity = _repository_identity_snapshot(root)
     git_root = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
     if git_root != root:
         findings.append(f"not exact Git root: expected {root}, found {git_root}")
@@ -228,6 +262,7 @@ def verify_repository(
     if final_cached_finding and final_cached_finding not in findings:
         findings.append(final_cached_finding)
     final_status = _git(root, "status", "--porcelain=v1", "--untracked-files=all").splitlines()
+    final_identity = _repository_identity_snapshot(root)
     changed: list[str] = []
     for label, before, after in (
         ("git_root", git_root, final_git_root),
@@ -243,6 +278,12 @@ def verify_repository(
             changed.append(label)
     if changed:
         findings.append("repository state changed during verification: " + ", ".join(changed))
+    identity_changed = _identity_changes(identity, final_identity)
+    if identity_changed:
+        findings.append(
+            "repository filesystem identity changed during verification: "
+            + ", ".join(identity_changed)
+        )
     live_verified = False
     if not offline:
         if not expected_origin:
@@ -337,6 +378,7 @@ def verify_repository(
         if post_cached_finding and post_cached_finding not in findings:
             findings.append(post_cached_finding)
         post_status = _git(root, "status", "--porcelain=v1", "--untracked-files=all").splitlines()
+        post_identity = _repository_identity_snapshot(root)
         post_changed: list[str] = []
         for label, before, after in (
             ("git_root", final_git_root, post_git_root),
@@ -353,6 +395,13 @@ def verify_repository(
         if post_changed:
             findings.append(
                 "repository state changed during verification: " + ", ".join(post_changed)
+            )
+            live_verified = False
+        post_identity_changed = _identity_changes(final_identity, post_identity)
+        if post_identity_changed:
+            findings.append(
+                "repository filesystem identity changed during verification: "
+                + ", ".join(post_identity_changed)
             )
             live_verified = False
 

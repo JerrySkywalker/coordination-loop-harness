@@ -14,8 +14,11 @@ from typing import Any
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+WINDOWS_DEVICE_PATH_RE = re.compile(r"^(?:\\\\|//)[?.](?:\\|/)")
 MOVEFILE_REPLACE_EXISTING = 0x1
 MOVEFILE_WRITE_THROUGH = 0x8
+MAX_SAFE_JSON_INTEGER = (1 << 53) - 1
 
 
 def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -139,6 +142,7 @@ def _move_file_windows(source: Path, target: Path, *, replace_existing: bool) ->
 
 
 def canonical_json_bytes(data: object) -> bytes:
+    _validate_canonical_json_numbers(data)
     return (
         json.dumps(
             data,
@@ -149,6 +153,34 @@ def canonical_json_bytes(data: object) -> bytes:
         )
         + "\n"
     ).encode("utf-8")
+
+
+def _validate_canonical_json_numbers(value: object) -> None:
+    """Keep canonical JSON in the portable exact-integer numeric domain."""
+
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if type(value) is int:
+        if not is_safe_json_integer(value):
+            raise ValueError(
+                "Canonical JSON integers must stay within the IEEE-754 safe integer range"
+            )
+        return
+    if isinstance(value, float):
+        raise ValueError("Canonical JSON does not permit floating-point numbers")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("Canonical JSON object keys must be strings")
+            _validate_canonical_json_numbers(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_canonical_json_numbers(item)
+
+
+def is_safe_json_integer(value: object) -> bool:
+    return type(value) is int and abs(value) <= MAX_SAFE_JSON_INTEGER
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -205,9 +237,76 @@ def canonical_repo(value: str) -> str:
     return value.strip("/").casefold()
 
 
+def canonical_repo_v2(value: str) -> str:
+    """Canonicalize a v2 repository identity defensively and case-insensitively."""
+
+    value = value.strip()
+    lowered = value.casefold()
+    for prefix in (
+        "https://github.com/",
+        "http://github.com/",
+        "ssh://git@github.com/",
+        "git@github.com:",
+    ):
+        if lowered.startswith(prefix):
+            value = value[len(prefix) :]
+            break
+    value = value.strip("/")
+    if value.casefold().endswith(".git"):
+        value = value[:-4]
+    return value.casefold()
+
+
 def is_absolute_scope(value: str) -> bool:
     raw = value.strip()
     return bool(raw) and (PureWindowsPath(raw).is_absolute() or PurePosixPath(raw).is_absolute())
+
+
+def is_v2_absolute_scope(value: str) -> bool:
+    """Classify the portable, alias-resistant v2 path grammar."""
+
+    raw = value.strip()
+    if (
+        not raw
+        or raw != value
+        or WINDOWS_DEVICE_PATH_RE.match(raw)
+        or raw.startswith(("\\\\", "//"))
+    ):
+        return False
+    if WINDOWS_DRIVE_PATH_RE.match(raw):
+        return True
+    return raw.startswith("/") and "\\" not in raw
+
+
+def is_native_absolute_scope(value: str) -> bool:
+    """Return whether a portable absolute scope belongs to this host dialect."""
+
+    raw = value.strip()
+    if not is_v2_absolute_scope(raw):
+        return False
+    if os.name == "nt":
+        return bool(WINDOWS_DRIVE_PATH_RE.match(raw))
+    if os.name == "posix":
+        return raw.startswith("/") and not raw.startswith("//")
+    return False
+
+
+def windows_device_scope_alias(value: str) -> str | None:
+    """Map a recognized extended drive/UNC spelling for conservative scans only."""
+
+    raw = value.strip()
+    if not WINDOWS_DEVICE_PATH_RE.match(raw):
+        return None
+    normalized = raw.replace("\\", "/")
+    suffix = normalized[4:]
+    if WINDOWS_DRIVE_PATH_RE.match(suffix):
+        return suffix
+    if suffix.casefold().startswith("unc/"):
+        unc = suffix[4:]
+        parts = [part for part in unc.split("/") if part]
+        if len(parts) >= 2:
+            return "//" + "/".join(parts)
+    return None
 
 
 def canonical_scope(value: str) -> str:

@@ -10,15 +10,20 @@ from pathlib import Path
 from unittest import mock
 
 from coordination_loop_harness.util import (
+    MAX_SAFE_JSON_INTEGER,
     MOVEFILE_REPLACE_EXISTING,
     MOVEFILE_WRITE_THROUGH,
     admission_mutex,
     canonical_json_bytes,
     canonical_repo,
+    canonical_repo_v2,
     canonical_scope,
     ensure_within,
+    is_native_absolute_scope,
+    is_v2_absolute_scope,
     load_json,
     paths_overlap,
+    windows_device_scope_alias,
     write_json_atomic,
 )
 
@@ -93,6 +98,45 @@ class PathNormalizationTests(unittest.TestCase):
         self.assertEqual(expected, canonical_repo("git@github.com:Example/Repo.git"))
         self.assertEqual(expected, canonical_repo("ssh://git@github.com/Example/Repo.git"))
 
+    def test_v2_repository_aliases_are_defensive_without_changing_v1(self):
+        self.assertEqual("example/repo.git", canonical_repo("Example/Repo.GIT"))
+        self.assertEqual("example/repo", canonical_repo_v2("Example/Repo.GIT"))
+        self.assertEqual(
+            "example/repo",
+            canonical_repo_v2("git@GITHUB.COM:Example/Repo.GIT"),
+        )
+
+    def test_v2_path_grammar_default_denies_ambiguous_namespaces(self):
+        self.assertTrue(is_v2_absolute_scope("V:/src/repo"))
+        self.assertTrue(is_v2_absolute_scope("/tmp/repo"))
+        for value in (
+            r"\\?\V:\src\repo",
+            r"\\.\V:\src\repo",
+            r"\\.\pipe\coordination",
+            r"\\server\share\repo",
+            "//server/share/repo",
+            "//tmp",
+            "///tmp",
+            "/tmp/a\\b",
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(is_v2_absolute_scope(value))
+        if os.name == "nt":
+            self.assertTrue(is_native_absolute_scope("V:/src/repo"))
+            self.assertFalse(is_native_absolute_scope("/src/repo"))
+        else:
+            self.assertTrue(is_native_absolute_scope("/tmp/repo"))
+            self.assertFalse(is_native_absolute_scope("V:/src/repo"))
+
+    def test_recognized_device_aliases_are_retained_for_conservative_scans(self):
+        extended = windows_device_scope_alias(r"\\?\V:\src\repo")
+        device = windows_device_scope_alias(r"\\.\V:\src\repo")
+        self.assertIsNotNone(extended)
+        self.assertIsNotNone(device)
+        self.assertEqual(canonical_scope("V:/src/repo"), canonical_scope(extended or ""))
+        self.assertEqual(canonical_scope("V:/src/repo"), canonical_scope(device or ""))
+        self.assertIsNone(windows_device_scope_alias(r"\\.\pipe\coordination"))
+
 
 class AtomicJsonTests(unittest.TestCase):
     def test_admission_mutex_refuses_replaced_directory_without_touching_external_files(self):
@@ -166,6 +210,18 @@ class AtomicJsonTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 write_json_atomic(target, {"value": float("inf")})
             self.assertFalse(target.exists())
+
+    def test_canonical_json_uses_only_portable_safe_integers(self):
+        self.assertEqual(
+            b'{"max_safe_integer":9007199254740991}\n',
+            canonical_json_bytes({"max_safe_integer": MAX_SAFE_JSON_INTEGER}),
+        )
+        for value in (MAX_SAFE_JSON_INTEGER + 1, -(MAX_SAFE_JSON_INTEGER + 1), 1.0):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "safe integer|floating-point"),
+            ):
+                canonical_json_bytes({"value": value})
 
     def test_create_new_preserves_existing_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:

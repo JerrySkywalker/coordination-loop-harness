@@ -1,20 +1,29 @@
 {
   "schema_version": "repo-set-lease-v2-candidate-digest.v1",
-  "canonical_json": "UTF-8, duplicate object keys and non-finite numbers rejected, object keys sorted, no insignificant whitespace, ensure_ascii=false, one trailing LF",
+  "canonical_json": "UTF-8, duplicate object keys, floating-point values, non-finite numbers, and integers outside the IEEE-754 safe range rejected; object keys sorted, no insignificant whitespace, ensure_ascii=false, one trailing LF",
   "canonicalization_probe": {
     "z": "雪",
     "a": [
       true,
       null
-    ]
+    ],
+    "max_safe_integer": 9007199254740991
   },
-  "canonicalization_probe_json_utf8": "{\"a\":[true,null],\"z\":\"雪\"}\n",
-  "canonicalization_probe_sha256": "52aa3f6a66311aeae18dbfd733911cc5a6dbb319bd4bb725cbc86b194b7dcb17",
+  "canonicalization_probe_json_utf8": "{\"a\":[true,null],\"max_safe_integer\":9007199254740991,\"z\":\"雪\"}\n",
+  "canonicalization_probe_sha256": "5d88af0abc2b59bd282d3939221a60b59fe1f45bc2c7458bb5008c99f06c4b13",
   "rejected_json_utf8": [
     "{\"lease_id\":\"one\",\"lease_id\":\"two\"}\n",
     "{\"value\":NaN}\n",
     "{\"value\":Infinity}\n",
     "{\"value\":-Infinity}\n"
+  ],
+  "rejected_canonical_values": [
+    {
+      "value": 1.0
+    },
+    {
+      "value": 9007199254740992
+    }
   ],
   "candidate": {
     "schema_version": "coord.repo-set-lease.v2",

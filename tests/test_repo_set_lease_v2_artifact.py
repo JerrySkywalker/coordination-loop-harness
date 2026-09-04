@@ -12,8 +12,8 @@ from pathlib import Path
 from coordination_loop_harness.decisions import verify_decision
 from coordination_loop_harness.leases import (
     _validate_decision_scope,
+    _validate_lease,
     _validate_terminal_release,
-    _validate_v2_lifecycle,
     find_overlaps,
     lease_candidate_sha256,
 )
@@ -50,6 +50,26 @@ EXPECTED_ARTIFACT_PATHS = [
 
 def load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def apply_operations(document: dict, operations: list[dict]) -> None:
+    for operation in operations:
+        tokens = operation["path"].lstrip("/").split("/")
+        target = document
+        for token in tokens[:-1]:
+            target = target[int(token)] if isinstance(target, list) else target[token]
+        final = tokens[-1]
+        if operation["op"] == "remove":
+            if isinstance(target, list):
+                del target[int(final)]
+            else:
+                del target[final]
+        elif operation["op"] == "add" and isinstance(target, list) and final == "-":
+            target.append(operation["value"])
+        elif isinstance(target, list):
+            target[int(final)] = operation["value"]
+        else:
+            target[final] = operation["value"]
 
 
 def lf_digest(path: Path) -> str:
@@ -118,6 +138,9 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
                     path.write_text(raw, encoding="utf-8", newline="")
                     with self.assertRaises(ValueError):
                         load_json(path)
+        for value in vector["rejected_canonical_values"]:
+            with self.subTest(canonical_value=value), self.assertRaises(ValueError):
+                canonical_json_bytes(value)
 
     def test_terminal_release_vector_binds_decision_and_outcome(self):
         vector = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
@@ -216,40 +239,64 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
             "compatibility/repo-set-lease.v2/positive/terminal-release.json#/terminal_candidate",
             vector["bases"]["terminal"],
         )
+        self.assertEqual(
+            "compatibility/repo-set-lease.v2/positive/terminal-release.json#/release_decision",
+            vector["bases"]["release_decision"],
+        )
+        self.assertEqual(
+            "compatibility/repo-set-lease.v2/positive/terminal-release.json#/active_decision",
+            vector["bases"]["active_decision"],
+        )
+        terminal_vector = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
         bases = {
             "active": load(ARTIFACT_ROOT / "positive" / "candidate-digest.json")["candidate"],
-            "terminal": load(ARTIFACT_ROOT / "positive" / "terminal-release.json")[
-                "terminal_candidate"
-            ],
+            "terminal": terminal_vector["terminal_candidate"],
+            "release_decision": terminal_vector["release_decision"],
+            "active_decision": terminal_vector["active_decision"],
         }
         for case in vector["document_cases"]:
             with self.subTest(case=case["case"]):
                 document = copy.deepcopy(bases[case["base"]])
-                for operation in case["patch"]:
-                    tokens = operation["path"].lstrip("/").split("/")
-                    target = document
-                    for token in tokens[:-1]:
-                        target = target[int(token)] if isinstance(target, list) else target[token]
-                    final = tokens[-1]
-                    if operation["op"] == "remove":
-                        if isinstance(target, list):
-                            del target[int(final)]
-                        else:
-                            del target[final]
-                    elif operation["op"] == "add" and isinstance(target, list) and final == "-":
-                        target.append(operation["value"])
-                    else:
-                        if isinstance(target, list):
-                            target[int(final)] = operation["value"]
-                        else:
-                            target[final] = operation["value"]
+                apply_operations(document, case["patch"])
                 errors = validate_document(document, ROOT)
                 if case["expected_layer"] == "SCHEMA_REJECT":
                     self.assertTrue(errors)
                 else:
                     self.assertEqual([], errors)
                     with self.assertRaises(ValueError):
-                        _validate_v2_lifecycle(document)
+                        _validate_lease(document, ROOT)
+
+        for case in vector["decision_cases"]:
+            with self.subTest(case=case["case"]):
+                decision = copy.deepcopy(bases[case["base"]])
+                apply_operations(decision, case["patch"])
+                errors = validate_document(decision, ROOT)
+                if case["expected_layer"] == "SCHEMA_REJECT":
+                    self.assertTrue(errors)
+                    continue
+                self.assertEqual([], errors)
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    if case.get("target") == "PREDECESSOR":
+                        materialize_terminal_vector(root, terminal_vector)
+                        predecessor_path = root / bases["terminal"]["decision_ref"]
+                        predecessor_path.write_text(json.dumps(decision), encoding="utf-8")
+                    else:
+                        materialize_terminal_vector(
+                            root,
+                            terminal_vector,
+                            release_decision=decision,
+                        )
+                    result = verify_decision(
+                        root,
+                        root / bases["terminal"]["release_decision_ref"],
+                        run_id=bases["terminal"]["run_id"],
+                        action="lease:release",
+                        lease_id=bases["terminal"]["lease_id"],
+                        lease_generation=bases["terminal"]["generation"],
+                        require_candidate_digest=True,
+                    )
+                    self.assertFalse(result["ok"])
 
         terminal = bases["terminal"]
         authority = {item["case"]: item for item in vector["authority_cases"]}
@@ -257,8 +304,12 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         self.assertTrue(
             all(case["expected"] == "AUTHORIZATION_REJECT" for case in authority.values())
         )
-        terminal_vector = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
         release_decision = terminal_vector["release_decision"]
+        for case in vector["positive_authority_cases"]:
+            with self.subTest(case=case["case"]):
+                accepted = copy.deepcopy(release_decision)
+                accepted["scope"].append(case["extra_scope"])
+                _validate_decision_scope(terminal, accepted)
         mismatch = copy.deepcopy(release_decision)
         mismatch["lease_candidate_sha256"] = authority["candidate-digest-mismatch"][
             "supplied_candidate_sha256"
@@ -309,6 +360,22 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
                         "requires a non-null candidate SHA-256 binding",
                         "\n".join(result["findings"]),
                     )
+
+        for case_name in (
+            "lease-decision-blank-scope-entry",
+            "lease-decision-duplicate-scope-entry",
+            "lease-decision-noncanonical-scope-entry",
+        ):
+            with self.subTest(case=case_name):
+                invalid = copy.deepcopy(release_decision)
+                case = authority[case_name]
+                if "replace_scope_entry" in case:
+                    index = invalid["scope"].index(case["replace_scope_entry"])
+                    invalid["scope"][index] = case["scope_entry"]
+                else:
+                    invalid["scope"].append(case["scope_entry"])
+                with self.assertRaisesRegex(ValueError, "canonical|unique"):
+                    _validate_decision_scope(terminal, invalid)
 
         for case_name, field in (
             ("release-decision-wrong-lease-id", "lease_id"),
@@ -462,10 +529,15 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         )
         negative = load(ARTIFACT_ROOT / "negative" / "schema-and-authority-cases.json")
         expected_negative = [case["case"] for case in negative["document_cases"]]
+        expected_negative.extend(case["case"] for case in negative["decision_cases"])
         expected_negative.extend(case["case"] for case in negative["authority_cases"])
         self.assertEqual(
             expected_negative,
             manifest["negative_schema_and_authority_cases"],
+        )
+        self.assertEqual(
+            [case["case"] for case in negative["positive_authority_cases"]],
+            manifest["positive_authority_cases"],
         )
 
 
