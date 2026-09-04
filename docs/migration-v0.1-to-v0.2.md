@@ -66,6 +66,13 @@ control characters, trailing-dot and Windows reserved-device components as well 
 v2 consumers apply the same rule to every decision predecessor reference.
 V2 terminal observation requires an explicit repository root to verify its
 decision and outcome; it never uses the ambient working directory.
+Repository-set overlap scans, named observation, listing, replacement, and
+release require an exact case-sensitive direct lock-root entry that is a regular
+single-link file. Symbolic links, reparse points, hardlinks, resolved path
+aliases, and case-variant lease suffixes fail closed before terminal skip,
+observation, replacement exclusion, or mutation. Safely readable declared
+resources still participate in exact overlap, reads bracket JSON decoding with
+filesystem-identity checks, and mutators recheck identity before publication.
 
 ## Bundle sealing
 

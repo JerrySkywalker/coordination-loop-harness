@@ -244,6 +244,20 @@ class AtomicJsonTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "Non-finite JSON number"):
                         load_json(path)
 
+    def test_load_json_rejects_a_replaced_expected_file_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            path = base / "record.json"
+            replacement = base / "replacement.json"
+            path.write_text('{"generation": 1}\n', encoding="utf-8")
+            metadata = path.lstat()
+            expected_identity = (metadata.st_dev, metadata.st_ino)
+            replacement.write_text('{"generation": 2}\n', encoding="utf-8")
+            os.replace(replacement, path)
+
+            with self.assertRaisesRegex(ValueError, "identity changed"):
+                load_json(path, expected_identity=expected_identity)
+
     def test_canonical_and_durable_json_reject_programmatic_non_finite_numbers(self):
         with self.assertRaises(ValueError):
             canonical_json_bytes({"value": float("nan")})

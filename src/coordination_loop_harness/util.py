@@ -50,13 +50,22 @@ def require_safe_id(value: str, label: str = "identifier") -> str:
     return value
 
 
-def load_json(path: Path) -> dict[str, Any]:
+def load_json(
+    path: Path,
+    *,
+    expected_identity: tuple[int, int] | None = None,
+) -> dict[str, Any]:
     try:
-        data = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=_reject_duplicate_object_keys,
-            parse_constant=_reject_non_finite_json,
-        )
+        with path.open("r", encoding="utf-8") as handle:
+            if expected_identity is not None:
+                metadata = os.fstat(handle.fileno())
+                if (metadata.st_dev, metadata.st_ino) != expected_identity:
+                    raise ValueError(f"File identity changed before reading JSON: {path}")
+            data = json.load(
+                handle,
+                object_pairs_hook=_reject_duplicate_object_keys,
+                parse_constant=_reject_non_finite_json,
+            )
     except FileNotFoundError as exc:
         raise ValueError(f"JSON file not found: {path}") from exc
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:

@@ -48,6 +48,7 @@ class Overlap:
 _V2_SCHEMA = "coord.repo-set-lease.v2"
 _V1_SCHEMA = "coord.repo-set-lease.v1"
 _SUPPORTED_LEASE_SCHEMAS = {_V1_SCHEMA, _V2_SCHEMA}
+_LEASE_SUFFIX = ".lease.json"
 
 
 def lease_candidate_sha256(data: dict[str, Any]) -> str:
@@ -241,6 +242,114 @@ def _repository_name_is_structural(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[^/\s]+/[^/\s]+", value) is not None
 
 
+_LeaseEntryIdentity = tuple[int, int, int, int, int]
+
+
+def _lease_entry_identity(metadata: os.stat_result) -> _LeaseEntryIdentity:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IFMT(metadata.st_mode),
+        metadata.st_nlink,
+        int(getattr(metadata, "st_file_attributes", 0)),
+    )
+
+
+def _lease_directory_entry(
+    lock_root: Path,
+    expected_name: str,
+    *,
+    label: str,
+    required: bool = True,
+) -> tuple[Path, _LeaseEntryIdentity] | None:
+    """Bind one lease record to an exact, ordinary direct directory entry."""
+
+    lock_root = canonical_path(lock_root, must_exist=True)
+    if not expected_name or Path(expected_name).name != expected_name:
+        raise ValueError(f"{label} must use a direct lease filename")
+    with os.scandir(lock_root) as entries:
+        matches = [
+            entry.name for entry in entries if entry.name.casefold() == expected_name.casefold()
+        ]
+    if not matches:
+        if required:
+            raise ValueError(f"{label} not found: {lock_root / expected_name}")
+        return None
+    if len(matches) != 1 or matches[0] != expected_name:
+        raise ValueError(
+            f"{label} must use exact case-sensitive directory-entry spelling: {expected_name}"
+        )
+
+    path = lock_root / matches[0]
+    metadata = path.lstat()
+    attributes = int(getattr(metadata, "st_file_attributes", 0))
+    reparse_attribute = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    if stat.S_ISLNK(metadata.st_mode) or (reparse_attribute and attributes & reparse_attribute):
+        raise ValueError(f"{label} must not be a symbolic link or reparse point")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"{label} must be a regular file")
+    if metadata.st_nlink != 1:
+        raise ValueError(f"{label} must have exactly one filesystem link")
+    resolved = ensure_within(path, lock_root, label=label, must_exist=True)
+    if resolved.parent != lock_root or resolved.name != expected_name:
+        raise ValueError(f"{label} must remain the exact direct directory entry")
+    return path, _lease_entry_identity(metadata)
+
+
+def _assert_lease_entry_unchanged(
+    lock_root: Path,
+    path: Path,
+    identity: _LeaseEntryIdentity,
+    *,
+    label: str,
+) -> None:
+    observed = _lease_directory_entry(lock_root, path.name, label=label)
+    if observed is None or observed[0] != path or observed[1] != identity:
+        raise ValueError(f"{label} identity changed while being read")
+
+
+def _entry_aliases_target(path: Path, target: Path, lock_root: Path) -> bool:
+    """Recognize a contained link/hardlink alias only to preserve exact conflict identity."""
+
+    try:
+        resolved = ensure_within(path, lock_root, label="lease alias", must_exist=True)
+        return os.path.samefile(resolved, target)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _lease_scan_paths(lock_root: Path) -> list[Path]:
+    """Enumerate every case-variant lease suffix without canonicalizing its name."""
+
+    with os.scandir(lock_root) as entries:
+        names = [entry.name for entry in entries if entry.name.casefold().endswith(_LEASE_SUFFIX)]
+    return [lock_root / name for name in sorted(names, key=lambda value: (value.casefold(), value))]
+
+
+def _load_invalid_lease_entry(path: Path, lock_root: Path) -> dict[str, Any]:
+    """Retain safely readable resource claims without trusting an aliased entry."""
+
+    opaque: dict[str, Any] = {"state": "UNKNOWN_OPAQUE"}
+    try:
+        resolved = ensure_within(
+            path,
+            lock_root,
+            label="invalid lease entry",
+            must_exist=True,
+        )
+        before = resolved.lstat()
+        if not stat.S_ISREG(before.st_mode):
+            return opaque
+        identity = _lease_entry_identity(before)
+        data = load_json(resolved, expected_identity=identity[:2])
+        after = resolved.lstat()
+        if _lease_entry_identity(after) != identity:
+            return opaque
+        return data
+    except (OSError, TypeError, ValueError):
+        return opaque
+
+
 def _active_leases(
     lock_root: Path,
     *,
@@ -248,27 +357,56 @@ def _active_leases(
     repo_root: Path | None = None,
 ) -> list[tuple[Path, dict[str, Any], str]]:
     lock_root = canonical_path(lock_root)
+    if not lock_root.exists():
+        return []
+    lock_root = canonical_path(lock_root, must_exist=True)
     validation_root = repository_root(repo_root) if repo_root is not None else None
-    excluded = canonical_path(excluding_path) if excluding_path is not None else None
+    excluded: tuple[Path, _LeaseEntryIdentity] | None = None
+    if excluding_path is not None:
+        excluding_path = Path(excluding_path)
+        if canonical_path(excluding_path.parent, must_exist=True) != lock_root:
+            raise ValueError("excluded lease file must be a direct child of the lock root")
+        excluded = _lease_directory_entry(
+            lock_root,
+            excluding_path.name,
+            label="excluded lease file",
+            required=False,
+        )
     result: list[tuple[Path, dict[str, Any], str]] = []
-    for discovered_path in sorted(lock_root.glob("*.lease.json")):
-        inferred_id = discovered_path.name.removesuffix(".lease.json")
+    for discovered_path in _lease_scan_paths(lock_root):
+        inferred_id = discovered_path.name[: -len(_LEASE_SUFFIX)]
+        suffix_is_canonical = discovered_path.name.endswith(_LEASE_SUFFIX)
         try:
-            path = ensure_within(
-                discovered_path,
+            if not suffix_is_canonical:
+                raise ValueError("Active lease file suffix must be exactly .lease.json")
+            observed = _lease_directory_entry(
                 lock_root,
                 label="active lease file",
-                must_exist=True,
+                expected_name=discovered_path.name,
             )
+            if observed is None:
+                raise ValueError("Active lease file disappeared during enumeration")
+            path, identity = observed
         except (OSError, TypeError, ValueError):
-            result.append((discovered_path, {"state": "UNKNOWN_OPAQUE"}, inferred_id))
+            opaque = _load_invalid_lease_entry(discovered_path, lock_root)
+            if (
+                excluded is not None
+                and _entry_aliases_target(discovered_path, excluded[0], lock_root)
+                and not isinstance(opaque.get("lease_id"), str)
+            ):
+                opaque["lease_id"] = excluded[0].name.removesuffix(".lease.json")
+            result.append((discovered_path, opaque, inferred_id))
             continue
-        if excluded is not None and path == excluded:
+        if excluded is not None and path.name == excluded[0].name:
             continue
         try:
-            if not path.is_file():
-                raise ValueError("Lease record is not a regular file")
-            data = load_json(path)
+            data = load_json(path, expected_identity=identity[:2])
+            _assert_lease_entry_unchanged(
+                lock_root,
+                path,
+                identity,
+                label="active lease file",
+            )
         except (OSError, TypeError, ValueError):
             # The canonical filename still supplies one exact identity even
             # when a torn record has no parseable resource set. Preserve that
@@ -395,12 +533,11 @@ def find_overlaps(
 ) -> list[Overlap]:
     if excluding is not None:
         legacy_id = require_safe_id(excluding, "excluding lease_id")
-        legacy_path = ensure_within(
-            canonical_path(lock_root) / f"{legacy_id}.lease.json",
-            canonical_path(lock_root),
-            label="excluded lease file",
-        )
-        if excluding_path is not None and canonical_path(excluding_path) != legacy_path:
+        legacy_path = canonical_path(lock_root) / f"{legacy_id}.lease.json"
+        if excluding_path is not None and (
+            canonical_path(Path(excluding_path).parent) != canonical_path(lock_root)
+            or Path(excluding_path).name != legacy_path.name
+        ):
             raise ValueError("excluding and excluding_path identify different lease files")
         excluding_path = legacy_path
     candidate_sets = _sets(candidate)
@@ -1256,11 +1393,7 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
         sequence_label="Acquisition",
     )
     _validate_writer_binding(candidate)
-    lease_path = ensure_within(
-        lock_root / f"{candidate['lease_id']}.lease.json",
-        lock_root,
-        label="new lease file",
-    )
+    lease_path = lock_root / f"{candidate['lease_id']}.lease.json"
 
     with admission_mutex(lock_root):
         _verify_bound_lease_decision(
@@ -1310,14 +1443,24 @@ def replace(
         allow_coordination_self_write=True,
         require_native_paths=True,
     )
-    lease_path = ensure_within(
-        lock_root / f"{candidate['lease_id']}.lease.json",
-        lock_root,
-        label="replacement lease file",
-    )
+    lease_path = lock_root / f"{candidate['lease_id']}.lease.json"
 
     with admission_mutex(lock_root):
-        current = load_json(lease_path)
+        observed = _lease_directory_entry(
+            lock_root,
+            lease_path.name,
+            label="replacement lease file",
+        )
+        if observed is None:
+            raise ValueError("Replacement lease file disappeared during admission")
+        lease_path, entry_identity = observed
+        current = load_json(lease_path, expected_identity=entry_identity[:2])
+        _assert_lease_entry_unchanged(
+            lock_root,
+            lease_path,
+            entry_identity,
+            label="replacement lease file",
+        )
         if current.get("lease_id") != candidate["lease_id"]:
             raise RuntimeError("Lease file is not bound to the requested lease_id")
         if current.get("state") != "ACTIVE":
@@ -1380,6 +1523,12 @@ def replace(
                 raise RuntimeError(f"Repository-set overlap detected: {detail}")
             _validate_writer_binding(candidate, admitted_git_locks=git_locks)
             _validate_replacement_authority(candidate, current, repo_root, decision_path)
+            _assert_lease_entry_unchanged(
+                lock_root,
+                lease_path,
+                entry_identity,
+                label="replacement lease file",
+            )
             write_json_atomic(lease_path, candidate, trusted_root=lock_root)
     return lease_path
 
@@ -1395,13 +1544,23 @@ def release(
 ) -> Path:
     lease_id = require_safe_id(lease_id, "lease_id")
     lock_root = canonical_path(lock_root)
-    lease_path = ensure_within(
-        lock_root / f"{lease_id}.lease.json",
-        lock_root,
-        label="released lease file",
-    )
+    lease_path = lock_root / f"{lease_id}.lease.json"
     with admission_mutex(lock_root):
-        current = load_json(lease_path)
+        observed = _lease_directory_entry(
+            lock_root,
+            lease_path.name,
+            label="released lease file",
+        )
+        if observed is None:
+            raise ValueError("Released lease file disappeared during admission")
+        lease_path, entry_identity = observed
+        current = load_json(lease_path, expected_identity=entry_identity[:2])
+        _assert_lease_entry_unchanged(
+            lock_root,
+            lease_path,
+            entry_identity,
+            label="released lease file",
+        )
         if current.get("lease_id") != lease_id:
             raise RuntimeError("Lease file is not bound to the requested lease_id")
         if current.get("state") != "ACTIVE":
@@ -1473,6 +1632,12 @@ def release(
                 _validate_terminal_release(candidate, repo_root, observed_now=now)
                 _validate_writer_binding(current, admitted_git_locks=git_locks)
                 _validate_terminal_release(candidate, repo_root, observed_now=now)
+                _assert_lease_entry_unchanged(
+                    lock_root,
+                    lease_path,
+                    entry_identity,
+                    label="released lease file",
+                )
                 write_json_atomic(lease_path, candidate, trusted_root=lock_root)
         elif current_schema == _V1_SCHEMA:
             if not isinstance(outcome_ref, str) or not outcome_ref:
@@ -1488,6 +1653,7 @@ def release(
                         expected_generation=expected_generation,
                         outcome_ref=outcome_ref,
                         lock_root=lock_root,
+                        entry_identity=entry_identity,
                     )
             else:
                 _write_legacy_release(
@@ -1496,6 +1662,7 @@ def release(
                     expected_generation=expected_generation,
                     outcome_ref=outcome_ref,
                     lock_root=lock_root,
+                    entry_identity=entry_identity,
                 )
         else:
             raise ValueError(f"Unsupported current lease schema_version: {current_schema}")
@@ -1509,12 +1676,19 @@ def _write_legacy_release(
     expected_generation: int,
     outcome_ref: str,
     lock_root: Path,
+    entry_identity: _LeaseEntryIdentity,
 ) -> None:
     current["state"] = "RELEASED"
     current["generation"] = expected_generation + 1
     current["released_utc"] = utc_now()
     current["outcome_ref"] = outcome_ref
     current["active_writer_repository"] = None
+    _assert_lease_entry_unchanged(
+        lock_root,
+        lease_path,
+        entry_identity,
+        label="released lease file",
+    )
     write_json_atomic(lease_path, current, trusted_root=lock_root)
 
 
@@ -1534,15 +1708,21 @@ def observe(
     if not requested_path.exists() and not requested_path.is_symlink():
         raise ValueError(f"Lease file not found: {requested_path}")
     try:
-        lease_path = ensure_within(
-            requested_path,
+        observed = _lease_directory_entry(
             lock_root,
             label="observed lease file",
-            must_exist=True,
+            expected_name=requested_path.name,
         )
-        if not lease_path.is_file():
-            raise ValueError("Lease record is not a regular file")
-        lease = load_json(lease_path)
+        if observed is None:
+            raise ValueError("Observed lease file disappeared during observation")
+        lease_path, entry_identity = observed
+        lease = load_json(lease_path, expected_identity=entry_identity[:2])
+        _assert_lease_entry_unchanged(
+            lock_root,
+            lease_path,
+            entry_identity,
+            label="observed lease file",
+        )
     except (OSError, TypeError, ValueError) as exc:
         return {
             "lease_id": lease_id,
@@ -1616,12 +1796,22 @@ def list_leases(lock_root: Path) -> list[dict[str, Any]]:
         return []
     lock_root = canonical_path(lock_root, must_exist=True)
     leases: list[dict[str, Any]] = []
-    for path in sorted(lock_root.glob("*.lease.json")):
-        safe_path = ensure_within(
-            path,
+    for discovered_path in _lease_scan_paths(lock_root):
+        if not discovered_path.name.endswith(_LEASE_SUFFIX):
+            raise ValueError("Listed lease file suffix must be exactly .lease.json")
+        observed = _lease_directory_entry(
             lock_root,
             label="listed lease file",
-            must_exist=True,
+            expected_name=discovered_path.name,
         )
-        leases.append(load_json(safe_path))
+        if observed is None:
+            raise ValueError("Listed lease file disappeared during enumeration")
+        path, entry_identity = observed
+        leases.append(load_json(path, expected_identity=entry_identity[:2]))
+        _assert_lease_entry_unchanged(
+            lock_root,
+            path,
+            entry_identity,
+            label="listed lease file",
+        )
     return leases

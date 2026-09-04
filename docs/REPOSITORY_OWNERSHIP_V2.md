@@ -115,6 +115,17 @@ record. A post-publication durability error reports failure even when the target
 may already contain the complete new record, so recovery inspects the exact
 target instead of inferring rollback.
 
+Repository-set lease overlap scanning, named observation, listing, replacement,
+and release bind the exact case-sensitive name returned by the lock-root
+directory, require an ordinary direct regular-file entry with one filesystem
+link, reject symbolic links and Windows reparse points, and verify the same
+filesystem identity before, during, and after JSON decoding. Replace and release
+also recheck that entry immediately before writing the current record.
+Replacement exclusion compares that verified lexical entry, never a resolved
+path alias. A case-variant lease suffix or otherwise invalid alias is never
+terminal-skipped; safely readable declared resources remain conservative overlap
+claims, while an unreadable record reserves only its inferred filename identity.
+
 Git-native guards cover cooperating Git operations. Direct filesystem changes
 by a process that ignores both Git and the shared CL lease protocol are outside
 this cooperative-lock boundary. The bracketed snapshot still detects changes
@@ -175,8 +186,9 @@ the exact target and retry after the reader releases it; no partial target is
 treated as success.
 
 Only a record whose schema, lifecycle, release lineage, candidate digest,
-outcome content, declared lease id, and canonical filename all verify is
-classified and skipped as `TERMINAL_RELEASED`. V2 lineage and outcome proof
+outcome content, declared lease id, and exact ordinary single-link canonical
+filename entry all verify is classified and skipped as `TERMINAL_RELEASED`.
+V2 lineage and outcome proof
 also require an explicit repository root; observation never falls back to the
 process working directory.
 Every other terminal-looking record is `UNKNOWN_FAIL_CLOSED` and remains

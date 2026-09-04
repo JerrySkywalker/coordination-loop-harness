@@ -14,6 +14,7 @@ from coordination_loop_harness.leases import (
     acquire,
     find_overlaps,
     lease_candidate_sha256,
+    list_leases,
     observe,
     release,
     replace,
@@ -869,6 +870,188 @@ class LeaseTests(unittest.TestCase):
                 "UNKNOWN_FAIL_CLOSED",
                 observe("ALIAS-V2", locks_v2, repo_root=base)["ownership_status"],
             )
+
+    def test_terminal_symlink_entry_is_never_skipped_or_observed_as_released(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            terminal = lease("RUN-A", "example/a", generation=2)
+            terminal.update(
+                {
+                    "state": "RELEASED",
+                    "active_writer_repository": None,
+                    "released_utc": "2026-01-01T00:05:00Z",
+                    "outcome_ref": "runs/RUN-A/outcome.json",
+                }
+            )
+            payload = locks / "payload.json"
+            self.write(payload, terminal)
+            alias = locks / "RUN-A.lease.json"
+            try:
+                alias.symlink_to(payload)
+            except OSError as exc:
+                self.skipTest(f"file symlink creation is unavailable: {exc}")
+
+            overlaps = find_overlaps(lease("RUN-B", "example/a"), locks)
+            self.assertIn("repository", [item.category for item in overlaps])
+            self.assertEqual([], find_overlaps(lease("RUN-B", "example/disjoint"), locks))
+            same_id = find_overlaps(lease("RUN-A", "example/disjoint"), locks)
+            self.assertIn("lease_id", [item.category for item in same_id])
+            observation = observe("RUN-A", locks)
+            self.assertEqual("UNKNOWN_FAIL_CLOSED", observation["ownership_status"])
+            self.assertIn("symbolic link or reparse point", "\n".join(observation["findings"]))
+
+    def test_terminal_hardlink_entry_is_never_skipped_or_observed_as_released(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            terminal = lease("RUN-A", "example/a", generation=2)
+            terminal.update(
+                {
+                    "state": "RELEASED",
+                    "active_writer_repository": None,
+                    "released_utc": "2026-01-01T00:05:00Z",
+                    "outcome_ref": "runs/RUN-A/outcome.json",
+                }
+            )
+            payload = locks / "payload.json"
+            self.write(payload, terminal)
+            alias = locks / "RUN-A.lease.json"
+            try:
+                os.link(payload, alias)
+            except OSError as exc:
+                self.skipTest(f"hardlink creation is unavailable: {exc}")
+
+            overlaps = find_overlaps(lease("RUN-B", "example/a"), locks)
+            self.assertIn("repository", [item.category for item in overlaps])
+            self.assertEqual([], find_overlaps(lease("RUN-B", "example/disjoint"), locks))
+            same_id = find_overlaps(lease("RUN-A", "example/disjoint"), locks)
+            self.assertIn("lease_id", [item.category for item in same_id])
+            observation = observe("RUN-A", locks)
+            self.assertEqual("UNKNOWN_FAIL_CLOSED", observation["ownership_status"])
+            self.assertIn("exactly one filesystem link", "\n".join(observation["findings"]))
+
+    def test_replacement_does_not_exclude_a_symlink_alias_of_the_current_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            initial = self.authorize(base, lease("RUN-A", "example/a"), "lease:acquire")
+            initial_path = base / "initial.json"
+            self.write(initial_path, initial)
+            active_path = acquire(initial_path, locks, repo_root=base)
+            alias = locks / "ALIAS.lease.json"
+            try:
+                alias.symlink_to(active_path)
+            except OSError as exc:
+                self.skipTest(f"file symlink creation is unavailable: {exc}")
+
+            replacement = lease("RUN-A", "example/a", generation=2)
+            self.authorize(
+                base,
+                replacement,
+                "lease:expand",
+                previous_decision_ref=initial["decision_ref"],
+            )
+            replacement_path = base / "replacement.json"
+            self.write(replacement_path, replacement)
+            overlaps = find_overlaps(
+                replacement,
+                locks,
+                excluding_path=active_path,
+                repo_root=base,
+            )
+            categories = [item.category for item in overlaps]
+            self.assertIn("lease_id", categories)
+            self.assertIn("repository", categories)
+            with self.assertRaisesRegex(RuntimeError, "lease_id="):
+                replace(replacement_path, locks, expected_generation=1, repo_root=base)
+
+    def test_mixed_case_lease_suffix_is_never_terminal_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            terminal = lease("RUN-A.LEASE.JSON", "example/a", generation=2)
+            terminal.update(
+                {
+                    "state": "RELEASED",
+                    "active_writer_repository": None,
+                    "released_utc": "2026-01-01T00:05:00Z",
+                    "outcome_ref": "runs/RUN-A/outcome.json",
+                }
+            )
+            self.write(locks / "RUN-A.LEASE.JSON", terminal)
+
+            overlaps = find_overlaps(lease("RUN-B", "example/a"), locks)
+            self.assertIn("repository", [item.category for item in overlaps])
+            self.assertEqual([], find_overlaps(lease("RUN-B", "example/disjoint"), locks))
+            with self.assertRaisesRegex(ValueError, "suffix must be exactly"):
+                list_leases(locks)
+
+    def test_release_and_replace_reject_hardlinked_current_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            initial = self.authorize(base, lease("RUN-A", "example/a"), "lease:acquire")
+            initial_path = base / "initial.json"
+            self.write(initial_path, initial)
+            active_path = acquire(initial_path, locks, repo_root=base)
+            hardlink = locks / "ALIAS.lease.json"
+            try:
+                os.link(active_path, hardlink)
+            except OSError as exc:
+                self.skipTest(f"hardlink creation is unavailable: {exc}")
+            before = active_path.read_bytes()
+
+            replacement = lease("RUN-A", "example/a", generation=2)
+            self.authorize(
+                base,
+                replacement,
+                "lease:expand",
+                previous_decision_ref=initial["decision_ref"],
+            )
+            replacement_path = base / "replacement.json"
+            self.write(replacement_path, replacement)
+            with self.assertRaisesRegex(ValueError, "exactly one filesystem link"):
+                replace(replacement_path, locks, expected_generation=1, repo_root=base)
+            with self.assertRaisesRegex(ValueError, "exactly one filesystem link"):
+                release(
+                    "RUN-A",
+                    locks,
+                    expected_generation=1,
+                    outcome_ref="runs/RUN-A/outcome.json",
+                )
+            self.assertEqual(before, active_path.read_bytes())
+            self.assertEqual(before, hardlink.read_bytes())
+
+    @unittest.skipUnless(os.name == "nt", "Windows case-alias test")
+    def test_windows_case_alias_is_not_observed_or_excluded_as_canonical(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            active = lease("RUN-A", "example/a")
+            actual = locks / "run-a.lease.json"
+            self.write(actual, active)
+
+            observation = observe("RUN-A", locks)
+            self.assertEqual("UNKNOWN_FAIL_CLOSED", observation["ownership_status"])
+            self.assertIn("exact case-sensitive", "\n".join(observation["findings"]))
+            with self.assertRaisesRegex(ValueError, "exact case-sensitive"):
+                find_overlaps(
+                    active,
+                    locks,
+                    excluding_path=locks / "RUN-A.lease.json",
+                )
+            with self.assertRaisesRegex(ValueError, "exact case-sensitive"):
+                release(
+                    "RUN-A",
+                    locks,
+                    expected_generation=1,
+                    outcome_ref="runs/RUN-A/outcome.json",
+                )
 
     def test_v2_terminal_requires_explicit_repository_root_for_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:

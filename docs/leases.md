@@ -13,6 +13,15 @@ Admission uses an atomic mutex directory and create-new lease file. The harness 
 stale mutex automatically. Lease expansion uses a full replacement candidate, a required decision
 reference, and `expected_generation`.
 
+Lease records used by overlap scanning, named observation, listing, replacement,
+and release must be exact case-sensitive direct children of the lock root. Those
+paths reject symbolic links, reparse points, hardlinks, and directory-entry
+aliases, and bind the same ordinary file identity across JSON decoding. Replace
+and release recheck it immediately before publication; replacement excludes only
+that verified lexical entry. An invalid alias or case-variant `.lease.json`
+suffix is never terminal-skipped, although safely readable declared resources
+continue to block their exact overlaps.
+
 Create-new publication first flushes a same-directory temporary JSON file, then uses the platform's
 atomic no-replace primitive. A failed publication never falls back to writing the final path
 directly. If directory durability fails after publication, callers must inspect the exact target;
@@ -88,7 +97,7 @@ uses `lease:release`; an already expired lease requires the distinct
 `lease:release-stale` authority. Invalid terminal evidence is
 `UNKNOWN_FAIL_CLOSED` and remains blocking for parsed overlapping resources. An
 opaque record also preserves the exact lease id encoded by its canonical
-filename, without becoming a machine-wide lock. V2 terminal verification needs
+single-link filename entry, without becoming a machine-wide lock. V2 terminal verification needs
 an explicit repository root and never inherits the current directory. Unknown
 schema versions cannot fall through to legacy replacement or release. See
 [`REPOSITORY_OWNERSHIP_V2.md`](REPOSITORY_OWNERSHIP_V2.md) for the complete

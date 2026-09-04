@@ -57,7 +57,13 @@ outcome 及其 SHA-256，并由直接承接当前 Decision 的 release Decision 
 `lease:release`；已经过期时必须显式使用 `lease:release-stale`。只有 schema、生命周期、
 Decision 链、候选摘要与 outcome 内容全部通过时才是 `TERMINAL_RELEASED`；否则一律为
 `UNKNOWN_FAIL_CLOSED`，并继续阻挡可解析出的同资源 writer。完全不可解析的记录不会变成
-机器级全局锁，但仍按其规范文件名保留精确 `lease_id` 冲突。v2 terminal 证明必须显式
+机器级全局锁，但仍按其规范文件名保留精确 `lease_id` 冲突。overlap scan、按名 observe、
+list、replace 和 release 所使用的 lease 记录必须是 lock root 的大小写精确、直接、普通且
+只有一个文件系统链接的目录项；symlink、reparse point、hardlink 和目录项别名一律 fail
+closed，读取前后还必须保持同一文件身份，replace/release 在发布前再次复验。replacement
+只能排除这一经验证的 lexical entry，不能排除解析后才相等的别名。大小写错误的
+`.lease.json` 后缀及其他无效别名绝不按 terminal 跳过，但其可安全读取的声明资源仍保守参与
+精确 overlap。v2 terminal 证明必须显式
 提供仓库根，绝不继承当前工作目录；未知 schema 也不能退回 v1 replace/release 路径。
 仓库相对 Decision/outcome 引用还会拒绝绝对路径、点段穿越、以点结尾的组件以及 Windows
 保留设备名和控制字符，避免同一字符串在 Windows 上解析到另一文件。v2 consumer 会将该规则应用于

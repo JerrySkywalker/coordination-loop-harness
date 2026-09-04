@@ -15,6 +15,11 @@
   bounded portable path syntax plus native mutation admission, strict canonical
   decision scopes, exact filename/declared-id handling, explicit terminal
   repository roots, and default-deny unknown or malformed lease schemas.
+- Bound repository-set lease scanning, observation, listing, replacement, release,
+  and mutation to exact case-sensitive ordinary single-link directory entries;
+  symlink, reparse, hardlink, identity-swap, Windows case aliases, and mixed-case
+  lease suffixes fail closed while safely readable exact resource claims remain
+  reserved.
 - Required explicit repository roots for every v2 mutation, exact serialized
   active-writer matching, nonblank infrastructure identities, portable
   repository-relative references, v2-aware origin normalization, and executable
