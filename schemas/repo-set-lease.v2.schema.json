@@ -84,15 +84,23 @@
             ]
           },
           "canonical_path": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/absolutePath"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "worktree_root": {
-            "type": [
-              "string",
-              "null"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/absolutePath"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "branch_ref": {
@@ -122,12 +130,10 @@
             "then": {
               "properties": {
                 "canonical_path": {
-                  "type": "string",
-                  "minLength": 1
+                  "$ref": "#/$defs/absolutePath"
                 },
                 "worktree_root": {
-                  "type": "string",
-                  "minLength": 1
+                  "$ref": "#/$defs/absolutePath"
                 },
                 "branch_ref": {
                   "type": "string",
@@ -147,8 +153,7 @@
       "type": "array",
       "uniqueItems": true,
       "items": {
-        "type": "string",
-        "minLength": 1
+        "$ref": "#/$defs/absolutePath"
       }
     },
     "infrastructure_scopes": {
@@ -190,6 +195,11 @@
     }
   },
   "$defs": {
+    "absolutePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[A-Za-z]:[\\\\/]|\\\\\\\\|/)"
+    },
     "repositoryName": {
       "type": "string",
       "pattern": "^[^/\\s]+/[^/\\s]+$",

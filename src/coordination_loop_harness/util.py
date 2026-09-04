@@ -9,7 +9,7 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -133,6 +133,11 @@ def canonical_repo(value: str) -> str:
     return value.strip("/").casefold()
 
 
+def is_absolute_scope(value: str) -> bool:
+    raw = value.strip()
+    return bool(raw) and (PureWindowsPath(raw).is_absolute() or PurePosixPath(raw).is_absolute())
+
+
 def canonical_scope(value: str) -> str:
     raw = value.strip()
     if not raw:
@@ -149,7 +154,7 @@ def canonical_scope(value: str) -> str:
     if normalized.startswith("/"):
         if os.name == "posix":
             return str(canonical_path(normalized))
-        return posixpath.normpath(normalized)
+        return posixpath.normpath(normalized).casefold()
     return str(canonical_path(normalized)).replace("\\", "/")
 
 
@@ -158,7 +163,9 @@ def paths_overlap(left: str | Path, right: str | Path) -> bool:
     right_scope = canonical_scope(str(right))
     if left_scope == right_scope:
         return True
-    return left_scope.startswith(right_scope + "/") or right_scope.startswith(left_scope + "/")
+    left_prefix = left_scope if left_scope.endswith("/") else left_scope + "/"
+    right_prefix = right_scope if right_scope.endswith("/") else right_scope + "/"
+    return left_scope.startswith(right_prefix) or right_scope.startswith(left_prefix)
 
 
 @contextmanager

@@ -14,6 +14,7 @@ from .util import (
     canonical_repo,
     canonical_scope,
     ensure_within,
+    is_absolute_scope,
     load_json,
     paths_overlap,
     require_safe_id,
@@ -63,26 +64,46 @@ def _access_conflicts(left: str, right: str) -> bool:
     return left == "WRITE" or right == "WRITE"
 
 
-def _active_lease_files(lock_root: Path, *, excluding: str | None = None) -> list[Path]:
+def _terminal_record_is_valid(data: dict[str, Any]) -> bool:
+    schema_version = data.get("schema_version")
+    if schema_version == _V2_SCHEMA:
+        try:
+            _validate_v2_lifecycle(data)
+        except (TypeError, ValueError):
+            return False
+        return data.get("state") == "RELEASED"
+    if schema_version == "coord.repo-set-lease.v1":
+        return (
+            data.get("state") == "RELEASED"
+            and data.get("active_writer_repository") is None
+            and isinstance(data.get("released_utc"), str)
+            and bool(data.get("released_utc"))
+            and isinstance(data.get("outcome_ref"), str)
+            and bool(data.get("outcome_ref"))
+        )
+    return False
+
+
+def _active_leases(
+    lock_root: Path, *, excluding_path: Path | None = None
+) -> list[tuple[Path, dict[str, Any]]]:
     lock_root = canonical_path(lock_root)
-    result: list[Path] = []
+    excluded = canonical_path(excluding_path) if excluding_path is not None else None
+    result: list[tuple[Path, dict[str, Any]]] = []
     for path in sorted(lock_root.glob("*.lease.json")):
         path = ensure_within(path, lock_root, label="active lease file", must_exist=True)
-        data = load_json(path)
-        state = data.get("state")
-        if state == "RELEASED":
-            if data.get("schema_version") == _V2_SCHEMA:
-                try:
-                    _validate_v2_lifecycle(data)
-                except ValueError:
-                    pass
-                else:
-                    continue
-            else:
-                continue
-        if excluding and data.get("lease_id") == excluding:
+        if excluded is not None and path == excluded:
             continue
-        result.append(path)
+        try:
+            data = load_json(path)
+        except ValueError:
+            # An opaque record supplies no positive resource identity. Explicit
+            # observation still reports it, but it cannot globally block a
+            # disjoint repository merely because a file exists.
+            continue
+        if data.get("state") == "RELEASED" and _terminal_record_is_valid(data):
+            continue
+        result.append((path, data))
     return result
 
 
@@ -137,12 +158,11 @@ def find_overlaps(
     candidate: dict[str, Any],
     lock_root: Path,
     *,
-    excluding: str | None = None,
+    excluding_path: Path | None = None,
 ) -> list[Overlap]:
     candidate_sets = _sets(candidate)
     overlaps: list[Overlap] = []
-    for path in _active_lease_files(lock_root, excluding=excluding):
-        other = load_json(path)
+    for path, other in _active_leases(lock_root, excluding_path=excluding_path):
         other_sets = _sets(other)
         lease_id = str(other.get("lease_id", path.stem))
         candidate_repositories = _combined_repository_access(candidate_sets)
@@ -219,22 +239,56 @@ def _validate_coordination_self_write(
 
 
 def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
-    created = _timestamp(data["created_utc"], label="created_utc")
-    heartbeat = _timestamp(data["heartbeat_utc"], label="heartbeat_utc")
-    expires = _timestamp(data["expires_utc"], label="expires_utc")
+    created = _timestamp(data.get("created_utc"), label="created_utc")
+    heartbeat = _timestamp(data.get("heartbeat_utc"), label="heartbeat_utc")
+    expires = _timestamp(data.get("expires_utc"), label="expires_utc")
     if heartbeat < created:
         raise ValueError("heartbeat_utc must not precede created_utc")
     if expires <= heartbeat:
         raise ValueError("expires_utc must be later than heartbeat_utc")
-    if data["state"] == "ACTIVE":
+    state = data.get("state")
+    if state not in {"ACTIVE", "RELEASED"}:
+        raise ValueError("A v2 lease state must be ACTIVE or RELEASED")
+    repositories = data.get("repositories")
+    if not isinstance(repositories, list) or not repositories:
+        raise ValueError("A v2 lease requires at least one repository binding")
+    writers: list[str] = []
+    for item in repositories:
+        if not isinstance(item, dict) or not isinstance(item.get("repository"), str):
+            raise ValueError("A v2 lease contains an invalid repository binding")
+        if item.get("mode") == "WRITE":
+            writers.append(canonical_repo(item["repository"]))
+        for key in ("canonical_path", "worktree_root"):
+            value = item.get(key)
+            if value is not None and (not isinstance(value, str) or not is_absolute_scope(value)):
+                raise ValueError(f"A v2 lease requires an absolute {key}")
+    for value in data.get("local_scopes", []):
+        if not isinstance(value, str) or not is_absolute_scope(value):
+            raise ValueError("A v2 lease requires absolute local_scopes")
+    active_writer = data.get("active_writer_repository")
+    if state == "ACTIVE":
         if data.get("released_utc") is not None or data.get("outcome_ref") is not None:
             raise ValueError("An ACTIVE v2 lease cannot contain terminal release fields")
+        if not data.get("decision_ref"):
+            raise ValueError("An ACTIVE v2 lease requires decision_ref")
+        if active_writer is None:
+            if writers:
+                raise ValueError(
+                    "A lease with no active writer must not contain WRITE repositories"
+                )
+        elif len(writers) != 1 or canonical_repo(active_writer) != writers[0]:
+            raise ValueError(
+                "ACTIVE leases require exactly one WRITE repository matching "
+                "active_writer_repository"
+            )
     else:
         released_utc = data.get("released_utc")
         if released_utc is None or not data.get("outcome_ref"):
             raise ValueError("A RELEASED v2 lease requires released_utc and outcome_ref")
         if _timestamp(released_utc, label="released_utc") < created:
             raise ValueError("released_utc must not precede created_utc")
+        if active_writer is not None:
+            raise ValueError("A RELEASED lease must not have an active writer")
 
 
 def _git_path(root: Path, name: str) -> Path:
@@ -308,20 +362,21 @@ def _validate_writer_binding(data: dict[str, Any]) -> None:
         raise ValueError("Writer repository binding failed:\n- " + "\n- ".join(findings))
 
 
-def _validate_decision_scope(data: dict[str, Any], decision_path: Path) -> None:
+def _validate_decision_scope(data: dict[str, Any], decision: dict[str, Any]) -> None:
     if data.get("schema_version") != _V2_SCHEMA:
         return
-    active_writer = data.get("active_writer_repository")
-    if active_writer is None:
-        return
-    decision = load_json(decision_path)
-    scopes = {
-        canonical_repo(scope)
-        for scope in decision.get("scope", [])
-        if isinstance(scope, str) and "/" in scope
-    }
-    if canonical_repo(active_writer) not in scopes:
-        raise ValueError("Lease decision scope does not include the active writer repository")
+    supplied = decision.get("scope")
+    if not isinstance(supplied, list):
+        raise ValueError("Lease decision scope is not a list")
+    scopes = {scope.strip() for scope in supplied if isinstance(scope, str) and scope.strip()}
+    resource_sets = _sets(data)
+    required = {resource for category in resource_sets.values() for resource in category}
+    missing = sorted(required - scopes)
+    if missing:
+        raise ValueError(
+            "Lease decision scope does not include every reserved resource:\n- "
+            + "\n- ".join(missing)
+        )
 
 
 def _validate_lease(
@@ -342,30 +397,34 @@ def _validate_lease(
         raise ValueError("Lease repositories must be unique")
     coordination = canonical_repo(data["coordination_repository"])
     if coordination in identities:
+        if data.get("schema_version") != _V2_SCHEMA:
+            raise ValueError("Coordination self-write requires coord.repo-set-lease.v2")
         if not allow_coordination_self_write:
             raise ValueError("The coordination repository cannot also be a product repository")
         _validate_coordination_self_write(data, repositories, coordination)
 
-    writers = [
-        canonical_repo(item["repository"]) for item in repositories if item.get("mode") == "WRITE"
-    ]
-    active_writer = data.get("active_writer_repository")
-    if data.get("state") == "ACTIVE":
-        if not data.get("decision_ref"):
-            raise ValueError("An ACTIVE lease requires decision_ref")
-        if active_writer is None:
-            if writers:
-                raise ValueError(
-                    "A lease with no active writer must not contain WRITE repositories"
-                )
-        else:
-            if len(writers) != 1 or canonical_repo(active_writer) != writers[0]:
+    if data.get("schema_version") != _V2_SCHEMA:
+        writers = [
+            canonical_repo(item["repository"])
+            for item in repositories
+            if item.get("mode") == "WRITE"
+        ]
+        active_writer = data.get("active_writer_repository")
+        if data.get("state") == "ACTIVE":
+            if not data.get("decision_ref"):
+                raise ValueError("An ACTIVE lease requires decision_ref")
+            if active_writer is None:
+                if writers:
+                    raise ValueError(
+                        "A lease with no active writer must not contain WRITE repositories"
+                    )
+            elif len(writers) != 1 or canonical_repo(active_writer) != writers[0]:
                 raise ValueError(
                     "ACTIVE leases require exactly one WRITE repository matching "
                     "active_writer_repository"
                 )
-    elif active_writer is not None:
-        raise ValueError("A RELEASED lease must not have an active writer")
+        elif active_writer is not None:
+            raise ValueError("A RELEASED lease must not have an active writer")
 
 
 def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = None) -> Path:
@@ -392,7 +451,7 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
         raise ValueError(
             "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
         )
-    _validate_decision_scope(candidate, decision_path)
+    _validate_decision_scope(candidate, decision)
     _validate_writer_binding(candidate)
     lease_path = ensure_within(
         lock_root / f"{candidate['lease_id']}.lease.json",
@@ -413,7 +472,7 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
             raise ValueError(
                 "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
             )
-        _validate_decision_scope(candidate, decision_path)
+        _validate_decision_scope(candidate, decision)
         _validate_writer_binding(candidate)
         overlaps = find_overlaps(candidate, lock_root)
         if overlaps:
@@ -453,6 +512,16 @@ def replace(
                 f"Lease generation mismatch: expected {expected_generation}, "
                 f"found {current.get('generation')}"
             )
+        _validate_lease(current, repo_root, allow_coordination_self_write=True)
+        for field in (
+            "schema_version",
+            "run_id",
+            "owner",
+            "created_utc",
+            "coordination_repository",
+        ):
+            if candidate.get(field) != current.get(field):
+                raise ValueError(f"Replacement must preserve lease identity field: {field}")
         if candidate.get("generation") != expected_generation + 1:
             raise ValueError("Replacement generation must equal expected_generation + 1")
         if candidate.get("state") != "ACTIVE":
@@ -476,9 +545,29 @@ def replace(
             raise ValueError(
                 "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
             )
-        _validate_decision_scope(candidate, decision_path)
+        _validate_decision_scope(candidate, decision)
+        current_decision_ref = current.get("decision_ref")
+        previous_decision_ref = decision.get("previous_decision_ref")
+        if not isinstance(current_decision_ref, str) or not isinstance(previous_decision_ref, str):
+            raise ValueError("Replacement decision must reference the current lease decision")
+        current_decision_path = ensure_within(
+            repo_root / current_decision_ref,
+            repo_root,
+            label="current lease decision_ref",
+            must_exist=True,
+        )
+        previous_decision_path = ensure_within(
+            repo_root / previous_decision_ref,
+            repo_root,
+            label="replacement previous_decision_ref",
+            must_exist=True,
+        )
+        if current_decision_path != previous_decision_path:
+            raise ValueError("Replacement decision does not directly follow the current decision")
+        if decision.get("sequence") != candidate["generation"]:
+            raise ValueError("Replacement decision sequence must match the lease generation")
         _validate_writer_binding(candidate)
-        overlaps = find_overlaps(candidate, lock_root, excluding=candidate["lease_id"])
+        overlaps = find_overlaps(candidate, lock_root, excluding_path=lease_path)
         if overlaps:
             detail = "; ".join(
                 f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps

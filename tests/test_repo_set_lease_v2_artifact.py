@@ -68,6 +68,20 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
 
     def test_manifest_hashes_exact_artifact_set(self):
         manifest = load(ARTIFACT_ROOT / "artifact-manifest.json")
+        paths = [item["path"] for item in manifest["artifacts"]]
+        self.assertEqual(sorted(paths), paths)
+        self.assertTrue(
+            {
+                "schemas/decision.v2.schema.json",
+                "schemas/repo-set-lease.v2.schema.json",
+                "src/coordination_loop_harness/decisions.py",
+                "src/coordination_loop_harness/leases.py",
+                "src/coordination_loop_harness/repository.py",
+                "src/coordination_loop_harness/util.py",
+                "src/coordination_loop_harness/validation.py",
+                "tests/test_leases.py",
+            }.issubset(paths)
+        )
         records: list[bytes] = []
         for item in manifest["artifacts"]:
             path = ROOT / item["path"]

@@ -4,6 +4,7 @@ A lease protects repositories and their execution surfaces. Overlap checks inclu
 
 - repository identity (`owner/name`);
 - canonical checkout and worktree paths;
+- repository-qualified branch refs;
 - extra local scopes;
 - coordination repository identity;
 - infrastructure scope strings.
@@ -24,7 +25,8 @@ durable final outcome.  That narrow candidate must be `ACTIVE`, bind the exact
 coordination repository path, worktree, and SHA, match
 `active_writer_repository`, keep every other repository `READ`, and pass the
 normal owner-decision, generation, overlap, local-scope, and infrastructure
-checks.  `acquire` never permits this exception.
+checks. It must use v2; legacy v1 metadata cannot request this exception.
+`acquire` never permits it.
 
 This is a cooperative lock. Every writer must use the same shared lock root and respect it. It is
 not a consensus system for mutually untrusted machines.
@@ -35,7 +37,9 @@ New Coordination Loop per-repository writers use `coord.repo-set-lease.v2`.
 V2 preserves exclusive mutable resources while allowing READ/READ repository,
 path, branch, and shared Program observations. Any access pair containing WRITE
 conflicts. Writer admission verifies the exact origin, branch, HEAD, clean
-worktree, decision scope, and absence of `index.lock` before publication.
+worktree, full resource decision scope, and absence of `index.lock` before
+publication. All serialized paths are absolute, and replacement preserves the
+lease identity/version while directly chaining its accepted decision.
 
 Expired ACTIVE ownership is reported as `STALE_ACTIVE`, remains conflicting,
 and is never automatically reclaimed. See

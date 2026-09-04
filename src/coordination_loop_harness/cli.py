@@ -17,7 +17,7 @@ from .leases import acquire, find_overlaps, list_leases, observe, release, repla
 from .repository import verify_repository, verify_template_repository_provenance
 from .runs import init_run, render_attach
 from .status import transition_status
-from .util import load_json
+from .util import load_json, require_safe_id
 from .validation import repository_root, validate_json_file
 
 
@@ -424,10 +424,14 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.lease_command == "inspect":
                 candidate = load_json(args.candidate)
+                raw_lease_id = candidate.get("lease_id")
+                if not isinstance(raw_lease_id, str):
+                    raise ValueError("lease_id must be a string")
+                lease_id = require_safe_id(raw_lease_id, "lease_id")
                 overlaps = find_overlaps(
                     candidate,
                     args.lock_root,
-                    excluding=candidate.get("lease_id"),
+                    excluding_path=args.lock_root / f"{lease_id}.lease.json",
                 )
                 _print_json(
                     {

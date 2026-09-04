@@ -72,6 +72,17 @@
       "expected_category": "path"
     },
     {
+      "case": "root-local-resource",
+      "repository": "example/cle",
+      "worktree_root": "V:/src/_worktrees/other/cle",
+      "branch_ref": "refs/heads/agent/cle-root-scope",
+      "local_scopes": [
+        "V:/"
+      ],
+      "infrastructure_scopes": [],
+      "expected_category": "path"
+    },
+    {
       "case": "same-infrastructure-resource",
       "repository": "example/cle",
       "worktree_root": "V:/src/_worktrees/other/cle",

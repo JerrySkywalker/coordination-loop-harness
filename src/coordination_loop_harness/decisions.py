@@ -134,5 +134,7 @@ def verify_decision(
         "decision": str(decision_path),
         "decision_id": decision.get("decision_id"),
         "sequence": decision.get("sequence"),
+        "scope": decision.get("scope"),
+        "previous_decision_ref": decision.get("previous_decision_ref"),
         "findings": findings,
     }

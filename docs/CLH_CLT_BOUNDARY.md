@@ -20,4 +20,3 @@ release evidence are not rewritten.
 This is the Minimum-V1 E1 boundary, not complete E3 genericization. Removal of
 the frozen compatibility module, if ever required, needs a separately versioned
 migration after CLT adoption evidence exists.
-
