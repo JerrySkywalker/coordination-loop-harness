@@ -19,7 +19,9 @@ or authorization failures.
   `nameWithOwner` and the `github.com` repository URL.
 - `clh decision verify` requires an accepted/merged v2 decision that explicitly
   authorizes the requested action and has a complete, contiguous, bound predecessor
-  chain back to sequence 1.
+  chain back to sequence 1. V2 lease consumers add
+  `--require-candidate-digest`; generic verification keeps historical v1 lease
+  decisions structurally compatible and is not by itself v2 lease authority.
 - `clh bind-goal` writes a local-only Bound Goal package. Its default state root is
   `.coord-local`.
 - `clh render-attach` preserves the v0.1 durable attach renderer.
@@ -39,10 +41,14 @@ or authorization failures.
 - `clh lease inspect` is non-mutating.
 - `clh lease acquire` requires a verified `lease:acquire` decision.
 - `clh lease replace` requires `lease:expand` authorization and the next generation.
-- `clh lease release` uses an optimistic generation and outcome reference.
+- `clh lease release` keeps the legacy v1 outcome-reference form. V2 requires
+  `--candidate` and `--repo-root`; the exact terminal candidate advances the
+  optimistic generation and carries a directly chained release decision plus
+  the repository-relative outcome hash.
 - `clh lease list` reads a local lock root.
-- `clh lease observe` reports `ACTIVE`, `STALE_ACTIVE`, or terminal ownership
-  without reclaiming or mutating a lease.
+- `clh lease observe` reports `ACTIVE`, `STALE_ACTIVE`, `TERMINAL_RELEASED`, or
+  `UNKNOWN_FAIL_CLOSED` without reclaiming or mutating a lease. Use
+  `--repo-root` to validate v2 decision and outcome lineage.
 
 ## Frozen local compatibility
 

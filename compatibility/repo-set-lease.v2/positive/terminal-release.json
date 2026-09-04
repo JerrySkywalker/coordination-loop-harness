@@ -1,0 +1,124 @@
+{
+  "schema_version": "repo-set-lease-v2-terminal-release.v1",
+  "outcome_utf8": "{\"result\":\"PASS\"}\n",
+  "active_decision_markdown_utf8": "# DEC-TERMINAL-VECTOR-1\n\nAuthorize the exact active writer candidate.\n",
+  "release_decision_markdown_utf8": "# DEC-TERMINAL-VECTOR-2\n\nAuthorize the exact normal terminal release.\n",
+  "active_candidate": {
+    "schema_version": "coord.repo-set-lease.v2",
+    "lease_id": "TERMINAL-VECTOR",
+    "run_id": "TERMINAL-VECTOR",
+    "state": "ACTIVE",
+    "generation": 1,
+    "created_utc": "2026-09-04T00:00:00Z",
+    "heartbeat_utc": "2026-09-04T00:00:00Z",
+    "expires_utc": "2026-09-04T01:00:00Z",
+    "owner": "implementer-vector",
+    "coordination_repository": "example/program",
+    "repositories": [
+      {
+        "repository": "example/clh",
+        "mode": "WRITE",
+        "canonical_path": "V:/src/coordination-loop-harness",
+        "worktree_root": "V:/src/_worktrees/vector/coordination-loop-harness",
+        "branch_ref": "refs/heads/agent/vector",
+        "exact_sha": "1111111111111111111111111111111111111111"
+      }
+    ],
+    "local_scopes": [],
+    "infrastructure_scopes": [],
+    "active_writer_repository": "example/clh",
+    "decision_ref": "decisions/TERMINAL-VECTOR/DEC-1.json",
+    "release_decision_ref": null,
+    "release_authority": null,
+    "released_utc": null,
+    "outcome_ref": null,
+    "outcome_sha256": null
+  },
+  "active_decision": {
+    "schema_version": "coord.decision.v2",
+    "decision_id": "DEC-TERMINAL-VECTOR-1",
+    "run_id": "TERMINAL-VECTOR",
+    "sequence": 1,
+    "decision_type": "LEASE_TRANSFER",
+    "status": "ACCEPTED",
+    "issued_by": "owner",
+    "issued_utc": "2026-09-04T00:00:00Z",
+    "decision": "Authorize the exact active writer candidate.",
+    "rationale": "The bounded writer passed repository and resource admission.",
+    "scope": [
+      "example/clh",
+      "example/clh:refs/heads/agent/vector",
+      "example/program",
+      "v:/src/_worktrees/vector/coordination-loop-harness",
+      "v:/src/coordination-loop-harness"
+    ],
+    "conditions": [],
+    "authorized_actions": [
+      "lease:acquire"
+    ],
+    "lease_id": "TERMINAL-VECTOR",
+    "lease_generation": 1,
+    "lease_candidate_sha256": "97be9e34ba9121be40194f46c336bb7949657af506ea96320de7b0e3b6600e97",
+    "previous_decision_ref": null,
+    "markdown_sha256": "8fefede7e2c0eb4df9c5dd2e2f9e32a222fe8f91288a45b1d526d32d6a650083"
+  },
+  "terminal_candidate": {
+    "schema_version": "coord.repo-set-lease.v2",
+    "lease_id": "TERMINAL-VECTOR",
+    "run_id": "TERMINAL-VECTOR",
+    "state": "RELEASED",
+    "generation": 2,
+    "created_utc": "2026-09-04T00:00:00Z",
+    "heartbeat_utc": "2026-09-04T00:00:00Z",
+    "expires_utc": "2026-09-04T01:00:00Z",
+    "owner": "implementer-vector",
+    "coordination_repository": "example/program",
+    "repositories": [
+      {
+        "repository": "example/clh",
+        "mode": "WRITE",
+        "canonical_path": "V:/src/coordination-loop-harness",
+        "worktree_root": "V:/src/_worktrees/vector/coordination-loop-harness",
+        "branch_ref": "refs/heads/agent/vector",
+        "exact_sha": "1111111111111111111111111111111111111111"
+      }
+    ],
+    "local_scopes": [],
+    "infrastructure_scopes": [],
+    "active_writer_repository": null,
+    "decision_ref": "decisions/TERMINAL-VECTOR/DEC-1.json",
+    "release_decision_ref": "decisions/TERMINAL-VECTOR/DEC-2.json",
+    "release_authority": "NORMAL",
+    "released_utc": "2026-09-04T00:30:00Z",
+    "outcome_ref": "runs/TERMINAL-VECTOR/outcome.json",
+    "outcome_sha256": "1674f4b447c33ae5fd2a5ffcfdfa10f8c4aeedfe075e2d02ae534c4079c5919d"
+  },
+  "release_decision": {
+    "schema_version": "coord.decision.v2",
+    "decision_id": "DEC-TERMINAL-VECTOR-2",
+    "run_id": "TERMINAL-VECTOR",
+    "sequence": 2,
+    "decision_type": "LEASE_TRANSFER",
+    "status": "ACCEPTED",
+    "issued_by": "owner",
+    "issued_utc": "2026-09-04T00:30:00Z",
+    "decision": "Authorize the exact normal terminal release.",
+    "rationale": "The bounded writer completed and supplied a hashed outcome.",
+    "scope": [
+      "example/clh",
+      "example/clh:refs/heads/agent/vector",
+      "example/program",
+      "v:/src/_worktrees/vector/coordination-loop-harness",
+      "v:/src/coordination-loop-harness"
+    ],
+    "conditions": [],
+    "authorized_actions": [
+      "lease:release"
+    ],
+    "lease_id": "TERMINAL-VECTOR",
+    "lease_generation": 2,
+    "lease_candidate_sha256": "2d506751407ff6e7403dd84a31cee633ea2995ff47a703e223b19bf4e416093e",
+    "previous_decision_ref": "decisions/TERMINAL-VECTOR/DEC-1.json",
+    "markdown_sha256": "5d3f226c2d16ca71ba7a9258c8e57ed3ddde6938a76ee0fa7f53036a07b7fc87"
+  }
+}

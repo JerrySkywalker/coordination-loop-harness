@@ -1,0 +1,51 @@
+{
+  "schema_version": "repo-set-lease-v2-candidate-digest.v1",
+  "canonical_json": "UTF-8, duplicate object keys and non-finite numbers rejected, object keys sorted, no insignificant whitespace, ensure_ascii=false, one trailing LF",
+  "canonicalization_probe": {
+    "z": "雪",
+    "a": [
+      true,
+      null
+    ]
+  },
+  "canonicalization_probe_json_utf8": "{\"a\":[true,null],\"z\":\"雪\"}\n",
+  "canonicalization_probe_sha256": "52aa3f6a66311aeae18dbfd733911cc5a6dbb319bd4bb725cbc86b194b7dcb17",
+  "rejected_json_utf8": [
+    "{\"lease_id\":\"one\",\"lease_id\":\"two\"}\n",
+    "{\"value\":NaN}\n",
+    "{\"value\":Infinity}\n",
+    "{\"value\":-Infinity}\n"
+  ],
+  "candidate": {
+    "schema_version": "coord.repo-set-lease.v2",
+    "lease_id": "DIGEST-VECTOR",
+    "run_id": "DIGEST-VECTOR",
+    "state": "ACTIVE",
+    "generation": 1,
+    "created_utc": "2026-09-04T00:00:00Z",
+    "heartbeat_utc": "2026-09-04T00:00:00Z",
+    "expires_utc": "2026-09-04T01:00:00Z",
+    "owner": "implementer-vector",
+    "coordination_repository": "example/program",
+    "repositories": [
+      {
+        "repository": "example/clh",
+        "mode": "WRITE",
+        "canonical_path": "V:/src/coordination-loop-harness",
+        "worktree_root": "V:/src/_worktrees/vector/coordination-loop-harness",
+        "branch_ref": "refs/heads/agent/vector",
+        "exact_sha": "1111111111111111111111111111111111111111"
+      }
+    ],
+    "local_scopes": [],
+    "infrastructure_scopes": [],
+    "active_writer_repository": "example/clh",
+    "decision_ref": "decisions/DIGEST-VECTOR/DEC-1.json",
+    "release_decision_ref": null,
+    "release_authority": null,
+    "released_utc": null,
+    "outcome_ref": null,
+    "outcome_sha256": null
+  },
+  "candidate_sha256": "604ad4456a81d2106723ff27b68857f9f47d9ead75a2127ed1dd6431fd718fe8"
+}

@@ -67,17 +67,22 @@ def build_parser() -> argparse.ArgumentParser:
     inspect = lease_sub.add_parser("inspect")
     inspect.add_argument("--candidate", type=_path, required=True)
     inspect.add_argument("--lock-root", type=_path, required=True)
+    inspect.add_argument("--repo-root", type=_path, default=Path.cwd())
     listing = lease_sub.add_parser("list")
     listing.add_argument("--lock-root", type=_path, required=True)
     observation = lease_sub.add_parser("observe")
     observation.add_argument("--lease-id", required=True)
     observation.add_argument("--lock-root", type=_path, required=True)
     observation.add_argument("--observed-utc")
+    observation.add_argument("--repo-root", type=_path, default=Path.cwd())
     close = lease_sub.add_parser("release")
     close.add_argument("--lease-id", required=True)
     close.add_argument("--lock-root", type=_path, required=True)
     close.add_argument("--expected-generation", type=int, required=True)
-    close.add_argument("--outcome-ref", required=True)
+    release_evidence = close.add_mutually_exclusive_group(required=True)
+    release_evidence.add_argument("--outcome-ref")
+    release_evidence.add_argument("--candidate", type=_path)
+    close.add_argument("--repo-root", type=_path, default=Path.cwd())
 
     attach = sub.add_parser(
         "render-attach",
@@ -140,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     decision_verify.add_argument("--action", required=True)
     decision_verify.add_argument("--lease-id")
     decision_verify.add_argument("--lease-generation", type=int)
+    decision_verify.add_argument(
+        "--require-candidate-digest",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require the v2 portable lease candidate digest",
+    )
 
     status = sub.add_parser("status", help="Apply a legal optimistic status transition")
     status_sub = status.add_subparsers(dest="status_command", required=True)
@@ -326,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
                 action=args.action,
                 lease_id=args.lease_id,
                 lease_generation=args.lease_generation,
+                require_candidate_digest=args.require_candidate_digest,
             )
             _print_json(result)
             return 0 if result["ok"] else 1
@@ -432,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
                     candidate,
                     args.lock_root,
                     excluding_path=args.lock_root / f"{lease_id}.lease.json",
+                    repo_root=args.repo_root,
                 )
                 _print_json(
                     {
@@ -449,6 +462,7 @@ def main(argv: list[str] | None = None) -> int:
                         args.lease_id,
                         args.lock_root,
                         observed_utc=args.observed_utc,
+                        repo_root=args.repo_root,
                     )
                 )
                 return 0
@@ -458,6 +472,8 @@ def main(argv: list[str] | None = None) -> int:
                     args.lock_root,
                     expected_generation=args.expected_generation,
                     outcome_ref=args.outcome_ref,
+                    candidate_path=args.candidate,
+                    repo_root=args.repo_root,
                 )
                 _print_json({"lease": str(path), "state": "RELEASED"})
                 return 0

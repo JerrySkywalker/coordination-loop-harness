@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coordination_loop_harness.repository import (
     verify_repository,
@@ -181,6 +182,29 @@ class RepositoryVerificationTests(unittest.TestCase):
             dirty = verify_repository(repo, offline=True)
             self.assertEqual(["untracked.txt"], dirty["untracked"])
 
+    def test_missing_cached_origin_ref_is_a_structured_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, head = self.repository(Path(tmp))
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "update-ref",
+                    "-d",
+                    "refs/remotes/origin/main",
+                ],
+                check=True,
+            )
+            result = verify_repository(
+                repo,
+                expected_sha=head,
+                cached_origin_ref="refs/remotes/origin/main",
+                offline=True,
+            )
+            self.assertFalse(result["ok"])
+            self.assertIn("cached origin ref unavailable", "\n".join(result["findings"]))
+
     def test_mismatch_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo, _ = self.repository(Path(tmp))
@@ -208,6 +232,40 @@ class RepositoryVerificationTests(unittest.TestCase):
             self.assertTrue(result["read_only"])
             self.assertEqual(before, after)
 
+    def test_concurrent_repository_change_fails_stable_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, head = self.repository(Path(tmp))
+            from coordination_loop_harness import repository as repository_module
+
+            original_git = repository_module._git
+            mutated = False
+
+            def mutate_after_first_status(root: Path, *args: str) -> str:
+                nonlocal mutated
+                result = original_git(root, *args)
+                if args[:2] == ("status", "--porcelain=v1") and not mutated:
+                    mutated = True
+                    (repo / "file.txt").write_text("concurrent\n", encoding="utf-8")
+                    subprocess.run(["git", "-C", str(repo), "add", "file.txt"], check=True)
+                    subprocess.run(
+                        ["git", "-C", str(repo), "commit", "-m", "concurrent"],
+                        check=True,
+                        capture_output=True,
+                    )
+                return result
+
+            with mock.patch.object(
+                repository_module,
+                "_git",
+                side_effect=mutate_after_first_status,
+            ):
+                result = verify_repository(repo, expected_sha=head, offline=True)
+            self.assertFalse(result["ok"])
+            self.assertIn(
+                "repository state changed during verification",
+                "\n".join(result["findings"]),
+            )
+
     def test_live_verification_uses_fake_gh(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -229,6 +287,40 @@ class RepositoryVerificationTests(unittest.TestCase):
             )
             self.assertTrue(result["ok"])
             self.assertTrue(result["live_github_verified"])
+
+    def test_live_verification_detects_cached_ref_change_during_network_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo, head = self.repository(base)
+            fake_gh = base / "fake-gh-mutate-ref.py"
+            fake_gh.write_text(
+                "import json\n"
+                "import subprocess\n"
+                f"repo = {str(repo)!r}\n"
+                "subprocess.run([\n"
+                "    'git', '-C', repo, 'update-ref', '-d',\n"
+                "    'refs/remotes/origin/main'\n"
+                "], check=True)\n"
+                "print(json.dumps({\n"
+                "    'nameWithOwner': 'example/repo',\n"
+                "    'url': 'https://github.com/example/repo'\n"
+                "}))\n",
+                encoding="utf-8",
+            )
+            result = verify_repository(
+                repo,
+                expected_origin="example/repo",
+                expected_sha=head,
+                cached_origin_ref="refs/remotes/origin/main",
+                offline=False,
+                gh_command=str(fake_gh),
+            )
+            self.assertFalse(result["ok"])
+            self.assertFalse(result["live_github_verified"])
+            findings = "\n".join(result["findings"])
+            self.assertIn("cached origin ref unavailable", findings)
+            self.assertIn("repository state changed during verification", findings)
+            self.assertIn("refs/remotes/origin/main", findings)
 
     def test_live_verification_rejects_wrong_repository_identity(self):
         with tempfile.TemporaryDirectory() as tmp:

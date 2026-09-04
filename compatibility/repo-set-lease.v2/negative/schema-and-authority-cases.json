@@ -1,0 +1,273 @@
+{
+  "schema_version": "repo-set-lease-v2-negative-semantics.v1",
+  "bases": {
+    "active": "compatibility/repo-set-lease.v2/positive/candidate-digest.json#/candidate",
+    "terminal": "compatibility/repo-set-lease.v2/positive/terminal-release.json#/terminal_candidate"
+  },
+  "document_cases": [
+    {
+      "case": "active-with-terminal-field",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/outcome_sha256",
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-with-null-decision-ref",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/decision_ref",
+          "value": null
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-writer-without-write",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/mode",
+          "value": "READ"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "two-writers",
+      "base": "active",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/repositories/-",
+          "value": {
+            "repository": "example/second",
+            "mode": "WRITE",
+            "canonical_path": "V:/src/second",
+            "worktree_root": "V:/src/_worktrees/second",
+            "branch_ref": "refs/heads/agent/second",
+            "exact_sha": "2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "write-with-null-active-writer",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/active_writer_repository",
+          "value": null
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-with-active-writer",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/active_writer_repository",
+          "value": "example/clh"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-without-outcome-digest",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/outcome_sha256"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-without-release-decision-ref",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/release_decision_ref"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-without-release-authority",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/release_authority"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-generation-one",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/generation",
+          "value": 1
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-outcome-parent-traversal",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/outcome_ref",
+          "value": "../outside.json"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-outcome-trailing-slash",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/outcome_ref",
+          "value": "runs/TERMINAL-VECTOR/"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-decision-parent-traversal",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/release_decision_ref",
+          "value": "../decision.json"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "extra-property",
+      "base": "active",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/unexpected",
+          "value": true
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "branch-ref-parent-component",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/branch_ref",
+          "value": "refs/heads/a/../../outside"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "read-branch-ref-parent-component",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/mode",
+          "value": "READ"
+        },
+        {
+          "op": "replace",
+          "path": "/active_writer_repository",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/repositories/0/branch_ref",
+          "value": "refs/heads/a/../../outside"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-writer-value-mismatch",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/active_writer_repository",
+          "value": "example/other"
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    }
+  ],
+  "authority_cases": [
+    {
+      "case": "candidate-digest-mismatch",
+      "supplied_candidate_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "lease-decision-missing-candidate-digest",
+      "digest_state": "MISSING",
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "lease-decision-null-candidate-digest",
+      "digest_state": "NULL",
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "release-decision-wrong-lease-id",
+      "lease_id": "OTHER-LEASE",
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "release-decision-wrong-generation",
+      "lease_generation": 3,
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "normal-action-cannot-release-stale",
+      "release_authority": "STALE_RECOVERY",
+      "authorized_action": "lease:release",
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "release-decision-cannot-mix-terminal-actions",
+      "authorized_actions": [
+        "lease:release",
+        "lease:release-stale"
+      ],
+      "expected": "AUTHORIZATION_REJECT"
+    },
+    {
+      "case": "release-must-directly-follow-active-decision",
+      "previous_decision_ref": "decisions/OTHER/DEC-1.json",
+      "expected": "AUTHORIZATION_REJECT"
+    }
+  ]
+}

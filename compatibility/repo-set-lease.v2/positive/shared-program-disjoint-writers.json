@@ -26,8 +26,11 @@
     "infrastructure_scopes": [],
     "active_writer_repository": "example/clh",
     "decision_ref": "decisions/CLH-WRITER/DEC-1.json",
+    "release_decision_ref": null,
+    "release_authority": null,
     "released_utc": null,
-    "outcome_ref": null
+    "outcome_ref": null,
+    "outcome_sha256": null
   },
   "right": {
     "schema_version": "coord.repo-set-lease.v2",
@@ -54,8 +57,11 @@
     "infrastructure_scopes": [],
     "active_writer_repository": "example/cle",
     "decision_ref": "decisions/CLE-WRITER/DEC-1.json",
+    "release_decision_ref": null,
+    "release_authority": null,
     "released_utc": null,
-    "outcome_ref": null
+    "outcome_ref": null,
+    "outcome_sha256": null
   },
   "expected_overlap_categories": []
 }

@@ -32,6 +32,18 @@ authorization. Create a `coord.decision.v2` Markdown/JSON pair with:
 - the exact lease id and generation;
 - the SHA-256 of its Markdown companion.
 
+New `coord.repo-set-lease.v2` operations additionally bind the complete
+canonical lease candidate in `lease_candidate_sha256`. V2 release uses a
+generation-advanced terminal candidate, a distinct directly chained release
+decision, and a repository-relative outcome SHA-256. Existing v1 lease
+semantics remain unchanged.
+
+Goal 07 tightened the previously unaccepted v2 custody draft before its first
+release. Draft v2 records without `release_decision_ref`, `release_authority`,
+and `outcome_sha256` are intentionally invalid. Review and migrate such local
+custody records explicitly; the harness does not infer terminal authority or
+silently widen an old draft record.
+
 ## Bundle sealing
 
 After all durable objects are stable, run:

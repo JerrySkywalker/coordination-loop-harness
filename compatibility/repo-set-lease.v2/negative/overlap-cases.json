@@ -29,10 +29,25 @@
     ],
     "active_writer_repository": "example/clh",
     "decision_ref": "decisions/BASE-WRITER/DEC-1.json",
+    "release_decision_ref": null,
+    "release_authority": null,
     "released_utc": null,
-    "outcome_ref": null
+    "outcome_ref": null,
+    "outcome_sha256": null
   },
   "cases": [
+    {
+      "case": "same-lease-id",
+      "lease_id": "BASE-WRITER",
+      "repository": "example/cle",
+      "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
+      "branch_ref": "refs/heads/agent/cle-disjoint",
+      "local_scopes": [],
+      "infrastructure_scopes": [],
+      "expected_categories": [
+        "lease_id"
+      ]
+    },
     {
       "case": "same-repository",
       "repository": "example/clh",
@@ -40,7 +55,9 @@
       "branch_ref": "refs/heads/agent/other",
       "local_scopes": [],
       "infrastructure_scopes": [],
-      "expected_category": "repository"
+      "expected_categories": [
+        "repository"
+      ]
     },
     {
       "case": "same-worktree",
@@ -49,7 +66,9 @@
       "branch_ref": "refs/heads/agent/cle",
       "local_scopes": [],
       "infrastructure_scopes": [],
-      "expected_category": "path"
+      "expected_categories": [
+        "path"
+      ]
     },
     {
       "case": "same-branch",
@@ -58,7 +77,10 @@
       "branch_ref": "refs/heads/agent/shared",
       "local_scopes": [],
       "infrastructure_scopes": [],
-      "expected_category": "branch"
+      "expected_categories": [
+        "repository",
+        "branch"
+      ]
     },
     {
       "case": "overlapping-local-resource",
@@ -69,7 +91,9 @@
         "V:/src/_state/shared-resource/child"
       ],
       "infrastructure_scopes": [],
-      "expected_category": "path"
+      "expected_categories": [
+        "path"
+      ]
     },
     {
       "case": "root-local-resource",
@@ -80,7 +104,11 @@
         "V:/"
       ],
       "infrastructure_scopes": [],
-      "expected_category": "path"
+      "expected_categories": [
+        "path",
+        "path",
+        "path"
+      ]
     },
     {
       "case": "same-infrastructure-resource",
@@ -91,7 +119,9 @@
       "infrastructure_scopes": [
         "RUNNER:WINDOWS-A"
       ],
-      "expected_category": "infrastructure"
+      "expected_categories": [
+        "infrastructure"
+      ]
     }
   ]
 }

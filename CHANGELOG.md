@@ -5,6 +5,11 @@
 - Added the versioned `coord.repo-set-lease.v2` shared-read/exclusive-write
   contract with exact writer admission and fail-closed stale ownership
   observation while preserving v1 semantics.
+- Bound v2 decisions to canonical lease candidates; added exact duplicate-id
+  refusal, Git-native admission guards, stable repository snapshots,
+  crash-safe create-new publication, and independently authorized terminal
+  candidates with hashed outcomes and distinct stale-recovery authority. The
+  canonical JSON boundary now rejects duplicate keys and non-finite numbers.
 - Removed the active CLH derived-repository workflow and froze the legacy local
   renderer as a compatibility-only surface; CLT now owns active bootstrap and
   distribution behavior.

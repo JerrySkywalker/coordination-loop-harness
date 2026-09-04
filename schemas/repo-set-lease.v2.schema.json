@@ -19,8 +19,11 @@
     "infrastructure_scopes",
     "active_writer_repository",
     "decision_ref",
+    "release_decision_ref",
+    "release_authority",
     "released_utc",
-    "outcome_ref"
+    "outcome_ref",
+    "outcome_sha256"
   ],
   "properties": {
     "schema_version": {
@@ -104,11 +107,14 @@
             ]
           },
           "branch_ref": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "pattern": "^refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/branchRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "exact_sha": {
             "type": [
@@ -136,8 +142,7 @@
                   "$ref": "#/$defs/absolutePath"
                 },
                 "branch_ref": {
-                  "type": "string",
-                  "pattern": "^refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"
+                  "$ref": "#/$defs/branchRef"
                 },
                 "exact_sha": {
                   "type": "string",
@@ -180,6 +185,19 @@
         "null"
       ]
     },
+    "release_decision_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "release_authority": {
+      "enum": [
+        "NORMAL",
+        "STALE_RECOVERY",
+        null
+      ]
+    },
     "released_utc": {
       "type": [
         "string",
@@ -192,9 +210,165 @@
         "string",
         "null"
       ]
+    },
+    "outcome_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
     }
   },
+  "allOf": [
+    {
+      "properties": {
+        "repositories": {
+          "contains": {
+            "properties": {
+              "mode": {
+                "const": "WRITE"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "minContains": 0,
+          "maxContains": 1
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "ACTIVE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "decision_ref": {
+            "$ref": "#/$defs/repositoryRelativePath"
+          },
+          "release_decision_ref": {
+            "type": "null"
+          },
+          "release_authority": {
+            "type": "null"
+          },
+          "released_utc": {
+            "type": "null"
+          },
+          "outcome_ref": {
+            "type": "null"
+          },
+          "outcome_sha256": {
+            "type": "null"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "active_writer_repository": {
+                  "type": "null"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "repositories": {
+                  "not": {
+                    "contains": {
+                      "properties": {
+                        "mode": {
+                          "const": "WRITE"
+                        }
+                      },
+                      "required": [
+                        "mode"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "repositories": {
+                  "contains": {
+                    "properties": {
+                      "mode": {
+                        "const": "WRITE"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  "minContains": 1,
+                  "maxContains": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "RELEASED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "active_writer_repository": {
+            "type": "null"
+          },
+          "decision_ref": {
+            "$ref": "#/$defs/repositoryRelativePath"
+          },
+          "release_decision_ref": {
+            "$ref": "#/$defs/repositoryRelativePath"
+          },
+          "release_authority": {
+            "enum": [
+              "NORMAL",
+              "STALE_RECOVERY"
+            ]
+          },
+          "released_utc": {
+            "$ref": "#/$defs/timestamp"
+          },
+          "outcome_ref": {
+            "$ref": "#/$defs/repositoryRelativePath"
+          },
+          "outcome_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
+    "repositoryRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*\\\\)(?!.*//)(?!.*\\/$)(?!\\.\\.?(?:/|$))(?!.*/\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "branchRef": {
+      "type": "string",
+      "pattern": "^refs/heads/(?!.*\\.\\.)(?!.*//)(?!.*/\\.)(?!.*\\.lock(?:/|$))(?!.*[./]$)[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"
+    },
     "absolutePath": {
       "type": "string",
       "minLength": 1,

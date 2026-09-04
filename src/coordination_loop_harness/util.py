@@ -14,6 +14,21 @@ from typing import Any
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+MOVEFILE_REPLACE_EXISTING = 0x1
+MOVEFILE_WRITE_THROUGH = 0x8
+
+
+def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_json(value: str) -> Any:
+    raise ValueError(f"Non-finite JSON number is not permitted: {value}")
 
 
 def utc_now() -> str:
@@ -28,10 +43,14 @@ def require_safe_id(value: str, label: str = "identifier") -> str:
 
 def load_json(path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_object_keys,
+            parse_constant=_reject_non_finite_json,
+        )
     except FileNotFoundError as exc:
         raise ValueError(f"JSON file not found: {path}") from exc
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         raise ValueError(f"Invalid JSON in {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"Expected a JSON object in {path}")
@@ -48,34 +67,87 @@ def write_json_atomic(
     if trusted_root is not None:
         trusted_root = canonical_path(trusted_root)
         path = ensure_within(path, trusted_root, label="atomic JSON target")
+    payload = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     if trusted_root is not None:
         path = ensure_within(path, trusted_root, label="atomic JSON target")
-    payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    if create_new:
-        with path.open("x", encoding="utf-8", newline="\n") as handle:
-            handle.write(payload)
-        return
-
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        if trusted_root is not None:
-            ensure_within(Path(tmp_name), trusted_root, label="atomic JSON temporary file")
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            fd = -1
+            if trusted_root is not None:
+                ensure_within(Path(tmp_name), trusted_root, label="atomic JSON temporary file")
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
+        if create_new:
+            # A direct ``open('x')`` exposes a partially written final record if
+            # the process dies between creation and the last write.  Linking a
+            # fully flushed same-directory temporary file gives us both
+            # create-if-absent semantics and an atomic visible publication.
+            # Failure is deliberately closed; there is no unsafe direct-write
+            # fallback.
+            if os.name == "nt":
+                _move_file_windows(Path(tmp_name), path, replace_existing=False)
+            else:
+                os.link(tmp_name, path)
+                os.unlink(tmp_name)
+                tmp_name = ""
+        else:
+            if os.name == "nt":
+                _move_file_windows(Path(tmp_name), path, replace_existing=True)
+            else:
+                os.replace(tmp_name, path)
+        _fsync_directory(path.parent)
     finally:
+        if fd >= 0:
+            os.close(fd)
         try:
-            os.unlink(tmp_name)
+            if tmp_name:
+                os.unlink(tmp_name)
         except FileNotFoundError:
             pass
 
 
+def _fsync_directory(path: Path) -> None:
+    """Sync POSIX directory metadata; Windows publication is write-through."""
+
+    if os.name != "posix":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _move_file_windows(source: Path, target: Path, *, replace_existing: bool) -> None:
+    """Atomically publish a flushed file using Windows write-through semantics."""
+
+    if os.name != "nt":
+        raise RuntimeError("Windows write-through move requested on a non-Windows platform")
+    import ctypes
+
+    flags = MOVEFILE_WRITE_THROUGH
+    if replace_existing:
+        flags |= MOVEFILE_REPLACE_EXISTING
+    move_file = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+    move_file.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    move_file.restype = ctypes.c_int
+    if not move_file(str(source), str(target), flags):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
 def canonical_json_bytes(data: object) -> bytes:
     return (
-        json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
     ).encode("utf-8")
 
 
@@ -192,15 +264,34 @@ def admission_mutex(lock_root: Path) -> Iterator[None]:
             "Inspect it manually; the harness will not delete it automatically."
         ) from exc
 
+    mutex_identity = mutex.lstat()
+    mutex_resolved = canonical_path(mutex, must_exist=True)
+    body_error: BaseException | None = None
     try:
-        write_json_atomic(
-            mutex / "owner.json",
-            {"pid": os.getpid(), "created_utc": utc_now()},
-            create_new=True,
-            trusted_root=mutex,
-        )
         yield
+    except BaseException as exc:
+        body_error = exc
+        raise
     finally:
-        for child in mutex.iterdir():
-            child.unlink()
-        mutex.rmdir()
+        cleanup_error: BaseException | None = None
+        try:
+            current_mutex = mutex.lstat()
+            if (
+                (current_mutex.st_dev, current_mutex.st_ino)
+                != (mutex_identity.st_dev, mutex_identity.st_ino)
+                or mutex.is_symlink()
+                or (hasattr(os.path, "isjunction") and os.path.isjunction(mutex))
+                or canonical_path(mutex, must_exist=True) != mutex_resolved
+            ):
+                raise RuntimeError("Lease admission mutex identity changed during use")
+            # The mutex deliberately remains empty. Removing an empty directory
+            # (or refusing a swapped non-directory/non-empty entry) cannot
+            # traverse and unlink attacker-controlled children.
+            mutex.rmdir()
+        except BaseException as exc:
+            cleanup_error = exc
+        if cleanup_error is not None:
+            if body_error is not None:
+                body_error.add_note(f"Lease admission mutex cleanup also failed: {cleanup_error}")
+            else:
+                raise cleanup_error

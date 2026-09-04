@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .util import ensure_within, load_json, sha256_file
+from .util import ensure_within, load_json, require_safe_id, sha256_file
 from .validation import validate_document
 
 ACCEPTED_STATUSES = {"ACCEPTED", "MERGED"}
@@ -89,6 +89,7 @@ def verify_decision(
     action: str,
     lease_id: str | None = None,
     lease_generation: int | None = None,
+    require_candidate_digest: bool = False,
 ) -> dict[str, Any]:
     findings: list[str] = []
     try:
@@ -120,6 +121,27 @@ def verify_decision(
         )
     if action not in decision.get("authorized_actions", []):
         findings.append(f"decision does not authorize action: {action}")
+    if require_candidate_digest:
+        decision_lease_id = decision.get("lease_id")
+        if not isinstance(decision_lease_id, str):
+            findings.append("lease decision requires a non-null lease_id")
+        else:
+            try:
+                require_safe_id(decision_lease_id, "decision lease_id")
+            except ValueError as exc:
+                findings.append(str(exc))
+        if (
+            not isinstance(decision.get("lease_generation"), int)
+            or decision.get("lease_generation", 0) < 1
+        ):
+            findings.append("lease decision requires a positive lease_generation")
+        digest = decision.get("lease_candidate_sha256")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            findings.append("lease decision requires a non-null candidate SHA-256 binding")
     if lease_id is not None and decision.get("lease_id") != lease_id:
         findings.append(f"decision does not cover lease_id: {lease_id}")
     if lease_generation is not None and decision.get("lease_generation") != lease_generation:
@@ -135,6 +157,8 @@ def verify_decision(
         "decision_id": decision.get("decision_id"),
         "sequence": decision.get("sequence"),
         "scope": decision.get("scope"),
+        "authorized_actions": decision.get("authorized_actions"),
+        "lease_candidate_sha256": decision.get("lease_candidate_sha256"),
         "previous_decision_ref": decision.get("previous_decision_ref"),
         "findings": findings,
     }

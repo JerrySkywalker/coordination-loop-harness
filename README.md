@@ -107,7 +107,7 @@ V5 keeps the proven durable coordination kernel while:
 
 - evolving resource/lease semantics for safe per-repository writers;
 - preserving exact identity admission;
-- moving active starter/distribution ownership toward CLT;
+- placing active starter/distribution ownership in CLT;
 - removing provider-specific product positioning;
 - keeping all external agent runtimes replaceable below the CLF boundary.
 

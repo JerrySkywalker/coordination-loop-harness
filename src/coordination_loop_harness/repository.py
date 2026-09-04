@@ -27,6 +27,47 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _branch_identity(root: Path) -> tuple[bool, str | None]:
+    result = subprocess.run(
+        [
+            "git",
+            "--no-optional-locks",
+            "-C",
+            str(root),
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "HEAD",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+    detached = result.returncode != 0
+    return detached, None if detached else result.stdout.strip()
+
+
+def _origin_url(root: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "--no-optional-locks", "-C", str(root), "remote", "get-url", "origin"],
+        check=False,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _optional_ref_sha(root: Path, ref: str | None) -> tuple[str | None, str | None]:
+    if not ref:
+        return None, None
+    try:
+        return _git(root, "rev-parse", "--verify", ref), None
+    except ValueError as exc:
+        return None, f"cached origin ref unavailable: {ref}: {exc}"
+
+
 def _command(command: str) -> list[str]:
     if Path(command).suffix.casefold() == ".py":
         return [sys.executable, command]
@@ -147,32 +188,8 @@ def verify_repository(
         findings.append(f"not exact Git root: expected {root}, found {git_root}")
     head = _git(root, "rev-parse", "HEAD")
     local_ref_sha = _git(root, "rev-parse", "--verify", local_ref)
-    branch_result = subprocess.run(
-        [
-            "git",
-            "--no-optional-locks",
-            "-C",
-            str(root),
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "HEAD",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        shell=False,
-    )
-    detached = branch_result.returncode != 0
-    branch = None if detached else branch_result.stdout.strip()
-    origin_result = subprocess.run(
-        ["git", "--no-optional-locks", "-C", str(root), "remote", "get-url", "origin"],
-        check=False,
-        capture_output=True,
-        text=True,
-        shell=False,
-    )
-    origin = origin_result.stdout.strip() if origin_result.returncode == 0 else None
+    detached, branch = _branch_identity(root)
+    origin = _origin_url(root)
 
     if expected_origin and canonical_repo(origin or "") != canonical_repo(expected_origin):
         findings.append(f"origin mismatch: expected {expected_origin}, found {origin}")
@@ -185,12 +202,10 @@ def verify_repository(
             f"detached worktree mismatch: expected {require_detached}, found {detached}"
         )
 
-    cached_sha: str | None = None
+    cached_sha, cached_finding = _optional_ref_sha(root, cached_origin_ref)
+    if cached_finding:
+        findings.append(cached_finding)
     if cached_origin_ref:
-        try:
-            cached_sha = _git(root, "rev-parse", "--verify", cached_origin_ref)
-        except ValueError as exc:
-            findings.append(str(exc))
         if expected_sha and cached_sha and cached_sha != expected_sha:
             findings.append(
                 f"cached origin ref mismatch: {cached_origin_ref}={cached_sha}, "
@@ -200,6 +215,34 @@ def verify_repository(
     status = _git(root, "status", "--porcelain=v1", "--untracked-files=all").splitlines()
     tracked = [line for line in status if not line.startswith("??")]
     untracked = [line[3:] for line in status if line.startswith("??")]
+
+    # Git exposes these facts through separate commands.  Re-read the complete
+    # local identity after status collection and fail closed if a concurrent
+    # operation moved any binding or changed the worktree during verification.
+    final_git_root = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
+    final_head = _git(root, "rev-parse", "HEAD")
+    final_local_ref_sha = _git(root, "rev-parse", "--verify", local_ref)
+    final_detached, final_branch = _branch_identity(root)
+    final_origin = _origin_url(root)
+    final_cached_sha, final_cached_finding = _optional_ref_sha(root, cached_origin_ref)
+    if final_cached_finding and final_cached_finding not in findings:
+        findings.append(final_cached_finding)
+    final_status = _git(root, "status", "--porcelain=v1", "--untracked-files=all").splitlines()
+    changed: list[str] = []
+    for label, before, after in (
+        ("git_root", git_root, final_git_root),
+        ("HEAD", head, final_head),
+        (local_ref, local_ref_sha, final_local_ref_sha),
+        ("branch", branch, final_branch),
+        ("detached", detached, final_detached),
+        ("origin", origin, final_origin),
+        (cached_origin_ref or "cached_origin_ref", cached_sha, final_cached_sha),
+        ("worktree_status", status, final_status),
+    ):
+        if before != after:
+            changed.append(label)
+    if changed:
+        findings.append("repository state changed during verification: " + ", ".join(changed))
     live_verified = False
     if not offline:
         if not expected_origin:
@@ -281,6 +324,37 @@ def verify_repository(
                             )
                         if not findings:
                             live_verified = True
+
+        # The remote observation can be slow. Re-read every local binding after
+        # it completes so an otherwise valid response cannot certify a checkout
+        # that changed during the network call.
+        post_git_root = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
+        post_head = _git(root, "rev-parse", "HEAD")
+        post_local_ref_sha = _git(root, "rev-parse", "--verify", local_ref)
+        post_detached, post_branch = _branch_identity(root)
+        post_origin = _origin_url(root)
+        post_cached_sha, post_cached_finding = _optional_ref_sha(root, cached_origin_ref)
+        if post_cached_finding and post_cached_finding not in findings:
+            findings.append(post_cached_finding)
+        post_status = _git(root, "status", "--porcelain=v1", "--untracked-files=all").splitlines()
+        post_changed: list[str] = []
+        for label, before, after in (
+            ("git_root", final_git_root, post_git_root),
+            ("HEAD", final_head, post_head),
+            (local_ref, final_local_ref_sha, post_local_ref_sha),
+            ("branch", final_branch, post_branch),
+            ("detached", final_detached, post_detached),
+            ("origin", final_origin, post_origin),
+            (cached_origin_ref or "cached_origin_ref", final_cached_sha, post_cached_sha),
+            ("worktree_status", final_status, post_status),
+        ):
+            if before != after:
+                post_changed.append(label)
+        if post_changed:
+            findings.append(
+                "repository state changed during verification: " + ", ".join(post_changed)
+            )
+            live_verified = False
 
     return {
         "ok": not findings,

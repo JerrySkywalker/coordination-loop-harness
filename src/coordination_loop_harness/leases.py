@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+import secrets
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +14,7 @@ from .decisions import verify_decision
 from .repository import verify_repository
 from .util import (
     admission_mutex,
+    canonical_json_bytes,
     canonical_path,
     canonical_repo,
     canonical_scope,
@@ -18,6 +23,8 @@ from .util import (
     load_json,
     paths_overlap,
     require_safe_id,
+    sha256_bytes,
+    sha256_file,
     utc_now,
     write_json_atomic,
 )
@@ -32,6 +39,12 @@ class Overlap:
 
 
 _V2_SCHEMA = "coord.repo-set-lease.v2"
+
+
+def lease_candidate_sha256(data: dict[str, Any]) -> str:
+    """Return the canonical digest used by a v2 owner decision."""
+
+    return sha256_bytes(canonical_json_bytes(data))
 
 
 def _timestamp(value: str, *, label: str) -> datetime:
@@ -64,14 +77,26 @@ def _access_conflicts(left: str, right: str) -> bool:
     return left == "WRITE" or right == "WRITE"
 
 
-def _terminal_record_is_valid(data: dict[str, Any]) -> bool:
+def _validate_outcome_binding(data: dict[str, Any], repo_root: Path) -> None:
+    outcome_ref = data.get("outcome_ref")
+    if not isinstance(outcome_ref, str) or not outcome_ref or "\\" in outcome_ref:
+        raise ValueError("A RELEASED v2 lease requires a repository-relative POSIX outcome_ref")
+    if is_absolute_scope(outcome_ref):
+        raise ValueError("A RELEASED v2 lease outcome_ref must be repository-relative")
+    outcome_path = ensure_within(
+        repo_root / outcome_ref,
+        repo_root,
+        label="lease outcome_ref",
+        must_exist=True,
+    )
+    if not outcome_path.is_file():
+        raise ValueError("A RELEASED v2 lease outcome_ref must identify a regular file")
+    if data.get("outcome_sha256") != sha256_file(outcome_path):
+        raise ValueError("Lease outcome SHA-256 binding mismatch")
+
+
+def _terminal_record_is_valid(data: dict[str, Any], repo_root: Path | None = None) -> bool:
     schema_version = data.get("schema_version")
-    if schema_version == _V2_SCHEMA:
-        try:
-            _validate_v2_lifecycle(data)
-        except (TypeError, ValueError):
-            return False
-        return data.get("state") == "RELEASED"
     if schema_version == "coord.repo-set-lease.v1":
         return (
             data.get("state") == "RELEASED"
@@ -81,13 +106,30 @@ def _terminal_record_is_valid(data: dict[str, Any]) -> bool:
             and isinstance(data.get("outcome_ref"), str)
             and bool(data.get("outcome_ref"))
         )
+    if repo_root is None:
+        return False
+    try:
+        if validate_document(data, repo_root):
+            return False
+        if schema_version == _V2_SCHEMA:
+            _validate_v2_lifecycle(data)
+            if data.get("state") != "RELEASED":
+                return False
+            _validate_terminal_release(data, repo_root)
+            return True
+    except (OSError, TypeError, ValueError):
+        return False
     return False
 
 
 def _active_leases(
-    lock_root: Path, *, excluding_path: Path | None = None
+    lock_root: Path,
+    *,
+    excluding_path: Path | None = None,
+    repo_root: Path | None = None,
 ) -> list[tuple[Path, dict[str, Any]]]:
     lock_root = canonical_path(lock_root)
+    validation_root = repository_root(repo_root) if repo_root is not None else None
     excluded = canonical_path(excluding_path) if excluding_path is not None else None
     result: list[tuple[Path, dict[str, Any]]] = []
     for path in sorted(lock_root.glob("*.lease.json")):
@@ -97,12 +139,25 @@ def _active_leases(
         try:
             data = load_json(path)
         except ValueError:
-            # An opaque record supplies no positive resource identity. Explicit
-            # observation still reports it, but it cannot globally block a
-            # disjoint repository merely because a file exists.
+            # The canonical filename still supplies one exact identity even
+            # when a torn record has no parseable resource set. Preserve that
+            # lease-id conflict without inventing a machine-wide lock.
+            inferred_id = path.name.removesuffix(".lease.json")
+            result.append((path, {"lease_id": inferred_id, "state": "UNKNOWN_OPAQUE"}))
             continue
-        if data.get("state") == "RELEASED" and _terminal_record_is_valid(data):
-            continue
+        if data.get("state") == "RELEASED" and data.get("schema_version") == (
+            "coord.repo-set-lease.v1"
+        ):
+            if _terminal_record_is_valid(data):
+                continue
+        if data.get("state") == "RELEASED" and data.get("schema_version") == _V2_SCHEMA:
+            if validation_root is None:
+                try:
+                    validation_root = repository_root()
+                except ValueError:
+                    validation_root = None
+            if validation_root is not None and _terminal_record_is_valid(data, validation_root):
+                continue
         result.append((path, data))
     return result
 
@@ -158,13 +213,31 @@ def find_overlaps(
     candidate: dict[str, Any],
     lock_root: Path,
     *,
+    excluding: str | None = None,
     excluding_path: Path | None = None,
+    repo_root: Path | None = None,
 ) -> list[Overlap]:
+    if excluding is not None:
+        legacy_id = require_safe_id(excluding, "excluding lease_id")
+        legacy_path = ensure_within(
+            canonical_path(lock_root) / f"{legacy_id}.lease.json",
+            canonical_path(lock_root),
+            label="excluded lease file",
+        )
+        if excluding_path is not None and canonical_path(excluding_path) != legacy_path:
+            raise ValueError("excluding and excluding_path identify different lease files")
+        excluding_path = legacy_path
     candidate_sets = _sets(candidate)
     overlaps: list[Overlap] = []
-    for path, other in _active_leases(lock_root, excluding_path=excluding_path):
+    for path, other in _active_leases(
+        lock_root,
+        excluding_path=excluding_path,
+        repo_root=repo_root,
+    ):
         other_sets = _sets(other)
         lease_id = str(other.get("lease_id", path.stem))
+        if other.get("lease_id") == candidate.get("lease_id"):
+            overlaps.append(Overlap(lease_id, "lease_id", lease_id))
         candidate_repositories = _combined_repository_access(candidate_sets)
         other_repositories = _combined_repository_access(other_sets)
         for value in sorted(candidate_repositories.keys() & other_repositories.keys()):
@@ -262,12 +335,21 @@ def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
             value = item.get(key)
             if value is not None and (not isinstance(value, str) or not is_absolute_scope(value)):
                 raise ValueError(f"A v2 lease requires an absolute {key}")
+    if len(writers) > 1:
+        raise ValueError("A v2 lease cannot contain more than one WRITE repository")
     for value in data.get("local_scopes", []):
         if not isinstance(value, str) or not is_absolute_scope(value):
             raise ValueError("A v2 lease requires absolute local_scopes")
     active_writer = data.get("active_writer_repository")
     if state == "ACTIVE":
-        if data.get("released_utc") is not None or data.get("outcome_ref") is not None:
+        terminal_fields = (
+            "release_decision_ref",
+            "release_authority",
+            "released_utc",
+            "outcome_ref",
+            "outcome_sha256",
+        )
+        if any(data.get(field) is not None for field in terminal_fields):
             raise ValueError("An ACTIVE v2 lease cannot contain terminal release fields")
         if not data.get("decision_ref"):
             raise ValueError("An ACTIVE v2 lease requires decision_ref")
@@ -282,11 +364,26 @@ def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
                 "active_writer_repository"
             )
     else:
+        if data.get("generation", 0) < 2:
+            raise ValueError("A RELEASED v2 lease generation must be at least 2")
         released_utc = data.get("released_utc")
-        if released_utc is None or not data.get("outcome_ref"):
-            raise ValueError("A RELEASED v2 lease requires released_utc and outcome_ref")
-        if _timestamp(released_utc, label="released_utc") < created:
-            raise ValueError("released_utc must not precede created_utc")
+        if (
+            released_utc is None
+            or not data.get("release_decision_ref")
+            or data.get("release_authority") not in {"NORMAL", "STALE_RECOVERY"}
+            or not data.get("outcome_ref")
+            or not data.get("outcome_sha256")
+        ):
+            raise ValueError(
+                "A RELEASED v2 lease requires release authority, decision, and outcome binding"
+            )
+        released = _timestamp(released_utc, label="released_utc")
+        if released < heartbeat:
+            raise ValueError("released_utc must not precede heartbeat_utc")
+        if data.get("release_authority") == "NORMAL" and released > expires:
+            raise ValueError("A NORMAL release cannot record a timestamp after expiry")
+        if data.get("release_authority") == "STALE_RECOVERY" and released <= expires:
+            raise ValueError("A STALE_RECOVERY release must record a timestamp after expiry")
         if active_writer is not None:
             raise ValueError("A RELEASED lease must not have an active writer")
 
@@ -314,16 +411,9 @@ def _git_path(root: Path, name: str) -> Path:
     return canonical_path(result.stdout.strip())
 
 
-def _validate_writer_binding(data: dict[str, Any]) -> None:
-    if data.get("schema_version") != _V2_SCHEMA or data.get("state") != "ACTIVE":
-        return
-    writers = [item for item in data["repositories"] if item["mode"] == "WRITE"]
-    if not writers:
-        return
-    writer = writers[0]
-    canonical_root = canonical_path(writer["canonical_path"], must_exist=True)
-    writer_root = canonical_path(writer["worktree_root"], must_exist=True)
-    branch_ref = writer["branch_ref"]
+def _writer_branch_name(branch_ref: str) -> str:
+    if not isinstance(branch_ref, str) or not branch_ref.startswith("refs/heads/"):
+        raise ValueError("Writer branch_ref is not a valid local branch reference")
     branch = branch_ref.removeprefix("refs/heads/")
     ref_check = subprocess.run(
         ["git", "check-ref-format", "--branch", branch],
@@ -334,6 +424,172 @@ def _validate_writer_binding(data: dict[str, Any]) -> None:
     )
     if ref_check.returncode != 0:
         raise ValueError("Writer branch_ref is not a valid local branch reference")
+    return branch
+
+
+def _git_metadata_roots(root: Path) -> tuple[Path, ...]:
+    roots: set[Path] = set()
+    for arguments in (
+        ("--absolute-git-dir",),
+        ("--path-format=absolute", "--git-common-dir"),
+    ):
+        result = subprocess.run(
+            ["git", "--no-optional-locks", "-C", str(root), "rev-parse", *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise ValueError(f"git metadata root verification failed: {detail}")
+        roots.add(canonical_path(result.stdout.strip(), must_exist=True))
+    return tuple(sorted(roots, key=str))
+
+
+def _path_within_any_root(path: Path, roots: tuple[Path, ...]) -> bool:
+    for root in roots:
+        try:
+            path.relative_to(root)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _writer_git_lock_paths(data: dict[str, Any]) -> tuple[Path, ...]:
+    if data.get("schema_version") != _V2_SCHEMA or data.get("state") != "ACTIVE":
+        return ()
+    writers = [item for item in data["repositories"] if item["mode"] == "WRITE"]
+    if not writers:
+        return ()
+    writer = writers[0]
+    writer_root = canonical_path(writer["worktree_root"], must_exist=True)
+    # Validate the untrusted ref before passing it to `git --git-path`; Git
+    # deliberately resolves `..` components and could otherwise point outside
+    # its metadata directories.
+    branch = _writer_branch_name(writer["branch_ref"])
+    metadata_roots = _git_metadata_roots(writer_root)
+    names = (
+        "index.lock",
+        "HEAD.lock",
+        "config.lock",
+        "packed-refs.lock",
+        f"refs/heads/{branch}.lock",
+    )
+    paths = {_git_path(writer_root, name) for name in names}
+    for path in paths:
+        if not _path_within_any_root(path, metadata_roots):
+            raise ValueError(f"Git admission lock must stay within Git metadata roots: {path}")
+    return tuple(sorted(paths, key=str))
+
+
+@contextmanager
+def _writer_git_admission_guard(data: dict[str, Any]) -> Iterator[frozenset[Path]]:
+    """Hold Git-native mutation guards across final admission publication."""
+
+    paths = _writer_git_lock_paths(data)
+    handles: list[tuple[Path, Any, tuple[int, int], str]] = []
+    created_directories: list[Path] = []
+    body_error: BaseException | None = None
+    try:
+        for path in paths:
+            missing: list[Path] = []
+            parent = path.parent
+            while not parent.exists():
+                missing.append(parent)
+                parent = parent.parent
+            if not parent.is_dir():
+                raise ValueError(f"Git lock parent is not a directory: {parent}")
+            for directory in reversed(missing):
+                try:
+                    directory.mkdir()
+                except FileExistsError as exc:
+                    if not directory.is_dir():
+                        raise ValueError(
+                            f"Git lock parent is not a directory: {directory}"
+                        ) from exc
+                else:
+                    created_directories.append(directory)
+            try:
+                handle = path.open("x", encoding="utf-8", newline="\n")
+            except FileExistsError as exc:
+                raise ValueError(f"writer worktree has an active Git lock: {path}") from exc
+            marker = (
+                "coord.repo-set-lease.v2 admission "
+                f"pid={os.getpid()} nonce={secrets.token_hex(16)}\n"
+            )
+            stat = os.fstat(handle.fileno())
+            handles.append((path, handle, (stat.st_dev, stat.st_ino), marker))
+            handle.write(marker)
+            handle.flush()
+            os.fsync(handle.fileno())
+        yield frozenset(path for path, _, _, _ in handles)
+    except BaseException as exc:
+        body_error = exc
+        raise
+    finally:
+        cleanup_errors: list[str] = []
+        for path, handle, identity, marker in reversed(handles):
+            try:
+                handle.close()
+            except OSError as exc:
+                cleanup_errors.append(f"owned Git admission lock cannot be closed: {path}: {exc}")
+                continue
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                cleanup_errors.append(f"owned Git admission lock disappeared: {path}")
+                continue
+            except OSError as exc:
+                cleanup_errors.append(f"owned Git admission lock cannot be stated: {path}: {exc}")
+                continue
+            if (stat.st_dev, stat.st_ino) != identity:
+                cleanup_errors.append(f"owned Git admission lock identity changed: {path}")
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                cleanup_errors.append(f"owned Git admission lock cannot be read: {path}: {exc}")
+                continue
+            if content != marker:
+                cleanup_errors.append(f"owned Git admission lock content changed: {path}")
+                continue
+            try:
+                path.unlink()
+            except OSError as exc:
+                cleanup_errors.append(f"owned Git admission lock cannot be removed: {path}: {exc}")
+        for directory in reversed(created_directories):
+            try:
+                directory.rmdir()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                # A concurrent legitimate Git operation may have populated a
+                # directory we created. Never remove non-empty Git metadata.
+                pass
+        if cleanup_errors:
+            detail = "; ".join(cleanup_errors)
+            if body_error is not None:
+                body_error.add_note(f"Git admission lock cleanup also failed: {detail}")
+            else:
+                raise RuntimeError(detail)
+
+
+def _validate_writer_binding(
+    data: dict[str, Any],
+    *,
+    admitted_git_locks: frozenset[Path] = frozenset(),
+) -> None:
+    if data.get("schema_version") != _V2_SCHEMA or data.get("state") != "ACTIVE":
+        return
+    writers = [item for item in data["repositories"] if item["mode"] == "WRITE"]
+    if not writers:
+        return
+    writer = writers[0]
+    canonical_root = canonical_path(writer["canonical_path"], must_exist=True)
+    writer_root = canonical_path(writer["worktree_root"], must_exist=True)
+    branch = _writer_branch_name(writer["branch_ref"])
     canonical_result = verify_repository(
         canonical_root,
         expected_origin=writer["repository"],
@@ -356,8 +612,9 @@ def _validate_writer_binding(data: dict[str, Any]) -> None:
         findings.append("writer worktree has tracked changes")
     if writer_result["untracked"]:
         findings.append("writer worktree has untracked files")
-    if _git_path(writer_root, "index.lock").exists():
-        findings.append("writer worktree has an active Git index.lock")
+    for lock_path in _writer_git_lock_paths(data):
+        if lock_path.exists() and lock_path not in admitted_git_locks:
+            findings.append(f"writer worktree has an active Git lock: {lock_path}")
     if findings:
         raise ValueError("Writer repository binding failed:\n- " + "\n- ".join(findings))
 
@@ -377,6 +634,100 @@ def _validate_decision_scope(data: dict[str, Any], decision: dict[str, Any]) -> 
             "Lease decision scope does not include every reserved resource:\n- "
             + "\n- ".join(missing)
         )
+    expected_digest = decision.get("lease_candidate_sha256")
+    actual_digest = lease_candidate_sha256(data)
+    if expected_digest != actual_digest:
+        raise ValueError(
+            "Lease decision candidate SHA-256 binding mismatch: "
+            f"expected {actual_digest}, found {expected_digest}"
+        )
+
+
+def _validate_terminal_release(
+    data: dict[str, Any],
+    repo_root: Path,
+    *,
+    observed_now: datetime | None = None,
+) -> None:
+    now = observed_now or _timestamp(utc_now(), label="current_utc")
+    if _timestamp(data["released_utc"], label="released_utc") > now:
+        raise ValueError("A terminal release cannot have a future released_utc")
+    _validate_outcome_binding(data, repo_root)
+    release_ref = data.get("release_decision_ref")
+    if not isinstance(release_ref, str) or not release_ref:
+        raise ValueError("A RELEASED v2 lease requires release_decision_ref")
+    release_path = ensure_within(
+        repo_root / release_ref,
+        repo_root,
+        label="lease release_decision_ref",
+        must_exist=True,
+    )
+    authority = data.get("release_authority")
+    action = "lease:release-stale" if authority == "STALE_RECOVERY" else "lease:release"
+    decision = verify_decision(
+        repo_root,
+        release_path,
+        run_id=data["run_id"],
+        action=action,
+        lease_id=data["lease_id"],
+        lease_generation=data["generation"],
+        require_candidate_digest=True,
+    )
+    if not decision["ok"]:
+        raise ValueError(
+            "Lease release decision verification failed:\n- " + "\n- ".join(decision["findings"])
+        )
+    if decision.get("authorized_actions") != [action]:
+        raise ValueError("Release decision must authorize exactly one terminal action")
+    _validate_decision_scope(data, decision)
+    if decision.get("sequence") != data["generation"]:
+        raise ValueError("Release decision sequence must match the terminal lease generation")
+    active_ref = data.get("decision_ref")
+    previous_ref = decision.get("previous_decision_ref")
+    if not isinstance(active_ref, str) or not isinstance(previous_ref, str):
+        raise ValueError("Release decision must directly follow the active lease decision")
+    active_path = ensure_within(
+        repo_root / active_ref,
+        repo_root,
+        label="active lease decision_ref",
+        must_exist=True,
+    )
+    previous_path = ensure_within(
+        repo_root / previous_ref,
+        repo_root,
+        label="release previous_decision_ref",
+        must_exist=True,
+    )
+    if active_path != previous_path:
+        raise ValueError("Release decision does not directly follow the active lease decision")
+    active_candidate = dict(data)
+    active_candidate["state"] = "ACTIVE"
+    active_candidate["generation"] = data["generation"] - 1
+    writers = [item["repository"] for item in data["repositories"] if item.get("mode") == "WRITE"]
+    active_candidate["active_writer_repository"] = writers[0] if writers else None
+    active_candidate["release_decision_ref"] = None
+    active_candidate["release_authority"] = None
+    active_candidate["released_utc"] = None
+    active_candidate["outcome_ref"] = None
+    active_candidate["outcome_sha256"] = None
+    active_action = "lease:acquire" if active_candidate["generation"] == 1 else "lease:expand"
+    active_decision = verify_decision(
+        repo_root,
+        active_path,
+        run_id=data["run_id"],
+        action=active_action,
+        lease_id=data["lease_id"],
+        lease_generation=active_candidate["generation"],
+        require_candidate_digest=True,
+    )
+    if not active_decision["ok"]:
+        raise ValueError(
+            "Active lease decision verification failed:\n- "
+            + "\n- ".join(active_decision["findings"])
+        )
+    _validate_decision_scope(active_candidate, active_decision)
+    if active_decision.get("sequence") != active_candidate["generation"]:
+        raise ValueError("Active decision sequence must match the active lease generation")
 
 
 def _validate_lease(
@@ -401,7 +752,18 @@ def _validate_lease(
             raise ValueError("Coordination self-write requires coord.repo-set-lease.v2")
         if not allow_coordination_self_write:
             raise ValueError("The coordination repository cannot also be a product repository")
-        _validate_coordination_self_write(data, repositories, coordination)
+        if data.get("state") == "ACTIVE":
+            _validate_coordination_self_write(data, repositories, coordination)
+        else:
+            writers = [
+                canonical_repo(item["repository"])
+                for item in repositories
+                if item.get("mode") == "WRITE"
+            ]
+            if writers != [coordination]:
+                raise ValueError(
+                    "A released coordination self-write lease must preserve its sole WRITE identity"
+                )
 
     if data.get("schema_version") != _V2_SCHEMA:
         writers = [
@@ -446,12 +808,15 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
         action="lease:acquire",
         lease_id=candidate["lease_id"],
         lease_generation=1,
+        require_candidate_digest=candidate.get("schema_version") == _V2_SCHEMA,
     )
     if not decision["ok"]:
         raise ValueError(
             "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
         )
     _validate_decision_scope(candidate, decision)
+    if decision.get("sequence") != candidate["generation"]:
+        raise ValueError("Acquisition decision sequence must match the lease generation")
     _validate_writer_binding(candidate)
     lease_path = ensure_within(
         lock_root / f"{candidate['lease_id']}.lease.json",
@@ -467,20 +832,24 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
             action="lease:acquire",
             lease_id=candidate["lease_id"],
             lease_generation=1,
+            require_candidate_digest=candidate.get("schema_version") == _V2_SCHEMA,
         )
         if not decision["ok"]:
             raise ValueError(
                 "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
             )
         _validate_decision_scope(candidate, decision)
-        _validate_writer_binding(candidate)
-        overlaps = find_overlaps(candidate, lock_root)
-        if overlaps:
-            detail = "; ".join(
-                f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps
-            )
-            raise RuntimeError(f"Repository-set overlap detected: {detail}")
-        write_json_atomic(lease_path, candidate, create_new=True, trusted_root=lock_root)
+        if decision.get("sequence") != candidate["generation"]:
+            raise ValueError("Acquisition decision sequence must match the lease generation")
+        with _writer_git_admission_guard(candidate) as git_locks:
+            _validate_writer_binding(candidate, admitted_git_locks=git_locks)
+            overlaps = find_overlaps(candidate, lock_root, repo_root=repo_root)
+            if overlaps:
+                detail = "; ".join(
+                    f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps
+                )
+                raise RuntimeError(f"Repository-set overlap detected: {detail}")
+            write_json_atomic(lease_path, candidate, create_new=True, trusted_root=lock_root)
     return lease_path
 
 
@@ -512,16 +881,22 @@ def replace(
                 f"Lease generation mismatch: expected {expected_generation}, "
                 f"found {current.get('generation')}"
             )
-        _validate_lease(current, repo_root, allow_coordination_self_write=True)
-        for field in (
-            "schema_version",
-            "run_id",
-            "owner",
-            "created_utc",
-            "coordination_repository",
-        ):
-            if candidate.get(field) != current.get(field):
-                raise ValueError(f"Replacement must preserve lease identity field: {field}")
+        is_v2 = candidate.get("schema_version") == _V2_SCHEMA
+        if is_v2:
+            if current.get("schema_version") != _V2_SCHEMA:
+                raise ValueError("A v2 replacement requires an existing v2 lease")
+            _validate_lease(current, repo_root, allow_coordination_self_write=True)
+            for field in (
+                "schema_version",
+                "run_id",
+                "owner",
+                "created_utc",
+                "coordination_repository",
+            ):
+                if candidate.get(field) != current.get(field):
+                    raise ValueError(f"Replacement must preserve lease identity field: {field}")
+        elif current.get("schema_version") == _V2_SCHEMA:
+            raise ValueError("Replacement schema_version cannot downgrade a v2 lease to legacy")
         if candidate.get("generation") != expected_generation + 1:
             raise ValueError("Replacement generation must equal expected_generation + 1")
         if candidate.get("state") != "ACTIVE":
@@ -540,40 +915,70 @@ def replace(
             action="lease:expand",
             lease_id=candidate["lease_id"],
             lease_generation=candidate["generation"],
+            require_candidate_digest=is_v2,
         )
         if not decision["ok"]:
             raise ValueError(
                 "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
             )
         _validate_decision_scope(candidate, decision)
-        current_decision_ref = current.get("decision_ref")
-        previous_decision_ref = decision.get("previous_decision_ref")
-        if not isinstance(current_decision_ref, str) or not isinstance(previous_decision_ref, str):
-            raise ValueError("Replacement decision must reference the current lease decision")
-        current_decision_path = ensure_within(
-            repo_root / current_decision_ref,
-            repo_root,
-            label="current lease decision_ref",
-            must_exist=True,
-        )
-        previous_decision_path = ensure_within(
-            repo_root / previous_decision_ref,
-            repo_root,
-            label="replacement previous_decision_ref",
-            must_exist=True,
-        )
-        if current_decision_path != previous_decision_path:
-            raise ValueError("Replacement decision does not directly follow the current decision")
-        if decision.get("sequence") != candidate["generation"]:
-            raise ValueError("Replacement decision sequence must match the lease generation")
-        _validate_writer_binding(candidate)
-        overlaps = find_overlaps(candidate, lock_root, excluding_path=lease_path)
-        if overlaps:
-            detail = "; ".join(
-                f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps
+        if is_v2:
+            current_decision_ref = current.get("decision_ref")
+            previous_decision_ref = decision.get("previous_decision_ref")
+            if not isinstance(current_decision_ref, str) or not isinstance(
+                previous_decision_ref, str
+            ):
+                raise ValueError("Replacement decision must reference the current lease decision")
+            current_decision_path = ensure_within(
+                repo_root / current_decision_ref,
+                repo_root,
+                label="current lease decision_ref",
+                must_exist=True,
             )
-            raise RuntimeError(f"Repository-set overlap detected: {detail}")
-        write_json_atomic(lease_path, candidate, trusted_root=lock_root)
+            current_action = "lease:acquire" if current["generation"] == 1 else "lease:expand"
+            current_decision = verify_decision(
+                repo_root,
+                current_decision_path,
+                run_id=current["run_id"],
+                action=current_action,
+                lease_id=current["lease_id"],
+                lease_generation=current["generation"],
+                require_candidate_digest=True,
+            )
+            if not current_decision["ok"]:
+                raise ValueError(
+                    "Current lease decision verification failed:\n- "
+                    + "\n- ".join(current_decision["findings"])
+                )
+            _validate_decision_scope(current, current_decision)
+            if current_decision.get("sequence") != current["generation"]:
+                raise ValueError("Current decision sequence must match the lease generation")
+            previous_decision_path = ensure_within(
+                repo_root / previous_decision_ref,
+                repo_root,
+                label="replacement previous_decision_ref",
+                must_exist=True,
+            )
+            if current_decision_path != previous_decision_path:
+                raise ValueError(
+                    "Replacement decision does not directly follow the current decision"
+                )
+            if decision.get("sequence") != candidate["generation"]:
+                raise ValueError("Replacement decision sequence must match the lease generation")
+        with _writer_git_admission_guard(candidate) as git_locks:
+            _validate_writer_binding(candidate, admitted_git_locks=git_locks)
+            overlaps = find_overlaps(
+                candidate,
+                lock_root,
+                excluding_path=lease_path,
+                repo_root=repo_root,
+            )
+            if overlaps:
+                detail = "; ".join(
+                    f"{item.category}={item.value} held by {item.lease_id}" for item in overlaps
+                )
+                raise RuntimeError(f"Repository-set overlap detected: {detail}")
+            write_json_atomic(lease_path, candidate, trusted_root=lock_root)
     return lease_path
 
 
@@ -582,7 +987,9 @@ def release(
     lock_root: Path,
     *,
     expected_generation: int,
-    outcome_ref: str,
+    outcome_ref: str | None = None,
+    candidate_path: Path | None = None,
+    repo_root: Path | None = None,
 ) -> Path:
     lease_id = require_safe_id(lease_id, "lease_id")
     lock_root = canonical_path(lock_root)
@@ -602,18 +1009,73 @@ def release(
                 f"Lease generation mismatch: expected {expected_generation}, "
                 f"found {current.get('generation')}"
             )
-        current["state"] = "RELEASED"
-        current["generation"] = expected_generation + 1
-        current["released_utc"] = utc_now()
-        current["outcome_ref"] = outcome_ref
-        current["active_writer_repository"] = None
         if current.get("schema_version") == _V2_SCHEMA:
-            _validate_v2_lifecycle(current)
-        write_json_atomic(lease_path, current, trusted_root=lock_root)
+            repo_root = repository_root(repo_root)
+            _validate_lease(current, repo_root, allow_coordination_self_write=True)
+            if candidate_path is None:
+                raise ValueError("A v2 release requires an exact terminal candidate")
+            candidate = load_json(candidate_path)
+            _validate_lease(candidate, repo_root, allow_coordination_self_write=True)
+            if candidate.get("lease_id") != lease_id:
+                raise ValueError("Terminal candidate lease_id does not match the requested lease")
+            if candidate.get("state") != "RELEASED":
+                raise ValueError("A v2 terminal candidate must have state=RELEASED")
+            if candidate.get("generation") != expected_generation + 1:
+                raise ValueError("Terminal candidate generation must equal expected_generation + 1")
+            immutable_fields = (
+                "schema_version",
+                "lease_id",
+                "run_id",
+                "created_utc",
+                "heartbeat_utc",
+                "expires_utc",
+                "owner",
+                "coordination_repository",
+                "repositories",
+                "local_scopes",
+                "infrastructure_scopes",
+                "decision_ref",
+            )
+            for field in immutable_fields:
+                if candidate.get(field) != current.get(field):
+                    raise ValueError(f"Terminal candidate must preserve lease field: {field}")
+            with _writer_git_admission_guard(current) as git_locks:
+                _validate_writer_binding(current, admitted_git_locks=git_locks)
+                now = _timestamp(utc_now(), label="current_utc")
+                released = _timestamp(candidate["released_utc"], label="released_utc")
+                if released > now:
+                    raise ValueError("Terminal candidate released_utc cannot be in the future")
+                expected_authority = (
+                    "STALE_RECOVERY"
+                    if now > _timestamp(current["expires_utc"], label="expires_utc")
+                    else "NORMAL"
+                )
+                if candidate.get("release_authority") != expected_authority:
+                    raise ValueError(
+                        "Terminal candidate release authority mismatch: "
+                        f"expected {expected_authority}"
+                    )
+                _validate_terminal_release(candidate, repo_root, observed_now=now)
+                write_json_atomic(lease_path, candidate, trusted_root=lock_root)
+        else:
+            if not isinstance(outcome_ref, str) or not outcome_ref:
+                raise ValueError("A legacy release requires outcome_ref")
+            current["state"] = "RELEASED"
+            current["generation"] = expected_generation + 1
+            current["released_utc"] = utc_now()
+            current["outcome_ref"] = outcome_ref
+            current["active_writer_repository"] = None
+            write_json_atomic(lease_path, current, trusted_root=lock_root)
     return lease_path
 
 
-def observe(lease_id: str, lock_root: Path, *, observed_utc: str | None = None) -> dict[str, Any]:
+def observe(
+    lease_id: str,
+    lock_root: Path,
+    *,
+    observed_utc: str | None = None,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
     """Observe ownership without reclaiming or mutating a stale lease."""
 
     lease_id = require_safe_id(lease_id, "lease_id")
@@ -627,13 +1089,35 @@ def observe(lease_id: str, lock_root: Path, *, observed_utc: str | None = None) 
     lease = load_json(lease_path)
     if lease.get("lease_id") != lease_id:
         raise RuntimeError("Lease file is not bound to the requested lease_id")
+    findings: list[str] = []
     if lease.get("schema_version") == _V2_SCHEMA:
-        _validate_v2_lifecycle(lease)
-    if lease.get("state") == "RELEASED":
+        try:
+            validation_root = repository_root(repo_root)
+        except ValueError as exc:
+            validation_root = None
+            findings.append(str(exc))
+        if validation_root is not None:
+            findings.extend(validate_document(lease, validation_root))
+        try:
+            _validate_v2_lifecycle(lease)
+            if lease.get("state") == "RELEASED":
+                if validation_root is None:
+                    raise ValueError("Cannot verify terminal release without repo_root")
+                _validate_terminal_release(lease, validation_root)
+        except (OSError, TypeError, ValueError) as exc:
+            findings.append(str(exc))
+    elif lease.get("schema_version") == "coord.repo-set-lease.v1":
+        if lease.get("state") == "RELEASED" and not _terminal_record_is_valid(lease):
+            findings.append("Legacy terminal lease evidence is incomplete")
+    else:
+        findings.append(f"Unsupported lease schema_version: {lease.get('schema_version')}")
+    if findings:
+        status = "UNKNOWN_FAIL_CLOSED"
+    elif lease.get("state") == "RELEASED":
         status = "TERMINAL_RELEASED"
     elif lease.get("state") != "ACTIVE":
         status = "UNKNOWN_FAIL_CLOSED"
-    elif lease.get("schema_version") != _V2_SCHEMA:
+    elif lease.get("schema_version") == "coord.repo-set-lease.v1":
         status = "ACTIVE_LEGACY"
     else:
         observed = _timestamp(observed_utc or utc_now(), label="observed_utc")
@@ -647,6 +1131,7 @@ def observe(lease_id: str, lock_root: Path, *, observed_utc: str | None = None) 
         "generation": lease.get("generation"),
         "automatic_reclaim": False,
         "path": str(lease_path),
+        "findings": findings,
     }
 
 

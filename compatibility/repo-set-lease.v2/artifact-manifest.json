@@ -3,6 +3,7 @@
   "protocol": "coord.repo-set-lease.v2",
   "canonical_owner": "CLH",
   "canonicalization": "utf-8-json-with-lf-normalization-for-artifact-hashes",
+  "lease_candidate_canonicalization": "utf-8-reject-duplicate-keys-and-non-finite-numbers-sort-keys-compact-ensure-ascii-false-one-trailing-lf",
   "semantic_validator": "coordination_loop_harness.leases",
   "digest_algorithm": "sha256",
   "artifact_hash_input": "file-bytes-with-crlf-normalized-to-lf",
@@ -10,6 +11,8 @@
   "producer_base_sha": "95521b2d3b7dbf35610382b87f7e1d6c28872df7",
   "producer_head_recording": "PROGRAM_COMPATIBILITY_OBSERVATION_AFTER_MERGE",
   "legacy_policy": "coord.repo-set-lease.v1-semantics-unchanged",
+  "draft_v2_migration_policy": "pre-acceptance-v2-records-are-never-auto-upgraded-and-remain-fail-closed-until-reviewed-migration",
+  "decision_binding_policy": "generic-decision-v2-schema-is-not-v2-lease-authority; consumers-require-and-compare-the-exact-candidate-digest",
   "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
   "source_import_prohibited": true,
   "dgf_writer_lease_dependency": false,
@@ -22,68 +25,134 @@
   "artifacts": [
     {
       "path": "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
-      "sha256": "d8f3c4e7fb99a8cb83f3089f643d6231dd173f28919c57d407447771100fa0fa"
+      "sha256": "c3cc3c91aa5bf376793f3c11930486edaece24dc14a99f46d9cf2e75107f70b4"
+    },
+    {
+      "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
+      "sha256": "2c492a8a962a5d75daf933432a37807f66a0cde1ce038ef688b2734278fb6901"
+    },
+    {
+      "path": "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
+      "sha256": "0c791a40ae8e4d798cf04030f8a7eaf6ed25b8143117069d75615b9c59373c8e"
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/shared-program-disjoint-writers.json",
-      "sha256": "2bd99106c1aa5f18b591cdffed0d7be39709978002bc8e8a27901dbf778b98f1"
+      "sha256": "821b1f70f125f4b173b2ebc3cec5a8febc23c57eb86d55a2fdd5ea5df39912b8"
+    },
+    {
+      "path": "compatibility/repo-set-lease.v2/positive/terminal-release.json",
+      "sha256": "0aa48f5f0cbae9af5218855d8583977539a409f80eabf9541645c180dec5317a"
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "e02c36c38310fafcc750a08fd4768300f4becd09da01269b299c3df6023abf1e"
+      "sha256": "ca2bf392fa355743997a672ee547310cc5cee7884ddd62e74ac570e19e361766"
+    },
+    {
+      "path": "docs/command-reference.md",
+      "sha256": "89250c399daaa1ac73cc844a68ea69cff479b44e33e5bab8ecc3b25e5c0c9994"
+    },
+    {
+      "path": "docs/leases.md",
+      "sha256": "8800a1a1cbb5d26e6c0624e98569b61f107c31a05ca797a65173eccac2c7c542"
     },
     {
       "path": "schemas/decision.v2.schema.json",
-      "sha256": "18f66972f8ad8c1dc91da57e7a48e165085ebbfcc4c7e5a4b06cf239a1bed482"
+      "sha256": "31d65e671deeb5773e5421da46d707a35acfde0ef5c8a6b8f72f45d12208053b"
     },
     {
       "path": "schemas/repo-set-lease.v2.schema.json",
-      "sha256": "6d988462087907c957c2add8d703c727d452db9d31d3410351d52e99bbed344f"
+      "sha256": "d119f32071a978bc8b0b588f03dd72c4da9552d72f98353f76b3c950f2211958"
     },
     {
       "path": "src/coordination_loop_harness/cli.py",
-      "sha256": "3dac6f6fc8d1f7c51ca73d49861029edf21e7f3ce8f8327342c9772062f038f1"
+      "sha256": "006a7a2f8386d52a3f203db93f54b7f25b6f7ebc80679b9542dd7f1cdddc4fc2"
     },
     {
       "path": "src/coordination_loop_harness/decisions.py",
-      "sha256": "b66918de14c0e786a4275e076d70c579efa2f722cf2f40cd7468ede14261a050"
+      "sha256": "8feee3fab895387fc74bdfb9f9cd3872f4af0bee466e4a587e278be679252691"
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "3651f9440498458255b782ead39dd295a78d93621620cda2a5ab969167162e78"
+      "sha256": "7f8fc385b86f654115dfa56aa480f9fb4a7ae2f700b8af25a6048072ebc143df"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
-      "sha256": "4504abe05fb1fc03ffc29d4b1a542c13370aada4b434a03587e2cd8efd66578e"
+      "sha256": "12d6f6f3ace971ed0ff1a7e21eac6b9a11fb53801c5ce66ca01141f2261a9a74"
     },
     {
       "path": "src/coordination_loop_harness/util.py",
-      "sha256": "b3db7a4810f06fc3a3bee29f147e19a39187e87ce5d5a5b7c433329b121f5e70"
+      "sha256": "81437c6f94392bfc1d37c2c2b672d20a68857e65b4a0e49fda9ddb46325c470a"
     },
     {
       "path": "src/coordination_loop_harness/validation.py",
       "sha256": "1de26bf5c59d135dcf7182b8b8506ec23afed4161a78d8fc123497670f1f6bb2"
     },
     {
+      "path": "templates/decision.example.json",
+      "sha256": "8eef23bd2869563923f9a24c5cf7afee07a4423cdd009d2a380bb26ae4b24601"
+    },
+    {
+      "path": "tests/test_cli.py",
+      "sha256": "b414e4b97022a30057a66ae243d996dc1192d6a01df4b22cb5d857502b016923"
+    },
+    {
       "path": "tests/test_leases.py",
-      "sha256": "3f45060925daff81c064f68326bbf4703440301b7e320b00ac4f74b93baa6119"
+      "sha256": "8df0f6f0f77152371d9fac398ce49ab9ff73eeacf757900287a034e72958f051"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "908b2ae4aa72782c049c10137f74e0c46c85c29208be69abaf4bcf25c5517bf2"
+      "sha256": "0fd0587ef64874379597e0e9fb3f7b9ce1a504906cc31316d6b033743d2adccc"
+    },
+    {
+      "path": "tests/test_repository.py",
+      "sha256": "e414c2a5b6a6d252cb13972fde49a47237c11ce798076e3b0274dd1b057f96a6"
+    },
+    {
+      "path": "tests/test_util.py",
+      "sha256": "c9c8ce298b6c9efcad41ceacaf16c0fed26af92255824b78f4463faf590c54d5"
     }
   ],
   "positive_cases": [
-    "shared-program-disjoint-writers"
+    "candidate-digest",
+    "shared-program-disjoint-writers",
+    "terminal-release"
   ],
   "negative_expected_categories": {
-    "same-repository": "repository",
-    "same-worktree": "path",
-    "same-branch": "branch",
-    "overlapping-local-resource": "path",
-    "root-local-resource": "path",
-    "same-infrastructure-resource": "infrastructure"
+    "same-lease-id": ["lease_id"],
+    "same-repository": ["repository"],
+    "same-worktree": ["path"],
+    "same-branch": ["repository", "branch"],
+    "overlapping-local-resource": ["path"],
+    "root-local-resource": ["path", "path", "path"],
+    "same-infrastructure-resource": ["infrastructure"]
   },
-  "producer_artifact_id": "repo-set-lease.v2+sha256:4b00ec118d1c62184a829b6e26c6bb063934468915ab6c35e526cff3444ffe68",
-  "artifact_set_sha256": "4b00ec118d1c62184a829b6e26c6bb063934468915ab6c35e526cff3444ffe68"
+  "negative_schema_and_authority_cases": [
+    "active-with-terminal-field",
+    "active-with-null-decision-ref",
+    "active-writer-without-write",
+    "two-writers",
+    "write-with-null-active-writer",
+    "released-with-active-writer",
+    "released-without-outcome-digest",
+    "released-without-release-decision-ref",
+    "released-without-release-authority",
+    "released-generation-one",
+    "released-outcome-parent-traversal",
+    "released-outcome-trailing-slash",
+    "released-decision-parent-traversal",
+    "extra-property",
+    "branch-ref-parent-component",
+    "read-branch-ref-parent-component",
+    "active-writer-value-mismatch",
+    "candidate-digest-mismatch",
+    "lease-decision-missing-candidate-digest",
+    "lease-decision-null-candidate-digest",
+    "release-decision-wrong-lease-id",
+    "release-decision-wrong-generation",
+    "normal-action-cannot-release-stale",
+    "release-decision-cannot-mix-terminal-actions",
+    "release-must-directly-follow-active-decision"
+  ],
+  "producer_artifact_id": "repo-set-lease.v2+sha256:b06b6085e2db85d691d6d8f9fa1b9bc1749b5881b1fd82bc3f27bf5a1b44a078",
+  "artifact_set_sha256": "b06b6085e2db85d691d6d8f9fa1b9bc1749b5881b1fd82bc3f27bf5a1b44a078"
 }
