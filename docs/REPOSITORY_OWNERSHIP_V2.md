@@ -26,16 +26,19 @@ and conflicts with active observations of that repository.
 They never become shared merely because repository observations are shared.
 Overlapping parent/child paths conflict whenever either path is WRITE.
 Infrastructure identities may contain `/`, but must be non-empty and have no
-surrounding whitespace; their conflict identity is case-normalized.
+surrounding whitespace; their conflict identity is case-normalized. An opaque
+infrastructure identity remains infrastructure when it contains the literal
+branch-shaped substring `:refs/heads/` but its prefix is not `owner/name`.
 Every v2 repository path, worktree path, and local scope uses a portable,
 absolute grammar so its identity cannot change with a process working
 directory. The serialized grammar admits a drive-qualified Windows path or a
 single-root POSIX path. It rejects control characters, empty, dot, parent,
-trailing-dot/space, and Windows reserved device components as well as UNC and device namespaces,
-double-leading separators, and backslashes in POSIX paths because those
-spellings cannot be given one bounded cross-host identity. A mutating operation
-additionally requires every declared path to use the current host's native
-dialect.
+trailing-dot/space, Windows reserved device components, and the Windows-invalid
+characters `<`, `>`, `:`, `"`, `|`, `?`, and `*` inside path components, as
+well as UNC and device namespaces, double-leading separators, and backslashes
+in POSIX paths. Those spellings cannot be given one bounded cross-host identity.
+A mutating operation additionally requires every declared path to use the
+current host's native dialect.
 Read-only observation keeps the portable grammar so another host can still
 report ownership; that classification is not mutation admission.
 Serialized repository fields use suffix-free `owner/name` syntax and may

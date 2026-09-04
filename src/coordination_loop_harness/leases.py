@@ -1042,7 +1042,13 @@ def _canonical_decision_scope_entry(scope: str) -> str:
     if marker_index > 0:
         repository = scope[:marker_index]
         branch = scope[marker_index + 1 :]
-        return f"{_canonical_v2_repository_scope(repository)}:{branch.casefold()}"
+        try:
+            return f"{_canonical_v2_repository_scope(repository)}:{branch.casefold()}"
+        except ValueError:
+            # Infrastructure identities are provider-neutral opaque resources.
+            # A literal branch-shaped substring does not turn an identity whose
+            # prefix is not owner/name into a repository branch reservation.
+            return scope.casefold()
     if ":" in scope:
         return scope.casefold()
     if scope.count("/") == 1:

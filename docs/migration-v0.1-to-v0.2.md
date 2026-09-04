@@ -54,9 +54,10 @@ release. Draft v2 records without `release_decision_ref`, `release_authority`,
 and `outcome_sha256`, with unknown schema versions, noncanonical repository
 aliases, unsafe integers/floats, or now-denied path namespaces are intentionally
 invalid. V2 paths use a drive-qualified Windows or single-root POSIX grammar;
-control characters, empty, dot, parent, trailing-dot/space, Windows reserved-device, UNC/device,
-double-root, and POSIX-backslash spellings are denied. Review
-and migrate such local custody records explicitly; the harness does not infer
+control characters, empty, dot, parent, trailing-dot/space, Windows reserved-device,
+Windows-invalid component characters (`<`, `>`, `:`, `"`, `|`, `?`, and `*`),
+UNC/device, double-root, and POSIX-backslash spellings are denied. Review and
+migrate such local custody records explicitly; the harness does not infer
 terminal authority, inherit the process working directory, silently widen an
 old draft record, or fall through to v1 mutation behavior.
 Every v2 acquire, replacement, and release mutation now requires an explicit

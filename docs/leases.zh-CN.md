@@ -34,9 +34,9 @@ canonical v2 JSON 拒绝重复对象键、所有浮点数以及超出 `[-(2^53-1
 UTF-8。
 
 v2 序列化路径仅允许盘符限定的 Windows 绝对路径或单根 POSIX 路径；控制字符、空组件、点段、
-父段、尾点/尾空格、Windows 保留设备名、UNC/device namespace、双前导分隔符以及 POSIX 路径中的
-反斜杠一律默认拒绝。变更操作还要求路径属于当前主机 dialect；跨主机只读观察不等于变更
-准入。
+父段、尾点/尾空格、Windows 保留设备名、路径组件内的 Windows 非法字符（`<`、`>`、`:`、`"`、
+`|`、`?`、`*`）、UNC/device namespace、双前导分隔符以及 POSIX 路径中的反斜杠一律默认拒绝。
+变更操作还要求路径属于当前主机 dialect；跨主机只读观察不等于变更准入。
 
 最终准入在共享 mutex 内持有 Git index、HEAD、公共 config、每 worktree config、worktree
 管理 `locked`、packed refs 与当前 branch 的原生 lock；所有派生路径都必须留在精确 Git

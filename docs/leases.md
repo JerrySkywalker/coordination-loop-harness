@@ -65,8 +65,9 @@ worktree-admin, packed-ref, and active-branch locks, and verifies their owned
 identities and markers across a stable snapshot recheck, overlap scan, and
 atomic lease publish. All serialized paths use the bounded v2 drive-or-POSIX
 absolute grammar. Control characters, empty, dot, parent, trailing-dot/space,
-Windows reserved device, UNC/device, double-root, and POSIX-backslash spellings are denied;
-mutation additionally requires the native host dialect.
+Windows reserved device names, Windows-invalid component characters (`<`, `>`,
+`:`, `"`, `|`, `?`, and `*`), UNC/device, double-root, and POSIX-backslash
+spellings are denied; mutation additionally requires the native host dialect.
 Portable read-only observation is not mutation admission. In addition,
 replacement preserves the lease identity/version while directly chaining its
 accepted decision. Duplicate lease ids conflict independently of resource
@@ -75,6 +76,8 @@ V2 repository fields use suffix-free `owner/name` syntax and may preserve case,
 while overlap and decision identities are casefolded. The active writer value
 must exactly match the sole WRITE entry's serialized spelling. Infrastructure
 scopes may contain slashes but cannot be blank or carry surrounding whitespace.
+An opaque infrastructure identity with `:refs/heads/` remains infrastructure
+when the preceding text is not a canonical `owner/name` repository identity.
 Every v2 acquire, replace, and release mutation requires an explicit repository
 root; only v1 keeps ambient repository discovery.
 

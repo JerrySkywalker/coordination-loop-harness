@@ -13,9 +13,9 @@
   "legacy_policy": "coord.repo-set-lease.v1-semantics-unchanged",
   "draft_v2_migration_policy": "pre-acceptance-v2-records-are-never-auto-upgraded-and-remain-fail-closed-until-reviewed-migration",
   "decision_binding_policy": "generic-decision-v2-schema-is-not-v2-lease-authority; consumers-require-and-compare-the-exact-candidate-digest",
-  "decision_scope_policy": "nonblank-unique-canonical-superset; extra-entries-do-not-reserve-resources",
+  "decision_scope_policy": "nonblank-unique-canonical-superset; branch-marker-parsing-requires-owner/name-prefix-otherwise-opaque-infrastructure-casefolding; extra-entries-do-not-reserve-resources",
   "v2_repository_identity": "casefolded-suffix-free-owner/name-with-case-preserving-serialization-and-exact-active-writer-spelling",
-  "v2_path_policy": "portable-drive-or-single-posix-root; mutations-require-host-native; control-dot-parent-empty-trailing-dot-space-and-windows-device-components-denied; relative-decision-lineage-refs-enforced-by-v2-consumers",
+  "v2_path_policy": "portable-drive-or-single-posix-root; mutations-require-host-native; control-dot-parent-empty-trailing-dot-space-windows-device-and-windows-invalid-component-characters-denied; relative-decision-lineage-refs-enforced-by-v2-consumers",
   "v2_mutation_root_policy": "explicit-repository-root-no-ambient-cwd",
   "terminal_observation_policy": "explicit-repository-root-no-ambient-cwd",
   "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
@@ -34,7 +34,7 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
-      "sha256": "7512e92d8b36b94a9bc71d4e213db98b1201275d034687012faeffb907055e71"
+      "sha256": "3f01131606b415e9448f7561a130bfee1f61517147a8a65dd9fddd2fc4b31ca4"
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
@@ -50,7 +50,7 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "b9f678d4ff2353b6920a0ae1ca8143200030900577d29e7c5b8042c9dd6ab2c7"
+      "sha256": "083ae131d2bd27893d90d9a330100885084fde14d1e7c44f1478afc3112c8adc"
     },
     {
       "path": "docs/command-reference.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "docs/leases.md",
-      "sha256": "2d86a3c6e63a131c10615ade420a7f1898e23851d248aa7df9ca6628ff172b1e"
+      "sha256": "e3a85efea2bc2a73025a5fecc63f68eea27a68ecaf6792f64c8d18ee2fea7f9c"
     },
     {
       "path": "schemas/decision.v2.schema.json",
@@ -66,7 +66,7 @@
     },
     {
       "path": "schemas/repo-set-lease.v2.schema.json",
-      "sha256": "a1fca88039b306002398870295f3cae96d3ae66182dafd22f2438f1f108443de"
+      "sha256": "5e08141c8290292b6e5ee6996bb0f2e132b2910374dba992527e8ce675c0cb93"
     },
     {
       "path": "src/coordination_loop_harness/cli.py",
@@ -78,7 +78,7 @@
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "db85ffc35c83c807a91da2631bc32db1ff163005745cd4a43930c690f9291e5d"
+      "sha256": "c41362dc57fb8175454fb97d2cd0ee3db6a31c123aab5c1d122bfabe2fd999bc"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -86,7 +86,7 @@
     },
     {
       "path": "src/coordination_loop_harness/util.py",
-      "sha256": "79cc36a7bcccc6521cb3c6853663a78efc86a4113b7b3bf7f6e1bf7ad2fb8c60"
+      "sha256": "fb2d2ca8b91121ea41960c837605e3a5db160eb6c0c02f2593f7f11ba61e1946"
     },
     {
       "path": "src/coordination_loop_harness/validation.py",
@@ -102,7 +102,7 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "3969d26a15d14ce2ba2deef05004cd2a6616de132f8f523a1aae1394291bb11c"
+      "sha256": "58581184248e57fe1bdc1349bcbc2b2d48a5f20e2e1adf919e32bd1d8967b323"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
@@ -114,7 +114,7 @@
     },
     {
       "path": "tests/test_util.py",
-      "sha256": "5b90927bb7757235f7b766cbcee54d79d72a1f2e68ca9da9879a36ac8f4c3a5f"
+      "sha256": "50ea2de4256249397601ef0e1aedfe29e35c7f9807868e9c5e0edfc4c68e47bf"
     }
   ],
   "positive_cases": [
@@ -163,6 +163,8 @@
     "active-worktree-windows-device-component",
     "active-local-scope-repeated-separator",
     "active-worktree-control-character",
+    "active-worktree-windows-invalid-character",
+    "active-posix-worktree-windows-invalid-character",
     "active-repository-clone-suffix",
     "active-repository-transport-form",
     "active-blank-infrastructure-scope",
@@ -195,8 +197,9 @@
   "positive_authority_cases": [
     "strict-canonical-superset-scope",
     "canonical-infrastructure-scope-with-slash",
-    "required-nonrepository-infrastructure-scope-with-slash"
+    "required-nonrepository-infrastructure-scope-with-slash",
+    "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:f5b7e3c69bcecf4b685def462e674653d1c77ca9ba7d2fa19759699501e59da1",
-  "artifact_set_sha256": "f5b7e3c69bcecf4b685def462e674653d1c77ca9ba7d2fa19759699501e59da1"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:675eb5ee3c0011e85e11aa489d2df999ca2879b131a8b723bbf7132f12be97e5",
+  "artifact_set_sha256": "675eb5ee3c0011e85e11aa489d2df999ca2879b131a8b723bbf7132f12be97e5"
 }

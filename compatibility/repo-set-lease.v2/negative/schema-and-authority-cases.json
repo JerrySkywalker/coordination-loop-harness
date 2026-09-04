@@ -394,6 +394,30 @@
       "expected_layer": "SCHEMA_REJECT"
     },
     {
+      "case": "active-worktree-windows-invalid-character",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "V:/src/writer|alias"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-posix-worktree-windows-invalid-character",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "/tmp/writer:alias"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
       "case": "active-repository-clone-suffix",
       "base": "active",
       "patch": [
@@ -623,6 +647,12 @@
       "case": "required-nonrepository-infrastructure-scope-with-slash",
       "candidate_infrastructure_scope": "runner+/host",
       "extra_scope": "runner+/host",
+      "expected": "AUTHORIZATION_ACCEPT"
+    },
+    {
+      "case": "branch-marker-shaped-infrastructure-scope",
+      "candidate_infrastructure_scope": "runner:refs/heads/foo",
+      "extra_scope": "runner:refs/heads/foo",
       "expected": "AUTHORIZATION_ACCEPT"
     }
   ],

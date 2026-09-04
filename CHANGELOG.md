@@ -20,8 +20,11 @@
   repository-relative references, v2-aware origin normalization, and executable
   old-or-complete-new replacement recovery coverage.
 - Made v2 observation run the full repository-identity validator, denied
-  ambiguous absolute resource and decision-lineage path spellings, and
-  revalidated decision evidence immediately before atomic lease publication.
+  ambiguous absolute resource and decision-lineage path spellings including
+  cross-host-invalid path-component characters, and revalidated decision
+  evidence immediately before atomic lease publication.
+  Branch-shaped substrings in opaque infrastructure identities no longer make
+  otherwise valid resources impossible to authorize.
 - Bound writer admission to one Git common directory and stable filesystem
   identities while guarding common/per-worktree configuration, worktree admin,
   packed refs, HEAD, index, and the active branch through publication. Legacy

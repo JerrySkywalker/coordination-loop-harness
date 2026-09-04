@@ -1214,7 +1214,9 @@ class LeaseTests(unittest.TestCase):
             acquire(candidate_path, base / "locks", repo_root=base)
 
     def test_decision_scope_accepts_canonical_infrastructure_with_slash(self):
-        for index, scope in enumerate(("runner:host/foo", "runner+/host"), start=1):
+        for index, scope in enumerate(
+            ("runner:host/foo", "runner+/host", "runner:refs/heads/foo"), start=1
+        ):
             with self.subTest(scope=scope), tempfile.TemporaryDirectory() as tmp:
                 base = Path(tmp)
                 repository = f"example/product-{index}"

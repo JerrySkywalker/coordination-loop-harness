@@ -110,7 +110,14 @@ class PathNormalizationTests(unittest.TestCase):
 
     def test_v2_path_grammar_default_denies_ambiguous_namespaces(self):
         self.assertTrue(is_v2_absolute_scope("V:/src/repo"))
+        self.assertTrue(is_v2_absolute_scope("V:/"))
         self.assertTrue(is_v2_absolute_scope("/tmp/repo"))
+        self.assertFalse(is_v2_absolute_scope("V::/src"))
+        for character in '<>:"|?*':
+            with self.subTest(character=character, dialect="windows"):
+                self.assertFalse(is_v2_absolute_scope(f"V:/src/repo{character}alias"))
+            with self.subTest(character=character, dialect="posix"):
+                self.assertFalse(is_v2_absolute_scope(f"/tmp/repo{character}alias"))
         for value in (
             r"\\?\V:\src\repo",
             r"\\.\V:\src\repo",
