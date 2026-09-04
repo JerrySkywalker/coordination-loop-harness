@@ -1,0 +1,68 @@
+{
+  "schema_version": "repo-set-lease-v2-artifact-manifest.v1",
+  "protocol": "coord.repo-set-lease.v2",
+  "canonical_owner": "CLH",
+  "canonicalization": "utf-8-json-with-lf-normalization-for-artifact-hashes",
+  "semantic_validator": "coordination_loop_harness.leases",
+  "digest_algorithm": "sha256",
+  "artifact_hash_input": "file-bytes-with-crlf-normalized-to-lf",
+  "artifact_set_record_format": "sorted-path<NUL>sha256<LF>",
+  "producer_base_sha": "95521b2d3b7dbf35610382b87f7e1d6c28872df7",
+  "producer_head_recording": "PROGRAM_COMPATIBILITY_OBSERVATION_AFTER_MERGE",
+  "legacy_policy": "coord.repo-set-lease.v1-semantics-unchanged",
+  "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
+  "source_import_prohibited": true,
+  "dgf_writer_lease_dependency": false,
+  "automatic_stale_reclaim": false,
+  "compatibility_window": {
+    "producer": "CLH exact repo-set-lease.v2 artifact identity",
+    "consumer": "CLT validates a pinned serialized schema and conformance set without importing CLH source",
+    "legacy": "Existing v1 lease documents retain conservative all-overlap semantics"
+  },
+  "artifacts": [
+    {
+      "path": "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
+      "sha256": "2307d57cac97f97cb82710bfbfa4d26f657037ac1e0dcde859b5979652398e9f"
+    },
+    {
+      "path": "compatibility/repo-set-lease.v2/positive/shared-program-disjoint-writers.json",
+      "sha256": "2bd99106c1aa5f18b591cdffed0d7be39709978002bc8e8a27901dbf778b98f1"
+    },
+    {
+      "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
+      "sha256": "0d711b5e1b4a8801a93b1b0a067ac286b8fa5594c236d9190e33b492e30ed7d5"
+    },
+    {
+      "path": "schemas/repo-set-lease.v2.schema.json",
+      "sha256": "05eaf11961378437313ae0f0f634e16799bb5b694ebdec07bccd493a99507d05"
+    },
+    {
+      "path": "src/coordination_loop_harness/cli.py",
+      "sha256": "084a6eaebf552d2eed1c9f5463bc155eaf8007e44cb8118a0a45adbb93f2b2c4"
+    },
+    {
+      "path": "src/coordination_loop_harness/leases.py",
+      "sha256": "9f968676a54ea0563ec7a186fd9af113b6874af1b98fb51bce93623cf14e5e49"
+    },
+    {
+      "path": "src/coordination_loop_harness/validation.py",
+      "sha256": "1de26bf5c59d135dcf7182b8b8506ec23afed4161a78d8fc123497670f1f6bb2"
+    },
+    {
+      "path": "tests/test_repo_set_lease_v2_artifact.py",
+      "sha256": "9181aefab1ca2e9cdf820779af02ca115dd6fbfd416669fe08f84de770798b19"
+    }
+  ],
+  "positive_cases": [
+    "shared-program-disjoint-writers"
+  ],
+  "negative_expected_categories": {
+    "same-repository": "repository",
+    "same-worktree": "path",
+    "same-branch": "branch",
+    "overlapping-local-resource": "path",
+    "same-infrastructure-resource": "infrastructure"
+  },
+  "producer_artifact_id": "repo-set-lease.v2+sha256:ec607d461a49f0d4704cf3a089989769a0dc830932987053bcbed1dc5586c0a5",
+  "artifact_set_sha256": "ec607d461a49f0d4704cf3a089989769a0dc830932987053bcbed1dc5586c0a5"
+}

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Added the versioned `coord.repo-set-lease.v2` shared-read/exclusive-write
+  contract with exact writer admission and fail-closed stale ownership
+  observation while preserving v1 semantics.
+- Removed the active CLH derived-repository workflow and froze the legacy local
+  renderer as a compatibility-only surface; CLT now owns active bootstrap and
+  distribution behavior.
+
 ## 0.3.0
 
 - Added generic Harness Model and Profile Pack validation contracts while

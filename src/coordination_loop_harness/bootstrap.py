@@ -1,3 +1,5 @@
+"""Frozen v0.2/v0.3 local scaffold compatibility; active bootstrap belongs to CLT."""
+
 from __future__ import annotations
 
 import json

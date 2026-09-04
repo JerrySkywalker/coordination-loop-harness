@@ -1,0 +1,86 @@
+{
+  "schema_version": "repo-set-lease-v2-overlap-cases.v1",
+  "base_lease": {
+    "schema_version": "coord.repo-set-lease.v2",
+    "lease_id": "BASE-WRITER",
+    "run_id": "BASE-WRITER",
+    "state": "ACTIVE",
+    "generation": 1,
+    "created_utc": "2026-09-04T00:00:00Z",
+    "heartbeat_utc": "2026-09-04T00:00:00Z",
+    "expires_utc": "2026-09-04T01:00:00Z",
+    "owner": "implementer-base",
+    "coordination_repository": "example/program",
+    "repositories": [
+      {
+        "repository": "example/clh",
+        "mode": "WRITE",
+        "canonical_path": "V:/src/coordination-loop-harness",
+        "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+        "branch_ref": "refs/heads/agent/shared",
+        "exact_sha": "1111111111111111111111111111111111111111"
+      }
+    ],
+    "local_scopes": [
+      "V:/src/_state/shared-resource"
+    ],
+    "infrastructure_scopes": [
+      "runner:windows-a"
+    ],
+    "active_writer_repository": "example/clh",
+    "decision_ref": "decisions/BASE-WRITER/DEC-1.json",
+    "released_utc": null,
+    "outcome_ref": null
+  },
+  "cases": [
+    {
+      "case": "same-repository",
+      "repository": "example/clh",
+      "worktree_root": "V:/src/_worktrees/other/clh",
+      "branch_ref": "refs/heads/agent/other",
+      "local_scopes": [],
+      "infrastructure_scopes": [],
+      "expected_category": "repository"
+    },
+    {
+      "case": "same-worktree",
+      "repository": "example/cle",
+      "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+      "branch_ref": "refs/heads/agent/cle",
+      "local_scopes": [],
+      "infrastructure_scopes": [],
+      "expected_category": "path"
+    },
+    {
+      "case": "same-branch",
+      "repository": "example/clh",
+      "worktree_root": "V:/src/_worktrees/other/clh",
+      "branch_ref": "refs/heads/agent/shared",
+      "local_scopes": [],
+      "infrastructure_scopes": [],
+      "expected_category": "branch"
+    },
+    {
+      "case": "overlapping-local-resource",
+      "repository": "example/cle",
+      "worktree_root": "V:/src/_worktrees/other/cle",
+      "branch_ref": "refs/heads/agent/cle",
+      "local_scopes": [
+        "V:/src/_state/shared-resource/child"
+      ],
+      "infrastructure_scopes": [],
+      "expected_category": "path"
+    },
+    {
+      "case": "same-infrastructure-resource",
+      "repository": "example/cle",
+      "worktree_root": "V:/src/_worktrees/other/cle",
+      "branch_ref": "refs/heads/agent/cle",
+      "local_scopes": [],
+      "infrastructure_scopes": [
+        "RUNNER:WINDOWS-A"
+      ],
+      "expected_category": "infrastructure"
+    }
+  ]
+}

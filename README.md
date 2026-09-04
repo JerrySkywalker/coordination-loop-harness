@@ -12,6 +12,8 @@ The product topology is fixed as:
 CLH is not an agent runtime and is not tied to ChatGPT Web, Codex, DeepSeek Harness, OpenCode, Claude Code, Hermes, or any other provider.
 
 See [CLH v5 Product Direction](docs/V5_PRODUCT_DIRECTION.md) for the current architecture boundary.
+The active CLH/CLT ownership split is recorded in
+[CLH / CLT Minimum-V1 boundary](docs/CLH_CLT_BOUNDARY.md).
 
 ## v0.3 generic Harness contracts
 
@@ -73,7 +75,7 @@ SkyBridge is a frozen external historical precursor, not a CLH dependency or v5 
 ```text
 schemas/        durable coordination protocol schemas
 models/         generic Harness model artifacts
-templates/      legacy/current scaffold assets pending CLH/CLT v5 separation
+templates/      frozen v0.2/v0.3 local compatibility assets; active bootstrap belongs to CLT
 requests/       durable owner requests
 plans/          plans/goals/manifests
 runs/           durable status/outcome records
@@ -108,6 +110,10 @@ V5 keeps the proven durable coordination kernel while:
 - moving active starter/distribution ownership toward CLT;
 - removing provider-specific product positioning;
 - keeping all external agent runtimes replaceable below the CLF boundary.
+
+New per-repository writers use the versioned shared-read/exclusive-write
+[`coord.repo-set-lease.v2`](docs/REPOSITORY_OWNERSHIP_V2.md) contract. Existing
+v1 leases retain their conservative semantics.
 
 Remote repository creation remains outside ordinary CLH source/test authority, and subagents never receive remote repository lifecycle authority.
 

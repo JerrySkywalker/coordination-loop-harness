@@ -41,8 +41,14 @@ or authorization failures.
 - `clh lease replace` requires `lease:expand` authorization and the next generation.
 - `clh lease release` uses an optimistic generation and outcome reference.
 - `clh lease list` reads a local lock root.
+- `clh lease observe` reports `ACTIVE`, `STALE_ACTIVE`, or terminal ownership
+  without reclaiming or mutating a lease.
 
-## Derived repositories
+## Frozen local compatibility
+
+The following v0.2/v0.3 local interfaces are retained only for compatibility.
+They receive no new bootstrap features; active v5 starter/bootstrap/distribution
+behavior belongs to CLT. CLH has no active bootstrap PR workflow.
 
 - `clh bootstrap-repository` verifies the template checkout or GitHub template tree
   before recording provenance, then renders ownership-classified files. Use

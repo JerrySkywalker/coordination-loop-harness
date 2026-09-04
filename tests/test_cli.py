@@ -15,6 +15,8 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode)
         self.assertIn("Coordination Loop Harness", result.stdout)
+        self.assertIn("Legacy local renderer", result.stdout)
+        self.assertIn("CLT", result.stdout)
 
     def test_new_command_help(self):
         commands = [
@@ -30,6 +32,7 @@ class CliTests(unittest.TestCase):
             ["bootstrap-repository", "--help"],
             ["template", "sync-plan", "--help"],
             ["harness", "validate", "--help"],
+            ["lease", "observe", "--help"],
         ]
         for arguments in commands:
             with self.subTest(arguments=arguments):

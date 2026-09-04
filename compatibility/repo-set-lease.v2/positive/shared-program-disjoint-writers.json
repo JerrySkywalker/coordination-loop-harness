@@ -1,0 +1,61 @@
+{
+  "schema_version": "repo-set-lease-v2-conformance.v1",
+  "case": "shared-program-disjoint-writers",
+  "left": {
+    "schema_version": "coord.repo-set-lease.v2",
+    "lease_id": "CLH-WRITER",
+    "run_id": "CLH-WRITER",
+    "state": "ACTIVE",
+    "generation": 1,
+    "created_utc": "2026-09-04T00:00:00Z",
+    "heartbeat_utc": "2026-09-04T00:00:00Z",
+    "expires_utc": "2026-09-04T01:00:00Z",
+    "owner": "implementer-clh",
+    "coordination_repository": "example/program",
+    "repositories": [
+      {
+        "repository": "example/clh",
+        "mode": "WRITE",
+        "canonical_path": "V:/src/coordination-loop-harness",
+        "worktree_root": "V:/src/_worktrees/clh/coordination-loop-harness",
+        "branch_ref": "refs/heads/agent/clh",
+        "exact_sha": "1111111111111111111111111111111111111111"
+      }
+    ],
+    "local_scopes": [],
+    "infrastructure_scopes": [],
+    "active_writer_repository": "example/clh",
+    "decision_ref": "decisions/CLH-WRITER/DEC-1.json",
+    "released_utc": null,
+    "outcome_ref": null
+  },
+  "right": {
+    "schema_version": "coord.repo-set-lease.v2",
+    "lease_id": "CLE-WRITER",
+    "run_id": "CLE-WRITER",
+    "state": "ACTIVE",
+    "generation": 1,
+    "created_utc": "2026-09-04T00:00:00Z",
+    "heartbeat_utc": "2026-09-04T00:00:00Z",
+    "expires_utc": "2026-09-04T01:00:00Z",
+    "owner": "implementer-cle",
+    "coordination_repository": "example/program",
+    "repositories": [
+      {
+        "repository": "example/cle",
+        "mode": "WRITE",
+        "canonical_path": "V:/src/coordination-loop-engine",
+        "worktree_root": "V:/src/_worktrees/cle/coordination-loop-engine",
+        "branch_ref": "refs/heads/agent/cle",
+        "exact_sha": "2222222222222222222222222222222222222222"
+      }
+    ],
+    "local_scopes": [],
+    "infrastructure_scopes": [],
+    "active_writer_repository": "example/cle",
+    "decision_ref": "decisions/CLE-WRITER/DEC-1.json",
+    "released_utc": null,
+    "outcome_ref": null
+  },
+  "expected_overlap_categories": []
+}

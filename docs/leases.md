@@ -28,3 +28,16 @@ checks.  `acquire` never permits this exception.
 
 This is a cooperative lock. Every writer must use the same shared lock root and respect it. It is
 not a consensus system for mutually untrusted machines.
+
+## V2 per-repository ownership
+
+New Coordination Loop per-repository writers use `coord.repo-set-lease.v2`.
+V2 preserves exclusive mutable resources while allowing READ/READ repository,
+path, branch, and shared Program observations. Any access pair containing WRITE
+conflicts. Writer admission verifies the exact origin, branch, HEAD, clean
+worktree, decision scope, and absence of `index.lock` before publication.
+
+Expired ACTIVE ownership is reported as `STALE_ACTIVE`, remains conflicting,
+and is never automatically reclaimed. See
+[`REPOSITORY_OWNERSHIP_V2.md`](REPOSITORY_OWNERSHIP_V2.md) for the complete
+Minimum-V1 contract. V1 leases retain the conservative behavior above.

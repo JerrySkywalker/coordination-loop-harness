@@ -72,14 +72,22 @@ CLT 位于采用入口，负责为新项目生成最薄的 starter/distribution 
 
 ## 当前实现与 v5
 
-当前 CLH 已实现较成熟的 Run/Goal/Decision/Lease/bundle/repository verification/Harness Model 等能力。历史版本还保留了一些 template/bootstrap 与 ChatGPT/Codex 示例，这是待 v5 收口的实现/文档历史，不是当前产品定义。
+当前 CLH 已实现较成熟的 Run/Goal/Decision/Lease/bundle/repository verification/Harness Model 等能力。历史版本保留的 template/bootstrap renderer 只是冻结的本地兼容窗口；active bootstrap workflow 已移除，这些历史接口不是当前产品定义。
 
 V5 当前方向见：
 
 - [`docs/V5_PRODUCT_DIRECTION.md`](docs/V5_PRODUCT_DIRECTION.md)
+- [`docs/CLH_CLT_BOUNDARY.md`](docs/CLH_CLT_BOUNDARY.md)
 - [`AGENTS.md`](AGENTS.md)
 
-CLT 将逐步成为唯一明确的 bootstrap/distribution owner；CLH 收敛为 durable coordination kernel。
+Minimum V1 中，CLT 已是唯一明确的 active bootstrap/distribution owner；CLH
+收敛为 durable coordination kernel。旧 v0.2/v0.3 本地 renderer 只保留冻结的
+兼容窗口，CLH 的 active bootstrap workflow 已移除。
+
+新的逐仓库 writer 使用
+[`coord.repo-set-lease.v2`](docs/REPOSITORY_OWNERSHIP_V2.md)：repository、path
+与 branch 采用 shared-read/exclusive-write，多个产品 writer 可共享只读 Program
+观察；已有 v1 Lease 仍保留原先的保守冲突语义。
 
 ## 本地开发
 
