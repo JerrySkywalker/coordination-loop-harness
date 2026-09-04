@@ -307,9 +307,15 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         release_decision = terminal_vector["release_decision"]
         for case in vector["positive_authority_cases"]:
             with self.subTest(case=case["case"]):
+                candidate = copy.deepcopy(terminal)
                 accepted = copy.deepcopy(release_decision)
+                if "candidate_infrastructure_scope" in case:
+                    candidate["infrastructure_scopes"].append(
+                        case["candidate_infrastructure_scope"]
+                    )
                 accepted["scope"].append(case["extra_scope"])
-                _validate_decision_scope(terminal, accepted)
+                accepted["lease_candidate_sha256"] = lease_candidate_sha256(candidate)
+                _validate_decision_scope(candidate, accepted)
         mismatch = copy.deepcopy(release_decision)
         mismatch["lease_candidate_sha256"] = authority["candidate-digest-mismatch"][
             "supplied_candidate_sha256"

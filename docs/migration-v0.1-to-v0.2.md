@@ -43,9 +43,11 @@ filesystem-identity, and Git publication-guard validation.
 
 New v2 decisions use a non-empty, unique canonical scope covering every lease
 resource. A strict scope superset is valid, but extra authorization entries do
-not add resources to the lease. Repository identities use lowercase,
-suffix-free `owner/name` syntax. Canonical candidates reject all floating-point
-values and integers outside `[-(2^53-1), 2^53-1]`.
+not add resources to the lease. Repository fields use suffix-free `owner/name`
+syntax and may preserve display case; conflict and decision identities are
+casefolded, while the active writer must exactly match its WRITE entry's
+serialized spelling. Canonical candidates reject all floating-point values and
+integers outside `[-(2^53-1), 2^53-1]`.
 
 Goal 07 tightened the previously unaccepted v2 custody draft before its first
 release. Draft v2 records without `release_decision_ref`, `release_authority`,
@@ -56,6 +58,9 @@ UNC/device namespaces, double roots, and POSIX backslashes are denied. Review
 and migrate such local custody records explicitly; the harness does not infer
 terminal authority, inherit the process working directory, silently widen an
 old draft record, or fall through to v1 mutation behavior.
+Every v2 acquire, replacement, and release mutation now requires an explicit
+repository root. Repository-relative decision and outcome references reject
+trailing-dot and Windows reserved-device components as well as dot traversal.
 V2 terminal observation requires an explicit repository root to verify its
 decision and outcome; it never uses the ambient working directory.
 

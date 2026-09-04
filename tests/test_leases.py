@@ -1082,6 +1082,24 @@ class LeaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Lease validation"):
                 acquire(candidate_path, base / "locks", repo_root=base)
 
+    def test_v2_writer_binding_uses_v2_origin_canonicalization(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self.repository_worktree(base, "product", repository="Example/Product")
+            self.git(
+                repo[0],
+                "remote",
+                "set-url",
+                "origin",
+                "git@GITHUB.COM:Example/Product.GIT",
+            )
+            candidate = self.lease_v2("RUN-A", "Example/Product", *repo)
+            self.authorize(base, candidate, "lease:acquire")
+            candidate_path = base / "candidate.json"
+            self.write(candidate_path, candidate)
+            acquired = acquire(candidate_path, base / "locks", repo_root=base)
+            self.assertEqual("ACTIVE", json.loads(acquired.read_text(encoding="utf-8"))["state"])
+
     def test_legacy_repository_clone_suffix_alias_is_conservatively_reserved(self):
         with tempfile.TemporaryDirectory() as tmp:
             locks = Path(tmp) / "locks"
@@ -1168,15 +1186,50 @@ class LeaseTests(unittest.TestCase):
             acquire(candidate_path, base / "locks", repo_root=base)
 
     def test_decision_scope_accepts_canonical_infrastructure_with_slash(self):
+        for index, scope in enumerate(("runner:host/foo", "runner+/host"), start=1):
+            with self.subTest(scope=scope), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                repository = f"example/product-{index}"
+                repo = self.repository_worktree(base, "product", repository=repository)
+                candidate = self.lease_v2(f"RUN-{index}", repository, *repo)
+                candidate["infrastructure_scopes"] = [scope]
+                self.authorize(base, candidate, "lease:acquire")
+                candidate_path = base / "candidate.json"
+                self.write(candidate_path, candidate)
+                acquire(candidate_path, base / "locks", repo_root=base)
+
+    def test_v2_mutations_require_explicit_repository_root(self):
+        vector = json.loads(
+            (
+                ROOT / "compatibility" / "repo-set-lease.v2" / "positive" / "candidate-digest.json"
+            ).read_text(encoding="utf-8")
+        )
+        candidate = vector["candidate"]
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            repo = self.repository_worktree(base, "product", repository="example/product")
-            candidate = self.lease_v2("RUN-A", "example/product", *repo)
-            candidate["infrastructure_scopes"] = ["runner:host/foo"]
-            self.authorize(base, candidate, "lease:acquire")
+            locks = base / "locks"
+            locks.mkdir()
             candidate_path = base / "candidate.json"
             self.write(candidate_path, candidate)
-            acquire(candidate_path, base / "locks", repo_root=base)
+            self.write(locks / f"{candidate['lease_id']}.lease.json", candidate)
+            operations = {
+                "acquire": lambda: acquire(candidate_path, locks),
+                "replace": lambda: replace(candidate_path, locks, expected_generation=1),
+                "release": lambda: release(
+                    candidate["lease_id"],
+                    locks,
+                    expected_generation=1,
+                    candidate_path=candidate_path,
+                ),
+            }
+            with mock.patch("coordination_loop_harness.leases.repository_root") as resolver:
+                for name, operation in operations.items():
+                    with (
+                        self.subTest(operation=name),
+                        self.assertRaisesRegex(ValueError, "explicit repo_root"),
+                    ):
+                        operation()
+                resolver.assert_not_called()
 
     def test_decision_scope_rejects_blank_duplicate_and_noncanonical_entries(self):
         mutations = {

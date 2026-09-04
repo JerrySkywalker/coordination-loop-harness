@@ -156,6 +156,30 @@
       "expected_layer": "SCHEMA_REJECT"
     },
     {
+      "case": "released-outcome-trailing-dot",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/outcome_ref",
+          "value": "runs/TERMINAL-VECTOR/outcome.json."
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "released-outcome-windows-device-name",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/outcome_ref",
+          "value": "runs/TERMINAL-VECTOR/NUL.json"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
       "case": "released-decision-parent-traversal",
       "base": "terminal",
       "patch": [
@@ -310,6 +334,30 @@
       "expected_layer": "SCHEMA_REJECT"
     },
     {
+      "case": "active-blank-infrastructure-scope",
+      "base": "active",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/infrastructure_scopes/-",
+          "value": " "
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-infrastructure-scope-with-surrounding-whitespace",
+      "base": "active",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/infrastructure_scopes/-",
+          "value": " runner:host "
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
       "case": "terminal-duplicate-canonical-repository",
       "base": "terminal",
       "patch": [
@@ -336,6 +384,18 @@
           "op": "replace",
           "path": "/active_writer_repository",
           "value": "example/other"
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "active-writer-case-only-mismatch",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/active_writer_repository",
+          "value": "Example/CLH"
         }
       ],
       "expected_layer": "SEMANTIC_REJECT"
@@ -413,6 +473,12 @@
     {
       "case": "canonical-infrastructure-scope-with-slash",
       "extra_scope": "runner:host/foo",
+      "expected": "AUTHORIZATION_ACCEPT"
+    },
+    {
+      "case": "required-nonrepository-infrastructure-scope-with-slash",
+      "candidate_infrastructure_scope": "runner+/host",
+      "extra_scope": "runner+/host",
       "expected": "AUTHORIZATION_ACCEPT"
     }
   ],

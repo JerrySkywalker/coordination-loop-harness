@@ -41,8 +41,10 @@ or authorization failures.
 - `clh lease inspect` is non-mutating. Supply `--repo-root` when the result must
   prove and exclude valid v2 terminal records; omission deliberately yields
   fail-closed evidence rather than inheriting the current directory.
-- `clh lease acquire` requires a verified `lease:acquire` decision.
+- `clh lease acquire` requires a verified `lease:acquire` decision. V2 also
+  requires an explicit `--repo-root`; omission never inherits the current directory.
 - `clh lease replace` requires `lease:expand` authorization and the next generation.
+  V2 also requires an explicit `--repo-root`.
 - `clh lease release` keeps the legacy v1 outcome-reference form. V2 requires
   `--candidate` and `--repo-root`; the exact terminal candidate advances the
   optimistic generation and carries a directly chained release decision plus

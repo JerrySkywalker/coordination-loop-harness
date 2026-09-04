@@ -25,6 +25,8 @@ and conflicts with active observations of that repository.
 `local_scopes` and `infrastructure_scopes` are exclusive mutable reservations.
 They never become shared merely because repository observations are shared.
 Overlapping parent/child paths conflict whenever either path is WRITE.
+Infrastructure identities may contain `/`, but must be non-empty and have no
+surrounding whitespace; their conflict identity is case-normalized.
 Every v2 repository path, worktree path, and local scope uses a portable,
 absolute grammar so its identity cannot change with a process working
 directory. The serialized grammar admits a drive-qualified Windows path or a
@@ -34,6 +36,10 @@ given one bounded cross-host identity. A mutating operation additionally
 requires every declared path to use the current host's native dialect.
 Read-only observation keeps the portable grammar so another host can still
 report ownership; that classification is not mutation admission.
+Serialized repository fields use suffix-free `owner/name` syntax and may
+preserve display case. Conflict and decision-scope identities are casefolded;
+`active_writer_repository` must nevertheless exactly match the serialized
+spelling of the sole WRITE repository so terminal reconstruction is stable.
 
 Each ACTIVE lease still permits zero or one writer. Across a common lock root,
 the intended upper bound is one writer for each product repository and any
@@ -67,6 +73,10 @@ twice around atomic admission:
 - no active lease has a conflicting repository, path, branch, local, or
   infrastructure resource.
 
+Every v2 acquire, replacement, and release mutation requires an explicitly
+supplied repository root. Mutation never derives decision or outcome authority
+from the process working directory. V1 retains its historical root discovery.
+
 The generic `coord.decision.v2` schema remains structurally compatible with
 historical v1 lease decisions that predate candidate digests. Schema validity
 alone is therefore not v2 lease authority: every v2 acquire, replacement, and
@@ -94,9 +104,11 @@ inspection.
 Lease JSON is first flushed in a same-directory temporary file. POSIX
 publication uses an atomic no-replace hard link followed by directory `fsync`;
 Windows uses `MoveFileExW` with `MOVEFILE_WRITE_THROUGH`, omitting replacement
-authority for create-new. A durability error reports failure even when the
-target may already have been published, so recovery inspects the exact target
-instead of inferring rollback.
+authority for create-new. Replacement uses one native atomic rename after the
+complete temporary file is flushed, so readers see an old or complete-new
+record. A post-publication durability error reports failure even when the target
+may already contain the complete new record, so recovery inspects the exact
+target instead of inferring rollback.
 
 Git-native guards cover cooperating Git operations. Direct filesystem changes
 by a process that ignores both Git and the shared CL lease protocol are outside
@@ -139,6 +151,9 @@ follow the active decision, match the terminal generation, and authorize
 candidate instead declares `STALE_RECOVERY` and the decision must authorize
 `lease:release-stale`. Backdating a candidate cannot downgrade the authority
 required by the live clock.
+Repository-relative decision and outcome references reject absolute paths,
+dot-segment traversal, trailing-dot components, and Windows reserved device
+components so the same spelling cannot resolve to another file on Windows.
 
 Only a record whose schema, lifecycle, release lineage, candidate digest,
 outcome content, declared lease id, and canonical filename all verify is
@@ -163,7 +178,8 @@ release.
   normalization. It now receives the same exact live repository/common-dir,
   clean-worktree, filesystem-identity, and Git-guard checks; `acquire` still
   cannot introduce a coordination self-write.
-- New v2 repository identities use canonical suffix-free `owner/name` syntax.
+- New v2 repository fields use suffix-free `owner/name` syntax with
+  case-preserving serialization and casefolded canonical identity.
   Conservative overlap scanning recognizes legacy and pre-acceptance aliases
   without changing the stored meaning of a valid v1 lease.
 - New per-repository writer claims use v2 and its exact compatibility artifact.

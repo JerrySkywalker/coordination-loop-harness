@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .util import canonical_repo
+from .util import canonical_repo, canonical_repo_v2
 
 GITHUB_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*/[A-Za-z0-9_.-]+$")
 
@@ -213,7 +213,13 @@ def verify_repository(
     require_detached: bool | None = None,
     offline: bool = True,
     gh_command: str = "gh",
+    repository_identity_version: str = "v1",
 ) -> dict[str, Any]:
+    if repository_identity_version not in {"v1", "v2"}:
+        raise ValueError("repository_identity_version must be v1 or v2")
+    canonicalize_repository = (
+        canonical_repo_v2 if repository_identity_version == "v2" else canonical_repo
+    )
     root = root.resolve()
     findings: list[str] = []
     identity = _repository_identity_snapshot(root)
@@ -225,7 +231,9 @@ def verify_repository(
     detached, branch = _branch_identity(root)
     origin = _origin_url(root)
 
-    if expected_origin and canonical_repo(origin or "") != canonical_repo(expected_origin):
+    if expected_origin and canonicalize_repository(origin or "") != canonicalize_repository(
+        expected_origin
+    ):
         findings.append(f"origin mismatch: expected {expected_origin}, found {origin}")
     if stable_branch and branch != stable_branch:
         findings.append(f"branch mismatch: expected {stable_branch}, found {branch or 'DETACHED'}")
@@ -289,7 +297,7 @@ def verify_repository(
         if not expected_origin:
             findings.append("live GitHub verification requires --expected-origin")
         else:
-            expected_identity = canonical_repo(expected_origin)
+            expected_identity = canonicalize_repository(expected_origin)
             if not GITHUB_REPOSITORY_RE.fullmatch(expected_identity):
                 findings.append(
                     "live GitHub verification requires a github.com owner/name identity"
@@ -323,7 +331,7 @@ def verify_repository(
                         *command,
                         "repo",
                         "view",
-                        canonical_repo(expected_origin),
+                        canonicalize_repository(expected_origin),
                         "--json",
                         "nameWithOwner,url",
                     ],
@@ -349,7 +357,7 @@ def verify_repository(
                         repository_url = metadata.get("url") if isinstance(metadata, dict) else None
                         if (
                             not isinstance(actual_identity, str)
-                            or canonical_repo(actual_identity) != expected_identity
+                            or canonicalize_repository(actual_identity) != expected_identity
                         ):
                             findings.append(
                                 "live GitHub repository identity mismatch: "

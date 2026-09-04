@@ -14,8 +14,9 @@
   "draft_v2_migration_policy": "pre-acceptance-v2-records-are-never-auto-upgraded-and-remain-fail-closed-until-reviewed-migration",
   "decision_binding_policy": "generic-decision-v2-schema-is-not-v2-lease-authority; consumers-require-and-compare-the-exact-candidate-digest",
   "decision_scope_policy": "nonblank-unique-canonical-superset; extra-entries-do-not-reserve-resources",
-  "v2_repository_identity": "lowercase-suffix-free-owner/name",
-  "v2_path_policy": "portable-drive-or-single-posix-root; mutations-require-host-native; unc-device-double-root-and-posix-backslash-denied",
+  "v2_repository_identity": "casefolded-suffix-free-owner/name-with-case-preserving-serialization-and-exact-active-writer-spelling",
+  "v2_path_policy": "portable-drive-or-single-posix-root; mutations-require-host-native; unc-device-double-root-and-posix-backslash-denied; relative-refs-deny-trailing-dot-and-windows-device-components",
+  "v2_mutation_root_policy": "explicit-repository-root-no-ambient-cwd",
   "terminal_observation_policy": "explicit-repository-root-no-ambient-cwd",
   "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
   "source_import_prohibited": true,
@@ -33,7 +34,7 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
-      "sha256": "530e5045204d2696b00cdb03c2e9884bfc92caba4474995c1f2cc07a3f77cc85"
+      "sha256": "5b98dd6d47e4f4a9cc50703a8ec97e23e1e93844059b19b42720eeca8cd01184"
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
@@ -49,15 +50,15 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "52b47289901dcd8b3b2b05bffd5903945cf4b7f87f9404fecd1ac9ea3958ceb4"
+      "sha256": "dbe2bfb5ce3322135921f9dd7f3e3f3a2692635ff57766511d2151a2682cc388"
     },
     {
       "path": "docs/command-reference.md",
-      "sha256": "5397871e33eaebc82c7cb0f2b3e2676b793f81225e835061ccc4492a4787dc1d"
+      "sha256": "8ff6b0a883f985801218a0fe523d0bc7ef24abe7f0cd306b46dfa9163084c6a9"
     },
     {
       "path": "docs/leases.md",
-      "sha256": "8b53eff29241fe39eea02a5ee12a90907c524c1183b09b08df8a00312f1041a8"
+      "sha256": "923821641feb4a2e28d6a7891358365872d334f216e867096e7881e1275612a6"
     },
     {
       "path": "schemas/decision.v2.schema.json",
@@ -65,11 +66,11 @@
     },
     {
       "path": "schemas/repo-set-lease.v2.schema.json",
-      "sha256": "1a775bd4393e268ed7f518c88a67b298c067199df762f398cfd9e87a5663d13e"
+      "sha256": "c549a4678523d91ccb4d907f2ac2477db3fbbf194adfec5481f8ba64c2520931"
     },
     {
       "path": "src/coordination_loop_harness/cli.py",
-      "sha256": "2aceda1bf0d2d27deca0d18b4aabd0b47cad62075c622a0b499fb306c5be2457"
+      "sha256": "fdafb708380f4a7f1b89bda0ddfe6d10da580ecadaa1de20a93391d4ab0d0d9d"
     },
     {
       "path": "src/coordination_loop_harness/decisions.py",
@@ -77,11 +78,11 @@
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "627959c5a72084da4db327b11ed889e0b3997a00b9db793dd2b7077c977f94e5"
+      "sha256": "0773a658f1b7bf389d2e99383115d82140270611e251e798ea323f9f0d343cb0"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
-      "sha256": "2c5510d30c75d4203ff99d29a355f419bc0bd68433e448eb6008a31211a63734"
+      "sha256": "bb25a55c9bac3536e9800bb07b94ce1f774e268be65c0b6942fc1a3b0eb777e9"
     },
     {
       "path": "src/coordination_loop_harness/util.py",
@@ -97,23 +98,23 @@
     },
     {
       "path": "tests/test_cli.py",
-      "sha256": "bc7c8d3b01ba05dabaedf9dfd81d03949e94d5536b92a4aaba8b292bcc766ab5"
+      "sha256": "3f57a0aa4c3dda62f9582223c957899b897e09b91f5821c2ebb6f9dc497c040e"
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "fc4578315e243d0375884caba5c854c21b5fe32353fb1c1fafe332733a67ade0"
+      "sha256": "3de0afa198bcbbf0ba8af25aff3bdfa2e0520ed1e03575afb58577ea3c6536b5"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "4d1f79cb29bc1e95ac5d486325a7ed5c0ae4d72bf08696c61507aacf8b19fb6d"
+      "sha256": "d9c5ee4f2c69ff2f4fa0f96a2f7ceff4672587714cc0f9e3c5d7ffce31fae270"
     },
     {
       "path": "tests/test_repository.py",
-      "sha256": "e414c2a5b6a6d252cb13972fde49a47237c11ce798076e3b0274dd1b057f96a6"
+      "sha256": "13caa858ca799b1000ae60b45b61195da4f6ca7c8b4a0f571d64e9a1663256e1"
     },
     {
       "path": "tests/test_util.py",
-      "sha256": "69c664b9705d29ca5a6ec8a224a2a6c21510adfaed4019ce32ca3f2d75fa490a"
+      "sha256": "05e96bfcf4c152d5a3b8512b79d3fe95ad93c23054efaa8540151ca3c97309ab"
     }
   ],
   "positive_cases": [
@@ -143,6 +144,8 @@
     "released-generation-one",
     "released-outcome-parent-traversal",
     "released-outcome-trailing-slash",
+    "released-outcome-trailing-dot",
+    "released-outcome-windows-device-name",
     "released-decision-parent-traversal",
     "extra-property",
     "branch-ref-parent-component",
@@ -155,8 +158,11 @@
     "active-posix-worktree-with-backslash",
     "active-repository-clone-suffix",
     "active-repository-transport-form",
+    "active-blank-infrastructure-scope",
+    "active-infrastructure-scope-with-surrounding-whitespace",
     "terminal-duplicate-canonical-repository",
     "active-writer-value-mismatch",
+    "active-writer-case-only-mismatch",
     "decision-sequence-outside-safe-integer-range",
     "decision-sequence-integral-float",
     "decision-lease-generation-outside-safe-integer-range",
@@ -176,8 +182,9 @@
   ],
   "positive_authority_cases": [
     "strict-canonical-superset-scope",
-    "canonical-infrastructure-scope-with-slash"
+    "canonical-infrastructure-scope-with-slash",
+    "required-nonrepository-infrastructure-scope-with-slash"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:dad431e112103917f0f66407c1d11a61fd49c77d21f52e724da31a5b69fdfe37",
-  "artifact_set_sha256": "dad431e112103917f0f66407c1d11a61fd49c77d21f52e724da31a5b69fdfe37"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:c7fba9a602dafc94f505f00485e127c0695e1c6766a8f3021ea566746bd6cdda",
+  "artifact_set_sha256": "c7fba9a602dafc94f505f00485e127c0695e1c6766a8f3021ea566746bd6cdda"
 }

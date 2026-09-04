@@ -19,6 +19,9 @@ directly. If directory durability fails after publication, callers must inspect 
 the operation reports failure rather than guessing rollback.
 On Windows, both create-new and replacement publication use the native
 `MOVEFILE_WRITE_THROUGH` flag; create-new omits replacement authority.
+On POSIX, replacement is one atomic rename of the fully flushed temporary file;
+readers therefore see the old or complete-new record. A directory-sync failure
+after replacement is reported without inferring that the old record returned.
 
 In v0.2 the reference is not sufficient by itself. Acquisition requires a verified
 `lease:acquire` action; expansion requires `lease:expand`, the exact lease id, and the candidate
@@ -67,6 +70,12 @@ Portable read-only observation is not mutation admission. In addition,
 replacement preserves the lease identity/version while directly chaining its
 accepted decision. Duplicate lease ids conflict independently of resource
 identity.
+V2 repository fields use suffix-free `owner/name` syntax and may preserve case,
+while overlap and decision identities are casefolded. The active writer value
+must exactly match the sole WRITE entry's serialized spelling. Infrastructure
+scopes may contain slashes but cannot be blank or carry surrounding whitespace.
+Every v2 acquire, replace, and release mutation requires an explicit repository
+root; only v1 keeps ambient repository discovery.
 
 Expired ACTIVE ownership is reported as `STALE_ACTIVE`, remains conflicting,
 and is never automatically reclaimed. A v2 terminal candidate must be bound by
@@ -80,3 +89,5 @@ an explicit repository root and never inherits the current directory. Unknown
 schema versions cannot fall through to legacy replacement or release. See
 [`REPOSITORY_OWNERSHIP_V2.md`](REPOSITORY_OWNERSHIP_V2.md) for the complete
 Minimum-V1 contract. V1 leases retain the conservative behavior above.
+Repository-relative decision and outcome references also reject dot traversal,
+trailing-dot components, and Windows reserved device components.

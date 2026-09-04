@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
         item = lease_sub.add_parser(name)
         item.add_argument("--candidate", type=_path, required=True)
         item.add_argument("--lock-root", type=_path, required=True)
-        item.add_argument("--repo-root", type=_path, default=Path.cwd())
+        item.add_argument("--repo-root", type=_path)
         if name == "replace":
             item.add_argument("--expected-generation", type=int, required=True)
     inspect = lease_sub.add_parser("inspect")
@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_evidence = close.add_mutually_exclusive_group(required=True)
     release_evidence.add_argument("--outcome-ref")
     release_evidence.add_argument("--candidate", type=_path)
-    close.add_argument("--repo-root", type=_path, default=Path.cwd())
+    close.add_argument("--repo-root", type=_path)
 
     attach = sub.add_parser(
         "render-attach",

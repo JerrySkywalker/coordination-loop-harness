@@ -15,6 +15,8 @@ WRITE 就发生冲突。每个 ACTIVE lease 最多只有一个 writer；共享�
 
 准入使用原子目录 mutex 和 create-new lease 文件。系统不会自动删除陈旧 mutex。
 Lease 扩张使用完整候选文件、必需的 Decision 引用以及 `expected_generation`。
+所有 v2 `acquire`、`replace` 与 `release` 变更都必须显式提供仓库根，不能从进程当前目录
+推导 Decision 或 outcome 权限；只有 v1 保留历史根目录发现行为。
 
 从 v0.2 起，引用字符串本身不构成授权。获取 lease 必须验证 `lease:acquire`；扩张必须由
 已接受或已合并的 v2 Decision 明确授权 `lease:expand`、目标 lease id 与候选 generation。
@@ -23,7 +25,8 @@ Lease 扩张使用完整候选文件、必需的 Decision 引用以及 `expected
 操作发布；不会退回到直接写最终路径。v2 Decision 还必须绑定完整候选的 canonical JSON
 SHA-256，防止授权后替换 mode、owner、路径、分支、期限或精确 SHA。
 Windows 的新建与替换发布均使用原生 `MOVEFILE_WRITE_THROUGH`，其中新建不会携带覆盖权限；
-POSIX 在原子 no-replace 发布后同步目录项。
+POSIX 在原子 no-replace 发布后同步目录项，替换则把已完整持久化的临时文件一次原子 rename，
+读者只会看到旧记录或完整新记录。替换后的目录同步失败会原样报告，不推断旧记录已恢复。
 通用 `decision.v2` schema 为兼容历史 v1 Decision 仍允许该字段为空，因此单纯 schema
 合法不构成 v2 lease 授权；v2 操作必须执行跨文档候选摘要精确比对。
 canonical v2 JSON 拒绝重复对象键、所有浮点数以及超出 `[-(2^53-1), 2^53-1]` 的整数，
@@ -44,6 +47,9 @@ dialect；跨主机只读观察不等于变更准入。
 Decision scope 的每一项必须非空、唯一且已 canonical 化，并覆盖 lease 的完整资源集合。
 它可以是严格超集，但额外的授权边界不会扩大或占用候选 lease 的资源；空白、重复或别名
 形式均 fail closed。
+基础设施身份可以包含 `/`，但不得为空或带首尾空白。v2 仓库字段使用无 `.git` 后缀的
+`owner/name`，序列化时可以保留展示大小写，冲突与 Decision scope 身份则统一 casefold；
+`active_writer_repository` 必须与唯一 WRITE 项的序列化拼写逐字一致。
 
 v2 正常结束必须提交精确 terminal candidate：generation 加一、保留原资源身份、引用仓库内
 outcome 及其 SHA-256，并由直接承接当前 Decision 的 release Decision 绑定。未过期时需要
@@ -52,6 +58,8 @@ Decision 链、候选摘要与 outcome 内容全部通过时才是 `TERMINAL_REL
 `UNKNOWN_FAIL_CLOSED`，并继续阻挡可解析出的同资源 writer。完全不可解析的记录不会变成
 机器级全局锁，但仍按其规范文件名保留精确 `lease_id` 冲突。v2 terminal 证明必须显式
 提供仓库根，绝不继承当前工作目录；未知 schema 也不能退回 v1 replace/release 路径。
+仓库相对 Decision/outcome 引用还会拒绝绝对路径、点段穿越、以点结尾的组件以及 Windows
+保留设备名，避免同一字符串在 Windows 上解析到另一文件。
 
 历史 v1 lease 的全重叠、Decision 顺序和仓库名 canonical 语义保持不变。已有 v1 协调仓库
 self-write replacement 仍兼容，但现在也必须通过精确 live Git/common-dir、clean worktree、

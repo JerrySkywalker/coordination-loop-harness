@@ -536,11 +536,13 @@ def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
     if not isinstance(repositories, list) or not repositories:
         raise ValueError("A v2 lease requires at least one repository binding")
     writers: list[str] = []
+    serialized_writers: list[str] = []
     for item in repositories:
         if not isinstance(item, dict) or not isinstance(item.get("repository"), str):
             raise ValueError("A v2 lease contains an invalid repository binding")
         if item.get("mode") == "WRITE":
             writers.append(canonical_repo_v2(item["repository"]))
+            serialized_writers.append(item["repository"])
         for key in ("canonical_path", "worktree_root"):
             value = item.get(key)
             if value is not None and (
@@ -561,6 +563,11 @@ def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
             canonical_scope(value)
         except (OSError, TypeError, ValueError) as exc:
             raise ValueError(f"A v2 lease contains an invalid local_scope: {exc}") from exc
+    for value in data.get("infrastructure_scopes", []):
+        if not isinstance(value, str) or not value or value != value.strip():
+            raise ValueError(
+                "A v2 lease requires non-empty infrastructure_scopes without surrounding whitespace"
+            )
     active_writer = data.get("active_writer_repository")
     if state == "ACTIVE":
         terminal_fields = (
@@ -582,11 +589,11 @@ def _validate_v2_lifecycle(data: dict[str, Any]) -> None:
         elif (
             not isinstance(active_writer, str)
             or len(writers) != 1
-            or canonical_repo_v2(active_writer) != writers[0]
+            or active_writer != serialized_writers[0]
         ):
             raise ValueError(
-                "ACTIVE leases require exactly one WRITE repository matching "
-                "active_writer_repository"
+                "ACTIVE leases require active_writer_repository to exactly match the "
+                "serialized identity of the single WRITE repository"
             )
     else:
         if data.get("generation", 0) < 2:
@@ -845,6 +852,7 @@ def _validate_writer_binding(
     if not writers:
         return
     writer = writers[0]
+    repository_identity_version = "v2" if schema_version == _V2_SCHEMA else "v1"
     canonical_root = canonical_path(writer["canonical_path"], must_exist=True)
     writer_root = canonical_path(writer["worktree_root"], must_exist=True)
     branch = _writer_branch_name(_writer_branch_ref(data, writer))
@@ -858,6 +866,7 @@ def _validate_writer_binding(
     canonical_result = verify_repository(
         canonical_root,
         expected_origin=writer["repository"],
+        repository_identity_version=repository_identity_version,
         offline=True,
     )
     if canonical_result["findings"]:
@@ -867,6 +876,7 @@ def _validate_writer_binding(
     writer_result = verify_repository(
         writer_root,
         expected_origin=writer["repository"],
+        repository_identity_version=repository_identity_version,
         stable_branch=branch if schema_version == _V2_SCHEMA else None,
         expected_sha=writer["exact_sha"],
         require_detached=False,
@@ -954,7 +964,12 @@ def _canonical_decision_scope_entry(scope: str) -> str:
     if ":" in scope:
         return scope.casefold()
     if scope.count("/") == 1:
-        return _canonical_v2_repository_scope(scope)
+        try:
+            return _canonical_v2_repository_scope(scope)
+        except ValueError:
+            # Infrastructure identities are intentionally provider-neutral and
+            # may contain one slash without using repository owner/name syntax.
+            return scope.casefold()
     return scope.casefold()
 
 
@@ -1126,9 +1141,11 @@ def _validate_lease(
 
 
 def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = None) -> Path:
+    candidate = load_json(candidate_path)
+    if candidate.get("schema_version") == _V2_SCHEMA and repo_root is None:
+        raise ValueError("A v2 lease mutation requires an explicit repo_root")
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
-    candidate = load_json(candidate_path)
     _validate_lease(candidate, repo_root, require_native_paths=True)
     is_v2 = candidate.get("schema_version") == _V2_SCHEMA
     if candidate["state"] != "ACTIVE" or candidate["generation"] != 1:
@@ -1198,9 +1215,11 @@ def replace(
     expected_generation: int,
     repo_root: Path | None = None,
 ) -> Path:
+    candidate = load_json(candidate_path)
+    if candidate.get("schema_version") == _V2_SCHEMA and repo_root is None:
+        raise ValueError("A v2 lease mutation requires an explicit repo_root")
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
-    candidate = load_json(candidate_path)
     _validate_lease(
         candidate,
         repo_root,
@@ -1365,6 +1384,8 @@ def release(
             )
         current_schema = current.get("schema_version")
         if current_schema == _V2_SCHEMA:
+            if repo_root is None:
+                raise ValueError("A v2 lease mutation requires an explicit repo_root")
             repo_root = repository_root(repo_root)
             _validate_lease(
                 current,

@@ -167,7 +167,8 @@
       "uniqueItems": true,
       "items": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "pattern": "^\\S(?:.*\\S)?$"
       }
     },
     "active_writer_repository": {
@@ -365,7 +366,10 @@
     "repositoryRelativePath": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*\\\\)(?!.*//)(?!.*\\/$)(?!\\.\\.?(?:/|$))(?!.*/\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$"
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*\\\\)(?!.*//)(?!.*\\/$)(?!.*\\.(?:/|$))(?!\\.\\.?(?:/|$))(?!.*/\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$",
+      "not": {
+        "pattern": "(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[A-Za-z0-9._-]*)?(?:/|$)"
+      }
     },
     "branchRef": {
       "type": "string",

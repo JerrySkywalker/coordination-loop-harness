@@ -15,6 +15,10 @@
   bounded portable path syntax plus native mutation admission, strict canonical
   decision scopes, exact filename/declared-id handling, explicit terminal
   repository roots, and default-deny unknown or malformed lease schemas.
+- Required explicit repository roots for every v2 mutation, exact serialized
+  active-writer matching, nonblank infrastructure identities, portable
+  repository-relative references, v2-aware origin normalization, and executable
+  old-or-complete-new replacement recovery coverage.
 - Bound writer admission to one Git common directory and stable filesystem
   identities while guarding common/per-worktree configuration, worktree admin,
   packed refs, HEAD, index, and the active branch through publication. Legacy

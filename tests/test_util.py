@@ -291,6 +291,58 @@ class AtomicJsonTests(unittest.TestCase):
             self.assertEqual({"complete": True}, json.loads(target.read_text(encoding="utf-8")))
             self.assertEqual([], list(root.glob("*.tmp")))
 
+    @unittest.skipUnless(os.name == "posix", "POSIX open-reader rename semantics")
+    def test_posix_replace_readers_observe_complete_old_or_new_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "record.json"
+            old = {"generation": 1, "payload": "a" * 10000}
+            new = {"generation": 2, "payload": "b" * 10000}
+            write_json_atomic(target, old, create_new=True)
+            old_bytes = target.read_bytes()
+            new_bytes = (
+                json.dumps(new, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+            ).encode("utf-8")
+
+            with target.open("rb") as reader_opened_before_replace:
+                write_json_atomic(target, new)
+                self.assertEqual(old_bytes, reader_opened_before_replace.read())
+
+            self.assertEqual(new_bytes, target.read_bytes())
+            self.assertEqual([], list(root.glob("*.tmp")))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory durability semantics")
+    def test_posix_replace_directory_sync_failure_reports_without_rollback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "record.json"
+            new = {"generation": 2, "payload": "complete"}
+            write_json_atomic(target, {"generation": 1}, create_new=True)
+            new_bytes = (
+                json.dumps(new, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+            ).encode("utf-8")
+            real_replace = os.replace
+            failure = OSError("synthetic directory sync failure")
+
+            with (
+                mock.patch(
+                    "coordination_loop_harness.util.os.replace",
+                    side_effect=real_replace,
+                ) as replace_mock,
+                mock.patch(
+                    "coordination_loop_harness.util._fsync_directory",
+                    side_effect=failure,
+                ) as sync_mock,
+                self.assertRaises(OSError) as raised,
+            ):
+                write_json_atomic(target, new)
+
+            self.assertIs(failure, raised.exception)
+            replace_mock.assert_called_once()
+            sync_mock.assert_called_once_with(root)
+            self.assertEqual(new_bytes, target.read_bytes())
+            self.assertEqual([], list(root.glob("*.tmp")))
+
     def test_multiprocess_create_new_publishes_one_complete_payload(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

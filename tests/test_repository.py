@@ -182,6 +182,32 @@ class RepositoryVerificationTests(unittest.TestCase):
             dirty = verify_repository(repo, offline=True)
             self.assertEqual(["untracked.txt"], dirty["untracked"])
 
+    def test_v2_origin_identity_handles_transport_case_without_changing_v1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _ = self.repository(Path(tmp))
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "remote",
+                    "set-url",
+                    "origin",
+                    "git@GITHUB.COM:Example/Repo.GIT",
+                ],
+                check=True,
+            )
+            legacy = verify_repository(repo, expected_origin="Example/Repo", offline=True)
+            v2 = verify_repository(
+                repo,
+                expected_origin="Example/Repo",
+                offline=True,
+                repository_identity_version="v2",
+            )
+            self.assertFalse(legacy["ok"])
+            self.assertIn("origin mismatch", "\n".join(legacy["findings"]))
+            self.assertTrue(v2["ok"])
+
     def test_missing_cached_origin_ref_is_a_structured_finding(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo, head = self.repository(Path(tmp))
