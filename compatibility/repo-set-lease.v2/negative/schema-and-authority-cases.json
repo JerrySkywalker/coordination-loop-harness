@@ -180,6 +180,18 @@
       "expected_layer": "SCHEMA_REJECT"
     },
     {
+      "case": "released-outcome-control-character",
+      "base": "terminal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/outcome_ref",
+          "value": "runs/TERMINAL-VECTOR/outcome.json\n"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
       "case": "released-decision-parent-traversal",
       "base": "terminal",
       "patch": [
@@ -305,6 +317,78 @@
           "op": "replace",
           "path": "/repositories/0/worktree_root",
           "value": "/tmp/writer\\alias"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-worktree-dot-segment",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "V:/src/./writer"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-worktree-parent-segment",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "V:/src/child/../writer"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-worktree-trailing-dot-component",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "V:/src/writer."
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-worktree-windows-device-component",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "V:/src/NUL.json"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-local-scope-repeated-separator",
+      "base": "active",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/local_scopes/-",
+          "value": "V:/state//writer"
+        }
+      ],
+      "expected_layer": "SCHEMA_REJECT"
+    },
+    {
+      "case": "active-worktree-control-character",
+      "base": "active",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/repositories/0/worktree_root",
+          "value": "V:/src/writer\talias"
         }
       ],
       "expected_layer": "SCHEMA_REJECT"
@@ -459,6 +543,66 @@
           "op": "replace",
           "path": "/sequence",
           "value": 1.0
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "decision-predecessor-absolute-path",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/previous_decision_ref",
+          "value": "/decisions/TERMINAL-VECTOR/DEC-1.json"
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "decision-predecessor-dot-segment",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/previous_decision_ref",
+          "value": "decisions/TERMINAL-VECTOR/./DEC-1.json"
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "decision-predecessor-parent-segment",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/previous_decision_ref",
+          "value": "decisions/TERMINAL-VECTOR/missing/../DEC-1.json"
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "decision-predecessor-trailing-dot-component",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/previous_decision_ref",
+          "value": "decisions/TERMINAL-VECTOR./DEC-1.json"
+        }
+      ],
+      "expected_layer": "SEMANTIC_REJECT"
+    },
+    {
+      "case": "decision-predecessor-windows-device-component",
+      "base": "release_decision",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/previous_decision_ref",
+          "value": "decisions/NUL/DEC-1.json"
         }
       ],
       "expected_layer": "SEMANTIC_REJECT"

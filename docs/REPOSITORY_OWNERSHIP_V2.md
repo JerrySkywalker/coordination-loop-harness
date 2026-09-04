@@ -30,10 +30,12 @@ surrounding whitespace; their conflict identity is case-normalized.
 Every v2 repository path, worktree path, and local scope uses a portable,
 absolute grammar so its identity cannot change with a process working
 directory. The serialized grammar admits a drive-qualified Windows path or a
-single-root POSIX path. It rejects UNC and device namespaces, double-leading
-separators, and backslashes in POSIX paths because those spellings cannot be
-given one bounded cross-host identity. A mutating operation additionally
-requires every declared path to use the current host's native dialect.
+single-root POSIX path. It rejects control characters, empty, dot, parent,
+trailing-dot/space, and Windows reserved device components as well as UNC and device namespaces,
+double-leading separators, and backslashes in POSIX paths because those
+spellings cannot be given one bounded cross-host identity. A mutating operation
+additionally requires every declared path to use the current host's native
+dialect.
 Read-only observation keeps the portable grammar so another host can still
 report ownership; that classification is not mutation admission.
 Serialized repository fields use suffix-free `owner/name` syntax and may
@@ -152,8 +154,22 @@ candidate instead declares `STALE_RECOVERY` and the decision must authorize
 `lease:release-stale`. Backdating a candidate cannot downgrade the authority
 required by the live clock.
 Repository-relative decision and outcome references reject absolute paths,
-dot-segment traversal, trailing-dot components, and Windows reserved device
-components so the same spelling cannot resolve to another file on Windows.
+control characters, dot-segment traversal, trailing-dot components, and Windows
+reserved device components so the same spelling cannot resolve to another file
+on Windows.
+Because `coord.decision.v2` remains structurally compatible with historical v1
+decisions, v2 lease consumers apply those rules to every
+`previous_decision_ref` in the verified predecessor chain.
+
+Acquire, replacement, and release revalidate their complete decision evidence
+immediately before atomic publication. A decision JSON, Markdown companion, or
+predecessor changed during guarded admission therefore fails before the lease
+record is created or replaced.
+
+On Windows, a reader handle that does not share delete access makes the native
+replacement fail while preserving the complete old record. Callers reconcile
+the exact target and retry after the reader releases it; no partial target is
+treated as success.
 
 Only a record whose schema, lifecycle, release lineage, candidate digest,
 outcome content, declared lease id, and canonical filename all verify is

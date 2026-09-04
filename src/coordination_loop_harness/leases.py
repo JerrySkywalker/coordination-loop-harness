@@ -24,6 +24,7 @@ from .util import (
     ensure_within,
     is_absolute_scope,
     is_native_absolute_scope,
+    is_repository_relative_path_v2,
     is_safe_json_integer,
     is_v2_absolute_scope,
     load_json,
@@ -87,10 +88,8 @@ def _access_conflicts(left: str, right: str) -> bool:
 
 def _validate_outcome_binding(data: dict[str, Any], repo_root: Path) -> None:
     outcome_ref = data.get("outcome_ref")
-    if not isinstance(outcome_ref, str) or not outcome_ref or "\\" in outcome_ref:
+    if not isinstance(outcome_ref, str) or not is_repository_relative_path_v2(outcome_ref):
         raise ValueError("A RELEASED v2 lease requires a repository-relative POSIX outcome_ref")
-    if is_absolute_scope(outcome_ref):
-        raise ValueError("A RELEASED v2 lease outcome_ref must be repository-relative")
     outcome_path = ensure_within(
         repo_root / outcome_ref,
         repo_root,
@@ -949,6 +948,89 @@ def _validate_decision_scope(data: dict[str, Any], decision: dict[str, Any]) -> 
         )
 
 
+def _verify_bound_lease_decision(
+    data: dict[str, Any],
+    repo_root: Path,
+    decision_path: Path,
+    *,
+    action: str,
+    error_label: str,
+    sequence_label: str,
+) -> dict[str, Any]:
+    if data.get("schema_version") == _V2_SCHEMA:
+        decision_ref = data.get("decision_ref")
+        if not isinstance(decision_ref, str) or not is_repository_relative_path_v2(decision_ref):
+            raise ValueError("A v2 lease decision_ref must use portable repository-relative syntax")
+    decision = verify_decision(
+        repo_root,
+        decision_path,
+        run_id=data["run_id"],
+        action=action,
+        lease_id=data["lease_id"],
+        lease_generation=data["generation"],
+        require_candidate_digest=data.get("schema_version") == _V2_SCHEMA,
+    )
+    if not decision["ok"]:
+        raise ValueError(
+            f"{error_label} verification failed:\n- " + "\n- ".join(decision["findings"])
+        )
+    _validate_decision_scope(data, decision)
+    if data.get("schema_version") == _V2_SCHEMA and decision.get("sequence") != data["generation"]:
+        raise ValueError(f"{sequence_label} decision sequence must match the lease generation")
+    return decision
+
+
+def _validate_replacement_authority(
+    candidate: dict[str, Any],
+    current: dict[str, Any],
+    repo_root: Path,
+    decision_path: Path,
+) -> None:
+    decision = _verify_bound_lease_decision(
+        candidate,
+        repo_root,
+        decision_path,
+        action="lease:expand",
+        error_label="Lease decision",
+        sequence_label="Replacement",
+    )
+    if candidate.get("schema_version") != _V2_SCHEMA:
+        return
+
+    current_decision_ref = current.get("decision_ref")
+    previous_decision_ref = decision.get("previous_decision_ref")
+    if (
+        not isinstance(current_decision_ref, str)
+        or not is_repository_relative_path_v2(current_decision_ref)
+        or not isinstance(previous_decision_ref, str)
+        or not is_repository_relative_path_v2(previous_decision_ref)
+    ):
+        raise ValueError("Replacement decision must reference the current lease decision")
+    current_decision_path = ensure_within(
+        repo_root / current_decision_ref,
+        repo_root,
+        label="current lease decision_ref",
+        must_exist=True,
+    )
+    current_action = "lease:acquire" if current["generation"] == 1 else "lease:expand"
+    _verify_bound_lease_decision(
+        current,
+        repo_root,
+        current_decision_path,
+        action=current_action,
+        error_label="Current lease decision",
+        sequence_label="Current",
+    )
+    previous_decision_path = ensure_within(
+        repo_root / previous_decision_ref,
+        repo_root,
+        label="replacement previous_decision_ref",
+        must_exist=True,
+    )
+    if current_decision_path != previous_decision_path:
+        raise ValueError("Replacement decision does not directly follow the current decision")
+
+
 def _canonical_decision_scope_entry(scope: str) -> str:
     if is_v2_absolute_scope(scope):
         return canonical_scope(scope)
@@ -994,7 +1076,7 @@ def _validate_terminal_release(
         raise ValueError("A terminal release cannot have a future released_utc")
     _validate_outcome_binding(data, repo_root)
     release_ref = data.get("release_decision_ref")
-    if not isinstance(release_ref, str) or not release_ref:
+    if not isinstance(release_ref, str) or not is_repository_relative_path_v2(release_ref):
         raise ValueError("A RELEASED v2 lease requires release_decision_ref")
     release_path = ensure_within(
         repo_root / release_ref,
@@ -1024,7 +1106,12 @@ def _validate_terminal_release(
         raise ValueError("Release decision sequence must match the terminal lease generation")
     active_ref = data.get("decision_ref")
     previous_ref = decision.get("previous_decision_ref")
-    if not isinstance(active_ref, str) or not isinstance(previous_ref, str):
+    if (
+        not isinstance(active_ref, str)
+        or not is_repository_relative_path_v2(active_ref)
+        or not isinstance(previous_ref, str)
+        or not is_repository_relative_path_v2(previous_ref)
+    ):
         raise ValueError("Release decision must directly follow the active lease decision")
     active_path = ensure_within(
         repo_root / active_ref,
@@ -1147,7 +1234,6 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
     _validate_lease(candidate, repo_root, require_native_paths=True)
-    is_v2 = candidate.get("schema_version") == _V2_SCHEMA
     if candidate["state"] != "ACTIVE" or candidate["generation"] != 1:
         raise ValueError("A new lease must have state=ACTIVE and generation=1")
     decision_path = ensure_within(
@@ -1155,22 +1241,14 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
         repo_root,
         label="lease decision_ref",
     )
-    decision = verify_decision(
+    _verify_bound_lease_decision(
+        candidate,
         repo_root,
         decision_path,
-        run_id=candidate["run_id"],
         action="lease:acquire",
-        lease_id=candidate["lease_id"],
-        lease_generation=1,
-        require_candidate_digest=is_v2,
+        error_label="Lease decision",
+        sequence_label="Acquisition",
     )
-    if not decision["ok"]:
-        raise ValueError(
-            "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
-        )
-    _validate_decision_scope(candidate, decision)
-    if is_v2 and decision.get("sequence") != candidate["generation"]:
-        raise ValueError("Acquisition decision sequence must match the lease generation")
     _validate_writer_binding(candidate)
     lease_path = ensure_within(
         lock_root / f"{candidate['lease_id']}.lease.json",
@@ -1179,22 +1257,14 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
     )
 
     with admission_mutex(lock_root):
-        decision = verify_decision(
+        _verify_bound_lease_decision(
+            candidate,
             repo_root,
             decision_path,
-            run_id=candidate["run_id"],
             action="lease:acquire",
-            lease_id=candidate["lease_id"],
-            lease_generation=1,
-            require_candidate_digest=is_v2,
+            error_label="Lease decision",
+            sequence_label="Acquisition",
         )
-        if not decision["ok"]:
-            raise ValueError(
-                "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
-            )
-        _validate_decision_scope(candidate, decision)
-        if is_v2 and decision.get("sequence") != candidate["generation"]:
-            raise ValueError("Acquisition decision sequence must match the lease generation")
         with _writer_git_admission_guard(candidate) as git_locks:
             _validate_writer_binding(candidate, admitted_git_locks=git_locks)
             overlaps = find_overlaps(candidate, lock_root, repo_root=repo_root)
@@ -1204,6 +1274,14 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
                 )
                 raise RuntimeError(f"Repository-set overlap detected: {detail}")
             _validate_writer_binding(candidate, admitted_git_locks=git_locks)
+            _verify_bound_lease_decision(
+                candidate,
+                repo_root,
+                decision_path,
+                action="lease:acquire",
+                error_label="Lease decision",
+                sequence_label="Acquisition",
+            )
             write_json_atomic(lease_path, candidate, create_new=True, trusted_root=lock_root)
     return lease_path
 
@@ -1280,63 +1358,7 @@ def replace(
             repo_root,
             label="lease decision_ref",
         )
-        decision = verify_decision(
-            repo_root,
-            decision_path,
-            run_id=candidate["run_id"],
-            action="lease:expand",
-            lease_id=candidate["lease_id"],
-            lease_generation=candidate["generation"],
-            require_candidate_digest=is_v2,
-        )
-        if not decision["ok"]:
-            raise ValueError(
-                "Lease decision verification failed:\n- " + "\n- ".join(decision["findings"])
-            )
-        _validate_decision_scope(candidate, decision)
-        if is_v2:
-            current_decision_ref = current.get("decision_ref")
-            previous_decision_ref = decision.get("previous_decision_ref")
-            if not isinstance(current_decision_ref, str) or not isinstance(
-                previous_decision_ref, str
-            ):
-                raise ValueError("Replacement decision must reference the current lease decision")
-            current_decision_path = ensure_within(
-                repo_root / current_decision_ref,
-                repo_root,
-                label="current lease decision_ref",
-                must_exist=True,
-            )
-            current_action = "lease:acquire" if current["generation"] == 1 else "lease:expand"
-            current_decision = verify_decision(
-                repo_root,
-                current_decision_path,
-                run_id=current["run_id"],
-                action=current_action,
-                lease_id=current["lease_id"],
-                lease_generation=current["generation"],
-                require_candidate_digest=True,
-            )
-            if not current_decision["ok"]:
-                raise ValueError(
-                    "Current lease decision verification failed:\n- "
-                    + "\n- ".join(current_decision["findings"])
-                )
-            _validate_decision_scope(current, current_decision)
-            if current_decision.get("sequence") != current["generation"]:
-                raise ValueError("Current decision sequence must match the lease generation")
-            previous_decision_path = ensure_within(
-                repo_root / previous_decision_ref,
-                repo_root,
-                label="replacement previous_decision_ref",
-                must_exist=True,
-            )
-            if current_decision_path != previous_decision_path:
-                raise ValueError(
-                    "Replacement decision does not directly follow the current decision"
-                )
-            if decision.get("sequence") != candidate["generation"]:
-                raise ValueError("Replacement decision sequence must match the lease generation")
+        _validate_replacement_authority(candidate, current, repo_root, decision_path)
         with _writer_git_admission_guard(candidate) as git_locks:
             _validate_writer_binding(candidate, admitted_git_locks=git_locks)
             overlaps = find_overlaps(
@@ -1351,6 +1373,7 @@ def replace(
                 )
                 raise RuntimeError(f"Repository-set overlap detected: {detail}")
             _validate_writer_binding(candidate, admitted_git_locks=git_locks)
+            _validate_replacement_authority(candidate, current, repo_root, decision_path)
             write_json_atomic(lease_path, candidate, trusted_root=lock_root)
     return lease_path
 
@@ -1443,6 +1466,7 @@ def release(
                     )
                 _validate_terminal_release(candidate, repo_root, observed_now=now)
                 _validate_writer_binding(current, admitted_git_locks=git_locks)
+                _validate_terminal_release(candidate, repo_root, observed_now=now)
                 write_json_atomic(lease_path, candidate, trusted_root=lock_root)
         elif current_schema == _V1_SCHEMA:
             if not isinstance(outcome_ref, str) or not outcome_ref:
@@ -1535,10 +1559,15 @@ def observe(
                 validation_root = repository_root(repo_root)
             except ValueError as exc:
                 findings.append(str(exc))
-        if validation_root is not None:
-            findings.extend(validate_document(lease, validation_root))
         try:
-            _validate_v2_lifecycle(lease)
+            if validation_root is None:
+                _validate_v2_lifecycle(lease)
+            else:
+                _validate_lease(
+                    lease,
+                    validation_root,
+                    allow_coordination_self_write=True,
+                )
             if lease.get("state") == "RELEASED":
                 if validation_root is None:
                     raise ValueError("Cannot verify terminal release without repo_root")

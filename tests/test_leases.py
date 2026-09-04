@@ -355,6 +355,34 @@ class LeaseTests(unittest.TestCase):
                 find_overlaps(b, locks, excluding_path=locks / "RUN-B.lease.json"),
             )
 
+    def test_v2_observe_rejects_case_alias_duplicate_repositories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            repo = self.repository_worktree(base, "product", repository="example/product")
+            active = self.lease_v2("RUN-A", "example/product", *repo)
+            self.authorize(base, active, "lease:acquire")
+            duplicate = dict(active["repositories"][0])
+            duplicate["repository"] = "EXAMPLE/PRODUCT"
+            duplicate["mode"] = "READ"
+            duplicate["canonical_path"] = None
+            duplicate["worktree_root"] = None
+            duplicate["branch_ref"] = None
+            duplicate["exact_sha"] = None
+            active["repositories"].append(duplicate)
+            self.write(locks / "RUN-A.lease.json", active)
+
+            result = observe(
+                "RUN-A",
+                locks,
+                observed_utc="2026-01-01T00:05:00Z",
+                repo_root=base,
+            )
+
+            self.assertEqual("UNKNOWN_FAIL_CLOSED", result["ownership_status"])
+            self.assertIn("unique", "\n".join(result["findings"]))
+
     def test_v2_shared_readers_coexist_but_writer_conflicts(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -1729,6 +1757,88 @@ class LeaseTests(unittest.TestCase):
                 replace(replacement_path, locks, expected_generation=1, repo_root=base)
             self.assertTrue(observed)
             self.assertTrue(all(not item.exists() for item in guard_paths))
+
+    def test_v2_replace_revalidates_decision_after_overlap_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            repo = self.repository_worktree(base, "product", repository="example/product")
+            active = self.lease_v2("RUN-A", "example/product", *repo)
+            self.authorize(base, active, "lease:acquire")
+            active_path = base / "active.json"
+            self.write(active_path, active)
+            acquire(active_path, locks, repo_root=base)
+
+            replacement = json.loads(json.dumps(active))
+            replacement["generation"] = 2
+            replacement["decision_ref"] = None
+            self.authorize(
+                base,
+                replacement,
+                "lease:expand",
+                previous_decision_ref=active["decision_ref"],
+            )
+            replacement_path = base / "replacement.json"
+            self.write(replacement_path, replacement)
+            decision_markdown = (base / replacement["decision_ref"]).with_suffix(".md")
+            from coordination_loop_harness import leases as lease_module
+
+            def tamper_authority_then_report_no_overlap(*_args: object, **_kwargs: object) -> list:
+                decision_markdown.write_text("# tampered authority\n", encoding="utf-8")
+                return []
+
+            with (
+                mock.patch.object(
+                    lease_module,
+                    "find_overlaps",
+                    side_effect=tamper_authority_then_report_no_overlap,
+                ),
+                self.assertRaisesRegex(ValueError, "Markdown SHA-256 binding mismatch"),
+            ):
+                replace(replacement_path, locks, expected_generation=1, repo_root=base)
+
+            stored = json.loads((locks / "RUN-A.lease.json").read_text(encoding="utf-8"))
+            self.assertEqual(1, stored["generation"])
+
+    def test_v2_replacement_predecessor_ref_rejects_portable_path_aliases(self):
+        aliases = (
+            lambda _base, ref: ref.replace("/DEC-", "/./DEC-"),
+            lambda _base, ref: ref.replace("/DEC-", "/missing/../DEC-"),
+            lambda base, ref: str(base / ref),
+            lambda _base, ref: ref.replace("/DEC-", "./DEC-"),
+            lambda _base, _ref: "decisions/NUL/DEC-1.json",
+        )
+        for alias in aliases:
+            with self.subTest(alias=alias), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                locks = base / "locks"
+                repo = self.repository_worktree(base, "product", repository="example/product")
+                active = self.lease_v2("RUN-A", "example/product", *repo)
+                self.authorize(base, active, "lease:acquire")
+                active_path = base / "active.json"
+                self.write(active_path, active)
+                acquire(active_path, locks, repo_root=base)
+
+                replacement = json.loads(json.dumps(active))
+                replacement["generation"] = 2
+                replacement["decision_ref"] = None
+                self.authorize(
+                    base,
+                    replacement,
+                    "lease:expand",
+                    previous_decision_ref=active["decision_ref"],
+                )
+                decision_path = base / replacement["decision_ref"]
+                decision = json.loads(decision_path.read_text(encoding="utf-8"))
+                decision["previous_decision_ref"] = alias(base, active["decision_ref"])
+                self.write(decision_path, decision)
+                replacement_path = base / "replacement.json"
+                self.write(replacement_path, replacement)
+
+                with self.assertRaisesRegex(ValueError, "portable|reference"):
+                    replace(replacement_path, locks, expected_generation=1, repo_root=base)
+                stored = json.loads((locks / "RUN-A.lease.json").read_text(encoding="utf-8"))
+                self.assertEqual(1, stored["generation"])
 
     def test_repository_overlap_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

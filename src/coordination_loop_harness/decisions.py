@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .util import ensure_within, is_safe_json_integer, load_json, require_safe_id, sha256_file
+from .util import (
+    ensure_within,
+    is_repository_relative_path_v2,
+    is_safe_json_integer,
+    load_json,
+    require_safe_id,
+    sha256_file,
+)
 from .validation import validate_document
 
 ACCEPTED_STATUSES = {"ACCEPTED", "MERGED"}
@@ -15,6 +22,7 @@ def _verify_predecessor_chain(
     decision: dict[str, Any],
     *,
     run_id: str,
+    require_portable_refs: bool = False,
 ) -> list[str]:
     findings: list[str] = []
     current_path = decision_path
@@ -32,6 +40,11 @@ def _verify_predecessor_chain(
             break
         if not isinstance(previous_ref, str) or not previous_ref:
             findings.append("sequence greater than 1 requires previous_decision_ref")
+            break
+        if require_portable_refs and not is_repository_relative_path_v2(previous_ref):
+            findings.append(
+                "previous_decision_ref must use portable repository-relative path syntax"
+            )
             break
 
         previous_path = Path(previous_ref)
@@ -118,6 +131,7 @@ def verify_decision(
                 decision_path,
                 decision,
                 run_id=run_id,
+                require_portable_refs=require_candidate_digest,
             )
         )
     if action not in decision.get("authorized_actions", []):

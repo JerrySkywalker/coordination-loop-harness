@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -20,6 +21,7 @@ from coordination_loop_harness.util import (
     canonical_scope,
     ensure_within,
     is_native_absolute_scope,
+    is_repository_relative_path_v2,
     is_v2_absolute_scope,
     load_json,
     paths_overlap,
@@ -118,6 +120,20 @@ class PathNormalizationTests(unittest.TestCase):
             "//tmp",
             "///tmp",
             "/tmp/a\\b",
+            "V:/src/./repo",
+            "V:/src/child/../repo",
+            "V:/src/repo.",
+            "V:/src/repo ",
+            "V:/src/NUL",
+            "V:/src/COM1.json",
+            "V:/src//repo",
+            "V:/src/repo\n",
+            "V:/src/repo\tchild",
+            "/tmp/./repo",
+            "/tmp/child/../repo",
+            "/tmp/repo.",
+            "/tmp/NUL.json",
+            "/tmp//repo",
         ):
             with self.subTest(value=value):
                 self.assertFalse(is_v2_absolute_scope(value))
@@ -127,6 +143,25 @@ class PathNormalizationTests(unittest.TestCase):
         else:
             self.assertTrue(is_native_absolute_scope("/tmp/repo"))
             self.assertFalse(is_native_absolute_scope("V:/src/repo"))
+
+    def test_v2_repository_relative_path_grammar_rejects_aliases(self):
+        self.assertTrue(is_repository_relative_path_v2("decisions/RUN-A/DEC-1.json"))
+        for value in (
+            "/decisions/RUN-A/DEC-1.json",
+            "V:/decisions/RUN-A/DEC-1.json",
+            "decisions/RUN-A/./DEC-1.json",
+            "decisions/RUN-A/missing/../DEC-1.json",
+            "decisions/RUN-A./DEC-1.json",
+            "decisions/NUL/DEC-1.json",
+            "decisions/COM1.json",
+            "decisions//DEC-1.json",
+            "decisions/RUN-A/DEC-1.json/",
+            "decisions/RUN-A/DEC-1.json\n",
+            "decisions/RUN-A/DEC-1.json\tchild",
+            r"decisions\RUN-A\DEC-1.json",
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(is_repository_relative_path_v2(value))
 
     def test_recognized_device_aliases_are_retained_for_conservative_scans(self):
         extended = windows_device_scope_alias(r"\\?\V:\src\repo")
@@ -264,6 +299,87 @@ class AtomicJsonTests(unittest.TestCase):
                 write_json_atomic(target, {"generation": 2}, create_new=True)
             write_json_atomic(target, {"generation": 2})
             self.assertEqual({"generation": 2}, load_json(target))
+
+    @unittest.skipUnless(os.name == "nt", "Windows atomic replacement concurrency test")
+    def test_windows_concurrent_readers_observe_complete_payload_or_replace_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "record.json"
+            documents = [
+                {"generation": generation, "payload": str(generation) * 20000}
+                for generation in range(1, 33)
+            ]
+            payloads = {
+                (json.dumps(item, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode(
+                    "utf-8"
+                )
+                for item in documents
+            }
+            write_json_atomic(target, documents[0], create_new=True)
+            stop = threading.Event()
+            invalid: list[bytes | str] = []
+            reads = 0
+
+            def read_fresh_handles() -> None:
+                nonlocal reads
+                while not stop.is_set():
+                    try:
+                        observed = target.read_bytes()
+                    except PermissionError:
+                        # MoveFileExW can transiently deny a fresh open while
+                        # completing a write-through replacement.
+                        continue
+                    except OSError as exc:
+                        invalid.append(type(exc).__name__)
+                        return
+                    reads += 1
+                    if observed not in payloads:
+                        invalid.append(observed)
+                        return
+
+            reader = threading.Thread(target=read_fresh_handles)
+            reader.start()
+            try:
+                for document in documents[1:]:
+                    try:
+                        write_json_atomic(target, document)
+                    except PermissionError:
+                        # A reader without delete sharing can make MoveFileExW
+                        # refuse the replacement. The old complete target stays
+                        # authoritative and the caller must reconcile/retry.
+                        pass
+                    self.assertIn(target.read_bytes(), payloads)
+            finally:
+                stop.set()
+                reader.join(timeout=20)
+
+            self.assertFalse(reader.is_alive())
+            self.assertGreater(reads, 0)
+            self.assertEqual([], invalid)
+            write_json_atomic(target, documents[-1])
+            self.assertEqual(documents[-1], load_json(target))
+            self.assertEqual([], list(root.glob("*.tmp")))
+
+    @unittest.skipUnless(os.name == "nt", "Windows held-reader replacement refusal test")
+    def test_windows_held_reader_refuses_replace_without_partial_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "record.json"
+            old = {"generation": 1, "payload": "old" * 10000}
+            new = {"generation": 2, "payload": "new" * 10000}
+            write_json_atomic(target, old, create_new=True)
+            old_bytes = target.read_bytes()
+
+            with target.open("rb") as held_reader:
+                with self.assertRaises(PermissionError):
+                    write_json_atomic(target, new)
+                held_reader.seek(0)
+                self.assertEqual(old_bytes, held_reader.read())
+
+            self.assertEqual(old_bytes, target.read_bytes())
+            self.assertEqual([], list(root.glob("*.tmp")))
+            write_json_atomic(target, new)
+            self.assertEqual(new, load_json(target))
 
     def test_create_new_write_failure_closes_and_cleans_temporary_file(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -33,9 +33,10 @@ canonical v2 JSON 拒绝重复对象键、所有浮点数以及超出 `[-(2^53-1
 按对象键排序、直接输出非 ASCII 字符、使用紧凑分隔符并以唯一一个 LF 结束，再编码为
 UTF-8。
 
-v2 序列化路径仅允许盘符限定的 Windows 绝对路径或单根 POSIX 路径；UNC/device namespace、
-双前导分隔符以及 POSIX 路径中的反斜杠一律默认拒绝。变更操作还要求路径属于当前主机
-dialect；跨主机只读观察不等于变更准入。
+v2 序列化路径仅允许盘符限定的 Windows 绝对路径或单根 POSIX 路径；控制字符、空组件、点段、
+父段、尾点/尾空格、Windows 保留设备名、UNC/device namespace、双前导分隔符以及 POSIX 路径中的
+反斜杠一律默认拒绝。变更操作还要求路径属于当前主机 dialect；跨主机只读观察不等于变更
+准入。
 
 最终准入在共享 mutex 内持有 Git index、HEAD、公共 config、每 worktree config、worktree
 管理 `locked`、packed refs 与当前 branch 的原生 lock；所有派生路径都必须留在精确 Git
@@ -59,7 +60,9 @@ Decision 链、候选摘要与 outcome 内容全部通过时才是 `TERMINAL_REL
 机器级全局锁，但仍按其规范文件名保留精确 `lease_id` 冲突。v2 terminal 证明必须显式
 提供仓库根，绝不继承当前工作目录；未知 schema 也不能退回 v1 replace/release 路径。
 仓库相对 Decision/outcome 引用还会拒绝绝对路径、点段穿越、以点结尾的组件以及 Windows
-保留设备名，避免同一字符串在 Windows 上解析到另一文件。
+保留设备名和控制字符，避免同一字符串在 Windows 上解析到另一文件。v2 consumer 会将该规则应用于
+完整 Decision predecessor 链，并在原子发布前重新验证 Decision 证据。v2 只读观察也会先
+执行完整仓库身份语义校验，再报告 ownership 状态。
 
 历史 v1 lease 的全重叠、Decision 顺序和仓库名 canonical 语义保持不变。已有 v1 协调仓库
 self-write replacement 仍兼容，但现在也必须通过精确 live Git/common-dir、clean worktree、

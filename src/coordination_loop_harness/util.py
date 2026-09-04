@@ -16,6 +16,11 @@ SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 WINDOWS_DEVICE_PATH_RE = re.compile(r"^(?:\\\\|//)[?.](?:\\|/)")
+WINDOWS_RESERVED_COMPONENT_RE = re.compile(
+    r"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$",
+    re.IGNORECASE,
+)
+REPOSITORY_RELATIVE_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 MOVEFILE_REPLACE_EXISTING = 0x1
 MOVEFILE_WRITE_THROUGH = 0x8
 MAX_SAFE_JSON_INTEGER = (1 << 53) - 1
@@ -274,8 +279,39 @@ def is_v2_absolute_scope(value: str) -> bool:
     ):
         return False
     if WINDOWS_DRIVE_PATH_RE.match(raw):
-        return True
-    return raw.startswith("/") and "\\" not in raw
+        suffix = raw.replace("\\", "/")[3:]
+    elif raw.startswith("/") and "\\" not in raw:
+        suffix = raw[1:]
+    else:
+        return False
+    return not suffix or _portable_v2_path_components_are_safe(suffix.split("/"))
+
+
+def is_repository_relative_path_v2(value: str) -> bool:
+    """Validate one portable repository-relative reference used by a v2 lease."""
+
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or "\\" in value
+        or value.startswith("/")
+        or WINDOWS_DRIVE_PATH_RE.match(value)
+        or REPOSITORY_RELATIVE_PATH_RE.fullmatch(value) is None
+    ):
+        return False
+    return _portable_v2_path_components_are_safe(value.split("/"))
+
+
+def _portable_v2_path_components_are_safe(components: list[str]) -> bool:
+    return all(
+        component
+        and all(ord(character) >= 32 and ord(character) != 127 for character in component)
+        and component not in {".", ".."}
+        and not component.endswith((".", " "))
+        and WINDOWS_RESERVED_COMPONENT_RE.fullmatch(component) is None
+        for component in components
+    )
 
 
 def is_native_absolute_scope(value: str) -> bool:

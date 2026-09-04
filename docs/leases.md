@@ -64,8 +64,9 @@ admission holds the Git index, HEAD, common and per-worktree config,
 worktree-admin, packed-ref, and active-branch locks, and verifies their owned
 identities and markers across a stable snapshot recheck, overlap scan, and
 atomic lease publish. All serialized paths use the bounded v2 drive-or-POSIX
-absolute grammar. UNC/device namespaces, double-root spellings, and POSIX
-backslashes are denied; mutation additionally requires the native host dialect.
+absolute grammar. Control characters, empty, dot, parent, trailing-dot/space,
+Windows reserved device, UNC/device, double-root, and POSIX-backslash spellings are denied;
+mutation additionally requires the native host dialect.
 Portable read-only observation is not mutation admission. In addition,
 replacement preserves the lease identity/version while directly chaining its
 accepted decision. Duplicate lease ids conflict independently of resource
@@ -90,4 +91,8 @@ schema versions cannot fall through to legacy replacement or release. See
 [`REPOSITORY_OWNERSHIP_V2.md`](REPOSITORY_OWNERSHIP_V2.md) for the complete
 Minimum-V1 contract. V1 leases retain the conservative behavior above.
 Repository-relative decision and outcome references also reject dot traversal,
-trailing-dot components, and Windows reserved device components.
+control characters, trailing-dot components, and Windows reserved device
+components. V2 consumers
+apply this rule to the full decision predecessor chain and revalidate decision
+evidence immediately before atomic publication. Read-only v2 observation runs
+the full semantic repository-identity validator before reporting ownership.

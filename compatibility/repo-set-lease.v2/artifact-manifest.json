@@ -15,7 +15,7 @@
   "decision_binding_policy": "generic-decision-v2-schema-is-not-v2-lease-authority; consumers-require-and-compare-the-exact-candidate-digest",
   "decision_scope_policy": "nonblank-unique-canonical-superset; extra-entries-do-not-reserve-resources",
   "v2_repository_identity": "casefolded-suffix-free-owner/name-with-case-preserving-serialization-and-exact-active-writer-spelling",
-  "v2_path_policy": "portable-drive-or-single-posix-root; mutations-require-host-native; unc-device-double-root-and-posix-backslash-denied; relative-refs-deny-trailing-dot-and-windows-device-components",
+  "v2_path_policy": "portable-drive-or-single-posix-root; mutations-require-host-native; control-dot-parent-empty-trailing-dot-space-and-windows-device-components-denied; relative-decision-lineage-refs-enforced-by-v2-consumers",
   "v2_mutation_root_policy": "explicit-repository-root-no-ambient-cwd",
   "terminal_observation_policy": "explicit-repository-root-no-ambient-cwd",
   "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
@@ -34,7 +34,7 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
-      "sha256": "5b98dd6d47e4f4a9cc50703a8ec97e23e1e93844059b19b42720eeca8cd01184"
+      "sha256": "7512e92d8b36b94a9bc71d4e213db98b1201275d034687012faeffb907055e71"
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
@@ -50,7 +50,7 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "dbe2bfb5ce3322135921f9dd7f3e3f3a2692635ff57766511d2151a2682cc388"
+      "sha256": "b9f678d4ff2353b6920a0ae1ca8143200030900577d29e7c5b8042c9dd6ab2c7"
     },
     {
       "path": "docs/command-reference.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "docs/leases.md",
-      "sha256": "923821641feb4a2e28d6a7891358365872d334f216e867096e7881e1275612a6"
+      "sha256": "2d86a3c6e63a131c10615ade420a7f1898e23851d248aa7df9ca6628ff172b1e"
     },
     {
       "path": "schemas/decision.v2.schema.json",
@@ -66,7 +66,7 @@
     },
     {
       "path": "schemas/repo-set-lease.v2.schema.json",
-      "sha256": "c549a4678523d91ccb4d907f2ac2477db3fbbf194adfec5481f8ba64c2520931"
+      "sha256": "a1fca88039b306002398870295f3cae96d3ae66182dafd22f2438f1f108443de"
     },
     {
       "path": "src/coordination_loop_harness/cli.py",
@@ -74,11 +74,11 @@
     },
     {
       "path": "src/coordination_loop_harness/decisions.py",
-      "sha256": "f6363e3ca4ae54e4621fa7bd370f98a44491152765192029ba7f062dad6f287f"
+      "sha256": "6483bb0017ba49e402bae6f5b2649f1f257274d937a3584ae63d32e64ebaaac9"
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "0773a658f1b7bf389d2e99383115d82140270611e251e798ea323f9f0d343cb0"
+      "sha256": "db85ffc35c83c807a91da2631bc32db1ff163005745cd4a43930c690f9291e5d"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -86,7 +86,7 @@
     },
     {
       "path": "src/coordination_loop_harness/util.py",
-      "sha256": "4debbc11ca1c52de173975147aa1cb6068f48c54183c2f4050d70e63ddd25b06"
+      "sha256": "79cc36a7bcccc6521cb3c6853663a78efc86a4113b7b3bf7f6e1bf7ad2fb8c60"
     },
     {
       "path": "src/coordination_loop_harness/validation.py",
@@ -102,7 +102,7 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "3de0afa198bcbbf0ba8af25aff3bdfa2e0520ed1e03575afb58577ea3c6536b5"
+      "sha256": "3969d26a15d14ce2ba2deef05004cd2a6616de132f8f523a1aae1394291bb11c"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
@@ -114,7 +114,7 @@
     },
     {
       "path": "tests/test_util.py",
-      "sha256": "05e96bfcf4c152d5a3b8512b79d3fe95ad93c23054efaa8540151ca3c97309ab"
+      "sha256": "5b90927bb7757235f7b766cbcee54d79d72a1f2e68ca9da9879a36ac8f4c3a5f"
     }
   ],
   "positive_cases": [
@@ -146,6 +146,7 @@
     "released-outcome-trailing-slash",
     "released-outcome-trailing-dot",
     "released-outcome-windows-device-name",
+    "released-outcome-control-character",
     "released-decision-parent-traversal",
     "extra-property",
     "branch-ref-parent-component",
@@ -156,6 +157,12 @@
     "active-device-worktree",
     "active-double-slash-posix-worktree",
     "active-posix-worktree-with-backslash",
+    "active-worktree-dot-segment",
+    "active-worktree-parent-segment",
+    "active-worktree-trailing-dot-component",
+    "active-worktree-windows-device-component",
+    "active-local-scope-repeated-separator",
+    "active-worktree-control-character",
     "active-repository-clone-suffix",
     "active-repository-transport-form",
     "active-blank-infrastructure-scope",
@@ -168,6 +175,11 @@
     "decision-lease-generation-outside-safe-integer-range",
     "decision-lease-generation-integral-float",
     "decision-predecessor-sequence-integral-float",
+    "decision-predecessor-absolute-path",
+    "decision-predecessor-dot-segment",
+    "decision-predecessor-parent-segment",
+    "decision-predecessor-trailing-dot-component",
+    "decision-predecessor-windows-device-component",
     "candidate-digest-mismatch",
     "lease-decision-missing-candidate-digest",
     "lease-decision-null-candidate-digest",
@@ -185,6 +197,6 @@
     "canonical-infrastructure-scope-with-slash",
     "required-nonrepository-infrastructure-scope-with-slash"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:c7fba9a602dafc94f505f00485e127c0695e1c6766a8f3021ea566746bd6cdda",
-  "artifact_set_sha256": "c7fba9a602dafc94f505f00485e127c0695e1c6766a8f3021ea566746bd6cdda"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:f5b7e3c69bcecf4b685def462e674653d1c77ca9ba7d2fa19759699501e59da1",
+  "artifact_set_sha256": "f5b7e3c69bcecf4b685def462e674653d1c77ca9ba7d2fa19759699501e59da1"
 }
