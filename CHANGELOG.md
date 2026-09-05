@@ -20,6 +20,10 @@
   symlink, reparse, hardlink, identity-swap, Windows case aliases, and mixed-case
   lease suffixes fail closed while safely readable exact resource claims remain
   reserved.
+- Made CLH admission reserve lease-id filenames by portable casefold across
+  active and terminal records, prevented invalid v2 relative scopes from
+  inheriting ambient cwd, and sealed explicit READ/READ plus bidirectional
+  READ/WRITE conformance vectors.
 - Required explicit repository roots for every v2 mutation, exact serialized
   active-writer matching, nonblank infrastructure identities, portable
   repository-relative references, v2-aware origin normalization, and executable

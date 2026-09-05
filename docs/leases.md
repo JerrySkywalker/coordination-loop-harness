@@ -80,7 +80,8 @@ spellings are denied; mutation additionally requires the native host dialect.
 Portable read-only observation is not mutation admission. In addition,
 replacement preserves the lease identity/version while directly chaining its
 accepted decision. Duplicate lease ids conflict independently of resource
-identity.
+identity and are compared by portable ASCII casefold so cooperating CLH
+admission refuses a case-only sibling before mutation.
 V2 repository fields use suffix-free `owner/name` syntax and may preserve case,
 while overlap and decision identities are casefolded. The active writer value
 must exactly match the sole WRITE entry's serialized spelling. Infrastructure
@@ -96,8 +97,12 @@ a directly chained release decision and hashed outcome. Ordinary completion
 uses `lease:release`; an already expired lease requires the distinct
 `lease:release-stale` authority. Invalid terminal evidence is
 `UNKNOWN_FAIL_CLOSED` and remains blocking for parsed overlapping resources. An
-opaque record also preserves the exact lease id encoded by its canonical
-single-link filename entry, without becoming a machine-wide lock. V2 terminal verification needs
+opaque record also preserves the casefolded lease-id identity encoded by its
+canonical single-link filename entry, without becoming a machine-wide lock. A
+valid terminal record releases resources but keeps that bounded filename
+identity reserved. Invalid v2 relative path claims are ignored instead of being
+resolved through ambient cwd; valid absolute and recognized absolute alias
+claims remain conservative. V2 terminal verification needs
 an explicit repository root and never inherits the current directory. Unknown
 schema versions cannot fall through to legacy replacement or release. See
 [`REPOSITORY_OWNERSHIP_V2.md`](REPOSITORY_OWNERSHIP_V2.md) for the complete

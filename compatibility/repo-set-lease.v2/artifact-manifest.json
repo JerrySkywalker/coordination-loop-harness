@@ -10,7 +10,7 @@
   "artifact_set_record_format": "sorted-path<NUL>sha256<LF>",
   "producer_base_sha": "95521b2d3b7dbf35610382b87f7e1d6c28872df7",
   "producer_head_recording": "PROGRAM_COMPATIBILITY_OBSERVATION_AFTER_MERGE",
-  "legacy_policy": "coord.repo-set-lease.v1-semantics-unchanged",
+  "legacy_policy": "coord.repo-set-lease.v1-payload-lifecycle-and-resource-semantics-unchanged; shared-filename-namespace-casefold-hardened",
   "draft_v2_migration_policy": "pre-acceptance-v2-records-are-never-auto-upgraded-and-remain-fail-closed-until-reviewed-migration",
   "decision_binding_policy": "generic-decision-v2-schema-is-not-v2-lease-authority; consumers-require-and-compare-the-exact-candidate-digest",
   "decision_scope_policy": "nonblank-unique-canonical-superset; branch-marker-parsing-requires-owner/name-prefix-otherwise-opaque-infrastructure-casefolding; extra-entries-do-not-reserve-resources",
@@ -18,6 +18,14 @@
   "v2_path_policy": "portable-drive-or-single-posix-root; mutations-require-host-native; control-dot-parent-empty-trailing-dot-space-windows-device-and-windows-invalid-component-characters-denied; relative-decision-lineage-refs-enforced-by-v2-consumers",
   "v2_mutation_root_policy": "explicit-repository-root-no-ambient-cwd",
   "lease_record_entry_policy": "exact-case-sensitive-direct-regular-single-link-entry-with-bracketed-filesystem-identity; symlink-reparse-hardlink-and-resolved-aliases-fail-closed",
+  "lease_id_filename_policy": "cooperating-admission-reserves-ascii-casefold-collisions-even-after-valid-terminal-release",
+  "invalid_v2_scope_policy": "relative-path-claims-have-no-cwd-derived-overlap-identity",
+  "access_mode_conformance": "versioned-vector-materialization; explicit-read-read-admits-and-read-write-conflicts-in-both-directions",
+  "access_mode_cases": [
+    "shared-program-disjoint-writers:shared-observer-read-read",
+    "writer-versus-reader",
+    "reader-versus-writer"
+  ],
   "terminal_observation_policy": "explicit-repository-root-no-ambient-cwd",
   "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
   "source_import_prohibited": true,
@@ -31,7 +39,7 @@
   "artifacts": [
     {
       "path": "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
-      "sha256": "c3cc3c91aa5bf376793f3c11930486edaece24dc14a99f46d9cf2e75107f70b4"
+      "sha256": "196c2b903cd21e7e0bd636f817edf50f842592c214202c10156a080e73aa09d8"
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
@@ -43,7 +51,7 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/shared-program-disjoint-writers.json",
-      "sha256": "821b1f70f125f4b173b2ebc3cec5a8febc23c57eb86d55a2fdd5ea5df39912b8"
+      "sha256": "1d0291018e7b65d307141cea3d50bb04f7408a5ff9a80ba044e1d6b832fba012"
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/terminal-release.json",
@@ -51,7 +59,7 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "66435c13f3ad2918470123ad162eba1e1967cdfaaf6ea125570f6ecf100edbef"
+      "sha256": "f98d7f5e9ae7a8ceda73b2b32e30774ad26d29a4113a77b663be558ab08828cc"
     },
     {
       "path": "docs/command-reference.md",
@@ -59,7 +67,7 @@
     },
     {
       "path": "docs/leases.md",
-      "sha256": "040ebc6a15ad076d0bf33354775c28a6f891837166921fc4fd4558e0df2b9c25"
+      "sha256": "5d33dde5d6e025b558f703981c1af7656350c05f3dacdae5be7658c5706bc5c2"
     },
     {
       "path": "schemas/decision.v2.schema.json",
@@ -79,7 +87,7 @@
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "4c9c3bd5d0f28fd2c416c3bae3506c629fdc0cd5a741a814aad46f42d79d253e"
+      "sha256": "f4b495f893f9b7456a0e37ad7ffc661d7fcff34047b55f61d5759b5644d53ae3"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -103,11 +111,11 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "257e11a7d5fbc9e294432bf9082621b21b5ed1638cfecf7aaed28d947247b58d"
+      "sha256": "8ac14e5bb534471787140d7e5d6282bc3a997320cded19646af6b27061162cdb"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "d9c5ee4f2c69ff2f4fa0f96a2f7ceff4672587714cc0f9e3c5d7ffce31fae270"
+      "sha256": "aea0cd51e8ec6235e98538bc01738e5eccbfc8645fc9a2bf37c2350f9c56af40"
     },
     {
       "path": "tests/test_repository.py",
@@ -125,12 +133,15 @@
   ],
   "negative_expected_categories": {
     "same-lease-id": ["lease_id"],
+    "case-only-lease-id": ["lease_id"],
     "same-repository": ["repository"],
     "same-worktree": ["path"],
     "same-branch": ["repository", "branch"],
     "overlapping-local-resource": ["path"],
     "root-local-resource": ["path", "path", "path"],
-    "same-infrastructure-resource": ["infrastructure"]
+    "same-infrastructure-resource": ["infrastructure"],
+    "writer-versus-reader": ["repository", "branch", "path", "path"],
+    "reader-versus-writer": ["repository", "branch", "path", "path"]
   },
   "negative_schema_and_authority_cases": [
     "active-with-terminal-field",
@@ -201,6 +212,6 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:8344f637d59fbcc3d043b3c48a4253b881c4898e939089947c173a32def1f823",
-  "artifact_set_sha256": "8344f637d59fbcc3d043b3c48a4253b881c4898e939089947c173a32def1f823"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:d1c3006c0d84067c2f4c98e8e61223a617648923d154425f96702681739c55d5",
+  "artifact_set_sha256": "d1c3006c0d84067c2f4c98e8e61223a617648923d154425f96702681739c55d5"
 }

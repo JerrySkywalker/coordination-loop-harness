@@ -990,6 +990,46 @@ class LeaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "suffix must be exactly"):
                 list_leases(locks)
 
+    def test_casefolded_lease_id_filename_alias_remains_reserved(self):
+        for state in ("ACTIVE", "RELEASED"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                locks = base / "locks"
+                locks.mkdir()
+                existing = lease("run-a", "example/a", generation=2 if state == "RELEASED" else 1)
+                if state == "RELEASED":
+                    existing.update(
+                        {
+                            "state": "RELEASED",
+                            "active_writer_repository": None,
+                            "released_utc": "2026-01-01T00:05:00Z",
+                            "outcome_ref": "runs/run-a/outcome.json",
+                        }
+                    )
+                self.write(locks / "run-a.lease.json", existing)
+                candidate = lease("RUN-A", "example/disjoint")
+                candidate["coordination_repository"] = "example/other-program"
+
+                overlaps = find_overlaps(candidate, locks)
+                self.assertEqual(["lease_id"], [item.category for item in overlaps])
+                if state == "RELEASED":
+                    self.assertEqual([], find_overlaps(lease("RUN-B", "example/a"), locks))
+
+                before = (locks / "run-a.lease.json").read_bytes()
+                self.authorize(base, candidate, "lease:acquire")
+                candidate_path = base / "candidate.json"
+                self.write(candidate_path, candidate)
+                with self.assertRaisesRegex(RuntimeError, "Repository-set overlap.*lease_id="):
+                    acquire(candidate_path, locks, repo_root=base)
+                self.assertEqual(before, (locks / "run-a.lease.json").read_bytes())
+                with os.scandir(locks) as entries:
+                    aliases = [
+                        entry.name
+                        for entry in entries
+                        if entry.name.casefold() == "run-a.lease.json"
+                    ]
+                self.assertEqual(["run-a.lease.json"], aliases)
+
     def test_release_and_replace_reject_hardlinked_current_entry(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -1337,6 +1377,45 @@ class LeaseTests(unittest.TestCase):
             contender = lease("RUN-B", "example/b")
             contender["schema_version"] = "coord.repo-set-lease.v2"
             contender["local_scopes"] = [str(shared)]
+            categories = [item.category for item in find_overlaps(contender, locks)]
+            self.assertIn("path", categories)
+
+    def test_invalid_v2_relative_scope_does_not_inherit_ambient_cwd(self):
+        for field in ("local_scopes", "canonical_path", "worktree_root"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                locks = base / "locks"
+                locks.mkdir()
+                existing = lease("RUN-A", "example/a")
+                existing["schema_version"] = "coord.repo-set-lease.v2"
+                contender = lease("RUN-B", "example/b")
+                contender["schema_version"] = "coord.repo-set-lease.v2"
+                if field == "local_scopes":
+                    existing[field] = ["."]
+                    contender[field] = ["."]
+                else:
+                    existing["repositories"][0][field] = "."
+                    contender["repositories"][0][field] = "."
+                self.write(locks / "RUN-A.lease.json", existing)
+
+                self.assertEqual([], find_overlaps(contender, locks))
+                contender["repositories"][0]["repository"] = "example/a"
+                contender["active_writer_repository"] = "example/a"
+                self.assertEqual(
+                    ["repository"],
+                    [item.category for item in find_overlaps(contender, locks)],
+                )
+
+    def test_legacy_relative_scope_keeps_historical_cwd_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            locks = Path(tmp) / "locks"
+            locks.mkdir()
+            existing = lease("RUN-A", "example/a")
+            existing["local_scopes"] = ["."]
+            self.write(locks / "RUN-A.lease.json", existing)
+            contender = lease("RUN-B", "example/b")
+            contender["local_scopes"] = ["."]
+
             categories = [item.category for item in find_overlaps(contender, locks)]
             self.assertIn("path", categories)
 

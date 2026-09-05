@@ -463,6 +463,15 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         vector = load(ARTIFACT_ROOT / "positive" / "shared-program-disjoint-writers.json")
         self.assertEqual([], validate_document(vector["left"], ROOT))
         self.assertEqual([], validate_document(vector["right"], ROOT))
+        for side in ("left", "right"):
+            self.assertEqual(
+                ["example/shared-observer"],
+                [
+                    item["repository"]
+                    for item in vector[side]["repositories"]
+                    if item["mode"] == "READ"
+                ],
+            )
         with tempfile.TemporaryDirectory() as tmp:
             locks = Path(tmp)
             (locks / "CLH-WRITER.lease.json").write_text(
@@ -475,27 +484,67 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
 
     def test_negative_vectors_cover_exact_resource_conflicts(self):
         vector = load(ARTIFACT_ROOT / "negative" / "overlap-cases.json")
+        materialization = vector["materialization"]
+        self.assertEqual("deep-copy-base_lease-per-case", materialization["stored_document"])
+        self.assertEqual("deep-copy-base_lease-per-case", materialization["candidate_document"])
+        self.assertEqual(
+            "repository-when-write-otherwise-null",
+            materialization["mode_writer_binding"],
+        )
+        self.assertEqual(
+            [
+                "lease_id",
+                "run_id-from-lease_id",
+                "owner-generated-per-case",
+                "repository",
+                "canonical_path-or-repository-derived-default",
+                "worktree_root",
+                "branch_ref",
+                "exact_sha-generated-per-case",
+                "local_scopes",
+                "infrastructure_scopes",
+            ],
+            materialization["candidate_case_overrides"],
+        )
         base = vector["base_lease"]
         self.assertEqual([], validate_document(base, ROOT))
         with tempfile.TemporaryDirectory() as tmp:
             locks = Path(tmp)
-            (locks / "BASE-WRITER.lease.json").write_text(json.dumps(base), encoding="utf-8")
             for index, case in enumerate(vector["cases"], start=1):
                 with self.subTest(case=case["case"]):
+                    stored = copy.deepcopy(base)
+                    base_mode = case.get("base_mode", materialization["default_base_mode"])
+                    stored["repositories"][0]["mode"] = base_mode
+                    stored["active_writer_repository"] = (
+                        stored["repositories"][0]["repository"] if base_mode == "WRITE" else None
+                    )
+                    self.assertEqual([], validate_document(stored, ROOT))
+                    (locks / "BASE-WRITER.lease.json").write_text(
+                        json.dumps(stored), encoding="utf-8"
+                    )
                     candidate = copy.deepcopy(base)
                     candidate["lease_id"] = case.get("lease_id", f"CANDIDATE-{index}")
                     candidate["run_id"] = candidate["lease_id"]
                     candidate["owner"] = f"owner-{index}"
-                    candidate["active_writer_repository"] = case["repository"]
+                    candidate_mode = case.get(
+                        "candidate_mode", materialization["default_candidate_mode"]
+                    )
+                    candidate["active_writer_repository"] = (
+                        case["repository"] if candidate_mode == "WRITE" else None
+                    )
                     candidate["local_scopes"] = case["local_scopes"]
                     candidate["infrastructure_scopes"] = case["infrastructure_scopes"]
                     candidate["repositories"][0].update(
                         {
                             "repository": case["repository"],
-                            "canonical_path": f"V:/src/{case['repository'].split('/')[-1]}",
+                            "mode": candidate_mode,
+                            "canonical_path": case.get(
+                                "canonical_path",
+                                f"V:/src/{case['repository'].split('/')[-1]}",
+                            ),
                             "worktree_root": case["worktree_root"],
                             "branch_ref": case["branch_ref"],
-                            "exact_sha": str(index + 2) * 40,
+                            "exact_sha": f"{(index + 2) % 16:x}" * 40,
                         }
                     )
                     self.assertEqual([], validate_document(candidate, ROOT))
@@ -514,6 +563,14 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         self.assertEqual(
             ["candidate-digest", "shared-program-disjoint-writers", "terminal-release"],
             manifest["positive_cases"],
+        )
+        self.assertEqual(
+            [
+                "shared-program-disjoint-writers:shared-observer-read-read",
+                "writer-versus-reader",
+                "reader-versus-writer",
+            ],
+            manifest["access_mode_cases"],
         )
         records: list[bytes] = []
         for item in manifest["artifacts"]:

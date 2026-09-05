@@ -20,6 +20,14 @@
         "worktree_root": "V:/src/_worktrees/clh/coordination-loop-harness",
         "branch_ref": "refs/heads/agent/clh",
         "exact_sha": "1111111111111111111111111111111111111111"
+      },
+      {
+        "repository": "example/shared-observer",
+        "mode": "READ",
+        "canonical_path": "V:/src/shared-observer",
+        "worktree_root": "V:/src/_worktrees/shared-observer",
+        "branch_ref": "refs/heads/main",
+        "exact_sha": "3333333333333333333333333333333333333333"
       }
     ],
     "local_scopes": [],
@@ -51,6 +59,14 @@
         "worktree_root": "V:/src/_worktrees/cle/coordination-loop-engine",
         "branch_ref": "refs/heads/agent/cle",
         "exact_sha": "2222222222222222222222222222222222222222"
+      },
+      {
+        "repository": "example/shared-observer",
+        "mode": "READ",
+        "canonical_path": "V:/src/shared-observer",
+        "worktree_root": "V:/src/_worktrees/shared-observer",
+        "branch_ref": "refs/heads/main",
+        "exact_sha": "3333333333333333333333333333333333333333"
       }
     ],
     "local_scopes": [],

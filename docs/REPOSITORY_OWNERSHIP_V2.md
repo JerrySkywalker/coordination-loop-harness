@@ -187,7 +187,9 @@ treated as success.
 
 Only a record whose schema, lifecycle, release lineage, candidate digest,
 outcome content, declared lease id, and exact ordinary single-link canonical
-filename entry all verify is classified and skipped as `TERMINAL_RELEASED`.
+filename entry all verify is classified as `TERMINAL_RELEASED` and skipped as a
+resource holder. Its casefolded filename identity remains reserved so another
+cooperating CLH admission cannot create a case-only lease-id alias.
 V2 lineage and outcome proof
 also require an explicit repository root; observation never falls back to the
 process working directory.
@@ -195,9 +197,13 @@ Every other terminal-looking record is `UNKNOWN_FAIL_CLOSED` and remains
 potentially active for overlap checks. It blocks only resources that can be
 parsed and positively overlap the candidate. An opaque invalid JSON record has
 no provable resource set and never becomes a global lock, but its canonical
-filename still reserves that exact `lease_id`. A parseable mismatched record
-also retains its declared identity and resources conservatively. It remains
-available for explicit operator inspection. Missing, null, malformed, or
+filename still reserves that casefolded `lease_id` identity. A parseable
+mismatched record also retains its declared identity and resources
+conservatively. Invalid v2 relative paths have no portable resource identity and
+are ignored rather than resolved through the observer's working directory. The
+invalid record remains available for explicit operator inspection, and recognized
+pre-acceptance absolute, device, and double-root aliases remain reserved. Missing,
+null, malformed, or
 future schema versions are never silently treated as v1 during replacement or
 release.
 
@@ -218,9 +224,12 @@ release.
   now-invalid path or repository aliases, or carrying an unknown schema are not
   auto-upgraded. They remain fail-closed until an explicit reviewed migration
   supplies a fresh candidate and valid decision chain.
-- The compatibility artifact includes exact overlap, canonical candidate
-  digest, schema lifecycle, and terminal release vectors. Consumers pin the
-  serialized artifact and manifest digest rather than importing CLH source.
+- The compatibility artifact includes explicit READ/READ admission,
+  READ/WRITE conflict in both directions, exact overlap, canonical candidate
+  digest, schema lifecycle, and terminal release vectors. The negative vector
+  declares its versioned per-case materialization rules so non-Python consumers
+  reproduce the same stored/candidate documents. Consumers pin the serialized
+  artifact and manifest digest rather than importing CLH source.
 - CLH owns validation and ownership semantics; CLT may pin and validate the
   serialized contract but does not copy CLH runtime implementation.
 - DGF RepoHealth Writer Lease is not part of this execution path.

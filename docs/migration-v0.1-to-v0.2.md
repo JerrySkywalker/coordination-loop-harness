@@ -73,6 +73,9 @@ aliases, and case-variant lease suffixes fail closed before terminal skip,
 observation, replacement exclusion, or mutation. Safely readable declared
 resources still participate in exact overlap, reads bracket JSON decoding with
 filesystem-identity checks, and mutators recheck identity before publication.
+Invalid v2 relative path claims never inherit the observer's working directory.
+Lease-id filename conflicts use portable ASCII casefold, and a valid terminal
+record releases resources while retaining that bounded filename reservation.
 
 ## Bundle sealing
 
@@ -94,3 +97,8 @@ and frozen compatibility interfaces.
 Run `clh bootstrap-repository --dry-run` first. Render-once and derived-owned
 files are preserved, active run directories are never overwritten, and template
 sync remains plan-only in v0.2.0.
+
+The sealed CLH compatibility vectors include explicit READ/READ admission and
+READ/WRITE conflict in both directions so CLT can lock the access model without
+importing CLH source. The negative vector serializes its per-case materialization
+defaults and writer-binding rule for language-neutral reproduction.

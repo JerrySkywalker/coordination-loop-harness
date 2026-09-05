@@ -415,6 +415,9 @@ def _active_leases(
             continue
         if data.get("state") == "RELEASED" and data.get("schema_version") == _V1_SCHEMA:
             if data.get("lease_id") == inferred_id and _terminal_record_is_valid(data):
+                result.append(
+                    (path, {"lease_id": inferred_id, "state": "TERMINAL_RELEASED"}, inferred_id)
+                )
                 continue
         if data.get("state") == "RELEASED" and data.get("schema_version") == _V2_SCHEMA:
             if (
@@ -422,6 +425,9 @@ def _active_leases(
                 and validation_root is not None
                 and _terminal_record_is_valid(data, validation_root)
             ):
+                result.append(
+                    (path, {"lease_id": inferred_id, "state": "TERMINAL_RELEASED"}, inferred_id)
+                )
                 continue
         result.append((path, data, inferred_id))
     return result
@@ -445,7 +451,10 @@ def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
             _merge_access(repositories, identity, mode)
         for key in ("canonical_path", "worktree_root"):
             if isinstance(item.get(key), str) and item[key].strip():
-                for identity in _scope_overlap_identities(item[key]):
+                for identity in _scope_overlap_identities(
+                    item[key],
+                    require_absolute=shared_access,
+                ):
                     _merge_access(paths, identity, mode)
         branch_ref = item.get("branch_ref")
         if isinstance(branch_ref, str) and branch_ref.strip():
@@ -456,7 +465,7 @@ def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
     for item in local_scopes:
         if not isinstance(item, str) or not item.strip():
             continue
-        for identity in _scope_overlap_identities(item):
+        for identity in _scope_overlap_identities(item, require_absolute=shared_access):
             _merge_access(paths, identity, "WRITE")
     raw_infrastructure = lease.get("infrastructure_scopes")
     infrastructure_items = raw_infrastructure if isinstance(raw_infrastructure, list) else []
@@ -498,15 +507,24 @@ def _repository_overlap_identities(value: str) -> tuple[str, ...]:
     return tuple(sorted({canonical_repo(value), canonical_repo_v2(value)}))
 
 
-def _scope_overlap_identities(value: str) -> tuple[str, ...]:
+def _scope_overlap_identities(
+    value: str,
+    *,
+    require_absolute: bool = False,
+) -> tuple[str, ...]:
     """Return conservative host aliases for active-record overlap scanning."""
 
     identities: set[str] = set()
+    raw = value.strip()
+    if require_absolute and not is_absolute_scope(raw):
+        # An invalid/pre-acceptance v2 relative spelling has no portable,
+        # cwd-independent resource identity. Retain its other provable claims
+        # without turning ambient process state into a path reservation.
+        return ()
     try:
         identities.add(canonical_scope(value))
     except (OSError, TypeError, ValueError):
         pass
-    raw = value.strip()
     device_alias = windows_device_scope_alias(raw)
     if device_alias is not None:
         try:
@@ -558,7 +576,10 @@ def find_overlaps(
                 declared_id = None
         lease_id = declared_id or inferred_id
         candidate_id = candidate.get("lease_id")
-        if candidate_id in {inferred_id, declared_id}:
+        existing_ids = {
+            value.casefold() for value in (inferred_id, declared_id) if isinstance(value, str)
+        }
+        if isinstance(candidate_id, str) and candidate_id.casefold() in existing_ids:
             overlaps.append(Overlap(lease_id, "lease_id", str(candidate_id)))
         candidate_repositories = _combined_repository_access(candidate_sets)
         other_repositories = _combined_repository_access(other_sets)

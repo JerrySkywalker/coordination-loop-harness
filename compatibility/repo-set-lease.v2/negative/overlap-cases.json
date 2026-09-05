@@ -1,5 +1,24 @@
 {
   "schema_version": "repo-set-lease-v2-overlap-cases.v1",
+  "materialization": {
+    "stored_document": "deep-copy-base_lease-per-case",
+    "candidate_document": "deep-copy-base_lease-per-case",
+    "default_base_mode": "WRITE",
+    "default_candidate_mode": "WRITE",
+    "mode_writer_binding": "repository-when-write-otherwise-null",
+    "candidate_case_overrides": [
+      "lease_id",
+      "run_id-from-lease_id",
+      "owner-generated-per-case",
+      "repository",
+      "canonical_path-or-repository-derived-default",
+      "worktree_root",
+      "branch_ref",
+      "exact_sha-generated-per-case",
+      "local_scopes",
+      "infrastructure_scopes"
+    ]
+  },
   "base_lease": {
     "schema_version": "coord.repo-set-lease.v2",
     "lease_id": "BASE-WRITER",
@@ -39,6 +58,18 @@
     {
       "case": "same-lease-id",
       "lease_id": "BASE-WRITER",
+      "repository": "example/cle",
+      "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
+      "branch_ref": "refs/heads/agent/cle-disjoint",
+      "local_scopes": [],
+      "infrastructure_scopes": [],
+      "expected_categories": [
+        "lease_id"
+      ]
+    },
+    {
+      "case": "case-only-lease-id",
+      "lease_id": "base-writer",
       "repository": "example/cle",
       "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
       "branch_ref": "refs/heads/agent/cle-disjoint",
@@ -121,6 +152,40 @@
       ],
       "expected_categories": [
         "infrastructure"
+      ]
+    },
+    {
+      "case": "writer-versus-reader",
+      "base_mode": "WRITE",
+      "candidate_mode": "READ",
+      "repository": "example/clh",
+      "canonical_path": "V:/src/coordination-loop-harness",
+      "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+      "branch_ref": "refs/heads/agent/shared",
+      "local_scopes": [],
+      "infrastructure_scopes": [],
+      "expected_categories": [
+        "repository",
+        "branch",
+        "path",
+        "path"
+      ]
+    },
+    {
+      "case": "reader-versus-writer",
+      "base_mode": "READ",
+      "candidate_mode": "WRITE",
+      "repository": "example/clh",
+      "canonical_path": "V:/src/coordination-loop-harness",
+      "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+      "branch_ref": "refs/heads/agent/shared",
+      "local_scopes": [],
+      "infrastructure_scopes": [],
+      "expected_categories": [
+        "repository",
+        "branch",
+        "path",
+        "path"
       ]
     }
   ]
