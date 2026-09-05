@@ -43,6 +43,14 @@
     "reader-versus-reader",
     "valid-terminal-resource-release"
   ],
+  "terminal_resource_release_claim_types": [
+    "repository",
+    "branch",
+    "canonical_path",
+    "worktree_root",
+    "local_scope",
+    "infrastructure_scope"
+  ],
   "terminal_observation_policy": "explicit-repository-root-no-ambient-cwd",
   "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
   "source_import_prohibited": true,
@@ -72,7 +80,7 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/terminal-release.json",
-      "sha256": "93e5eb3cc74e144277b99fdd38ca3e95805e61d06f1417c3a7292865b6f19945"
+      "sha256": "5a5761dff8cec42cd5b8beec535a3c1bf1b2a4c031d762bff9efbdf1edd50225"
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
@@ -104,7 +112,7 @@
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "f4b495f893f9b7456a0e37ad7ffc661d7fcff34047b55f61d5759b5644d53ae3"
+      "sha256": "1fe87fab1059091b28e6fb79d43042aeec9eddd0422df4625de3c1f6dc96a7c9"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -128,11 +136,11 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "8ac14e5bb534471787140d7e5d6282bc3a997320cded19646af6b27061162cdb"
+      "sha256": "c856894ae98e7a2de8f36a13b8c2d632200aea9baf2f2dcf4fb1cff1e5d29685"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "58bc04effe3501cd8198cbd185c3a32a254143ad1f14a9dca36851b810996451"
+      "sha256": "075e09baa736d722a8c36c181418501e45e8b4a66b2c39e108bea8fd6b698c34"
     },
     {
       "path": "tests/test_repository.py",
@@ -237,6 +245,6 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:42a7e89573cc201f1f192b20340031aa0194941b7673c7f8ac030c936ce78fb8",
-  "artifact_set_sha256": "42a7e89573cc201f1f192b20340031aa0194941b7673c7f8ac030c936ce78fb8"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:30a619de2119139a7045040f4dbe33b7715452e82042ba01eacc385f63b2d8f6",
+  "artifact_set_sha256": "30a619de2119139a7045040f4dbe33b7715452e82042ba01eacc385f63b2d8f6"
 }

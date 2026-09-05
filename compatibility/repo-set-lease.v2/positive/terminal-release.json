@@ -24,8 +24,12 @@
         "exact_sha": "1111111111111111111111111111111111111111"
       }
     ],
-    "local_scopes": [],
-    "infrastructure_scopes": [],
+    "local_scopes": [
+      "V:/state/coordination-loop/terminal-vector"
+    ],
+    "infrastructure_scopes": [
+      "host:terminal-vector"
+    ],
     "active_writer_repository": "example/clh",
     "decision_ref": "decisions/TERMINAL-VECTOR/DEC-1.json",
     "release_decision_ref": null,
@@ -49,8 +53,10 @@
       "example/clh",
       "example/clh:refs/heads/agent/vector",
       "example/program",
+      "host:terminal-vector",
       "v:/src/_worktrees/vector/coordination-loop-harness",
-      "v:/src/coordination-loop-harness"
+      "v:/src/coordination-loop-harness",
+      "v:/state/coordination-loop/terminal-vector"
     ],
     "conditions": [],
     "authorized_actions": [
@@ -58,7 +64,7 @@
     ],
     "lease_id": "TERMINAL-VECTOR",
     "lease_generation": 1,
-    "lease_candidate_sha256": "97be9e34ba9121be40194f46c336bb7949657af506ea96320de7b0e3b6600e97",
+    "lease_candidate_sha256": "8f6fb73f1d0d8ee6d0c1e0d50fe6baae4a90862bd72c19d446b4b53ad86e673c",
     "previous_decision_ref": null,
     "markdown_sha256": "8fefede7e2c0eb4df9c5dd2e2f9e32a222fe8f91288a45b1d526d32d6a650083"
   },
@@ -83,8 +89,12 @@
         "exact_sha": "1111111111111111111111111111111111111111"
       }
     ],
-    "local_scopes": [],
-    "infrastructure_scopes": [],
+    "local_scopes": [
+      "V:/state/coordination-loop/terminal-vector"
+    ],
+    "infrastructure_scopes": [
+      "host:terminal-vector"
+    ],
     "active_writer_repository": null,
     "decision_ref": "decisions/TERMINAL-VECTOR/DEC-1.json",
     "release_decision_ref": "decisions/TERMINAL-VECTOR/DEC-2.json",
@@ -108,8 +118,10 @@
       "example/clh",
       "example/clh:refs/heads/agent/vector",
       "example/program",
+      "host:terminal-vector",
       "v:/src/_worktrees/vector/coordination-loop-harness",
-      "v:/src/coordination-loop-harness"
+      "v:/src/coordination-loop-harness",
+      "v:/state/coordination-loop/terminal-vector"
     ],
     "conditions": [],
     "authorized_actions": [
@@ -117,7 +129,7 @@
     ],
     "lease_id": "TERMINAL-VECTOR",
     "lease_generation": 2,
-    "lease_candidate_sha256": "2d506751407ff6e7403dd84a31cee633ea2995ff47a703e223b19bf4e416093e",
+    "lease_candidate_sha256": "5f510c82d8d475d5686dbc553d5aac489208903b58731c54b5bfc46ca6b93236",
     "previous_decision_ref": "decisions/TERMINAL-VECTOR/DEC-1.json",
     "markdown_sha256": "5d3f226c2d16ca71ba7a9258c8e57ed3ddde6938a76ee0fa7f53036a07b7fc87"
   },
@@ -148,8 +160,10 @@
             "example/clh",
             "example/clh:refs/heads/agent/vector",
             "example/program",
+            "host:terminal-vector",
             "v:/src/_worktrees/vector/coordination-loop-harness",
-            "v:/src/coordination-loop-harness"
+            "v:/src/coordination-loop-harness",
+            "v:/state/coordination-loop/terminal-vector"
           ],
           "conditions": [],
           "authorized_actions": [
@@ -157,7 +171,7 @@
           ],
           "lease_id": "TERMINAL-VECTOR",
           "lease_generation": 1,
-          "lease_candidate_sha256": "97be9e34ba9121be40194f46c336bb7949657af506ea96320de7b0e3b6600e97",
+          "lease_candidate_sha256": "8f6fb73f1d0d8ee6d0c1e0d50fe6baae4a90862bd72c19d446b4b53ad86e673c",
           "previous_decision_ref": null,
           "markdown_sha256": "8fefede7e2c0eb4df9c5dd2e2f9e32a222fe8f91288a45b1d526d32d6a650083"
         }
@@ -183,8 +197,10 @@
             "example/clh",
             "example/clh:refs/heads/agent/vector",
             "example/program",
+            "host:terminal-vector",
             "v:/src/_worktrees/vector/coordination-loop-harness",
-            "v:/src/coordination-loop-harness"
+            "v:/src/coordination-loop-harness",
+            "v:/state/coordination-loop/terminal-vector"
           ],
           "conditions": [],
           "authorized_actions": [
@@ -192,7 +208,7 @@
           ],
           "lease_id": "TERMINAL-VECTOR",
           "lease_generation": 2,
-          "lease_candidate_sha256": "2d506751407ff6e7403dd84a31cee633ea2995ff47a703e223b19bf4e416093e",
+          "lease_candidate_sha256": "5f510c82d8d475d5686dbc553d5aac489208903b58731c54b5bfc46ca6b93236",
           "previous_decision_ref": "decisions/TERMINAL-VECTOR/DEC-1.json",
           "markdown_sha256": "5d3f226c2d16ca71ba7a9258c8e57ed3ddde6938a76ee0fa7f53036a07b7fc87"
         }
@@ -238,8 +254,12 @@
             "exact_sha": "1111111111111111111111111111111111111111"
           }
         ],
-        "local_scopes": [],
-        "infrastructure_scopes": [],
+        "local_scopes": [
+          "V:/state/coordination-loop/terminal-vector"
+        ],
+        "infrastructure_scopes": [
+          "host:terminal-vector"
+        ],
         "active_writer_repository": null,
         "decision_ref": "decisions/TERMINAL-VECTOR/DEC-1.json",
         "release_decision_ref": "decisions/TERMINAL-VECTOR/DEC-2.json",
@@ -316,8 +336,12 @@
               "exact_sha": "3333333333333333333333333333333333333333"
             }
           ],
-          "local_scopes": [],
-          "infrastructure_scopes": [],
+          "local_scopes": [
+            "V:/state/coordination-loop/terminal-vector"
+          ],
+          "infrastructure_scopes": [
+            "host:terminal-vector"
+          ],
           "active_writer_repository": "example/clh",
           "decision_ref": "decisions/TERMINAL-RESOURCE-REUSE/DEC-1.json",
           "release_decision_ref": null,

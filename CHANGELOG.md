@@ -26,7 +26,9 @@
   READ/WRITE conformance vectors. The portable overlap corpus now carries
   complete stored and candidate documents, including executable terminal
   identity/resource-release and invalid-relative-path cases, plus the exact
-  repository-root file map needed to reproduce terminal validation.
+  repository-root file map needed to reproduce terminal validation. The
+  terminal-release vector proves local and infrastructure claim release too,
+  while historical v1 repository-name canonicalization remains unchanged.
 - Required explicit repository roots for every v2 mutation, exact serialized
   active-writer matching, nonblank infrastructure identities, portable
   repository-relative references, v2-aware origin normalization, and executable

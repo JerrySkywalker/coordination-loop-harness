@@ -313,6 +313,22 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
                 stored["document"]["repositories"][0][field],
                 reuse_candidate["repositories"][0][field],
             )
+        self.assertEqual(
+            ["V:/state/coordination-loop/terminal-vector"],
+            stored["document"]["local_scopes"],
+        )
+        self.assertEqual(
+            stored["document"]["local_scopes"],
+            reuse_candidate["local_scopes"],
+        )
+        self.assertEqual(
+            ["host:terminal-vector"],
+            stored["document"]["infrastructure_scopes"],
+        )
+        self.assertEqual(
+            stored["document"]["infrastructure_scopes"],
+            reuse_candidate["infrastructure_scopes"],
+        )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             materialize_repository_root_files(root, scenario["repository_root_files"])
@@ -817,6 +833,17 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         self.assertEqual(
             ["reader-versus-reader", "valid-terminal-resource-release"],
             manifest["zero_overlap_cases"],
+        )
+        self.assertEqual(
+            [
+                "repository",
+                "branch",
+                "canonical_path",
+                "worktree_root",
+                "local_scope",
+                "infrastructure_scope",
+            ],
+            manifest["terminal_resource_release_claim_types"],
         )
         records: list[bytes] = []
         for item in manifest["artifacts"]:

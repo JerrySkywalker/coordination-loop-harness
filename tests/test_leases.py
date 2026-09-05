@@ -1351,7 +1351,7 @@ class LeaseTests(unittest.TestCase):
             acquired = acquire(candidate_path, base / "locks", repo_root=base)
             self.assertEqual("ACTIVE", json.loads(acquired.read_text(encoding="utf-8"))["state"])
 
-    def test_legacy_repository_clone_suffix_alias_is_conservatively_reserved(self):
+    def test_legacy_repository_clone_suffix_semantics_remain_case_sensitive(self):
         with tempfile.TemporaryDirectory() as tmp:
             locks = Path(tmp) / "locks"
             locks.mkdir()
@@ -1359,7 +1359,7 @@ class LeaseTests(unittest.TestCase):
             self.write(locks / "RUN-A.lease.json", existing)
             contender = lease("RUN-B", "example/product")
             categories = [item.category for item in find_overlaps(contender, locks)]
-            self.assertIn("repository", categories)
+            self.assertNotIn("repository", categories)
 
     def test_preacceptance_path_aliases_remain_reserved_during_overlap_scan(self):
         with tempfile.TemporaryDirectory() as tmp:

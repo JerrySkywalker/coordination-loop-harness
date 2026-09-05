@@ -443,7 +443,10 @@ def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
     for item in repository_items:
         if not isinstance(item, dict) or not isinstance(item.get("repository"), str):
             continue
-        repository_identities = _repository_overlap_identities(item["repository"])
+        repository_identities = _repository_overlap_identities(
+            item["repository"],
+            include_v2_alias=shared_access,
+        )
         mode = item.get("mode") if shared_access else "WRITE"
         if mode not in {"READ", "WRITE"}:
             mode = "WRITE"
@@ -480,7 +483,8 @@ def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
         and lease["coordination_repository"].strip()
     ):
         for coordination_repository in _repository_overlap_identities(
-            lease["coordination_repository"]
+            lease["coordination_repository"],
+            include_v2_alias=shared_access,
         ):
             coordination_mode = repositories.get(coordination_repository, "READ")
             if not shared_access:
@@ -503,8 +507,15 @@ def _paths_overlap(left: str, right: str) -> bool:
     return left.startswith(right_prefix) or right.startswith(left_prefix)
 
 
-def _repository_overlap_identities(value: str) -> tuple[str, ...]:
-    return tuple(sorted({canonical_repo(value), canonical_repo_v2(value)}))
+def _repository_overlap_identities(
+    value: str,
+    *,
+    include_v2_alias: bool,
+) -> tuple[str, ...]:
+    identities = {canonical_repo(value)}
+    if include_v2_alias:
+        identities.add(canonical_repo_v2(value))
+    return tuple(sorted(identities))
 
 
 def _scope_overlap_identities(
