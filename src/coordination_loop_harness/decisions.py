@@ -16,6 +16,12 @@ from .validation import validate_document
 ACCEPTED_STATUSES = {"ACCEPTED", "MERGED"}
 
 
+def _is_positive_sequence(value: Any, *, require_safe_integer: bool) -> bool:
+    if require_safe_integer:
+        return is_safe_json_integer(value) and value >= 1
+    return type(value) is int and value >= 1
+
+
 def _verify_predecessor_chain(
     root: Path,
     decision_path: Path,
@@ -31,8 +37,12 @@ def _verify_predecessor_chain(
     while True:
         sequence = current.get("sequence")
         previous_ref = current.get("previous_decision_ref")
-        if not is_safe_json_integer(sequence) or sequence < 1:
-            findings.append("decision predecessor sequence must be a positive safe integer")
+        if not _is_positive_sequence(
+            sequence,
+            require_safe_integer=require_portable_refs,
+        ):
+            qualifier = " safe" if require_portable_refs else ""
+            findings.append(f"decision predecessor sequence must be a positive{qualifier} integer")
             break
         if sequence == 1:
             if previous_ref is not None:
@@ -118,13 +128,23 @@ def verify_decision(
         findings.append(f"run_id mismatch: expected {run_id}")
     if decision.get("status") not in ACCEPTED_STATUSES:
         findings.append("decision status must be ACCEPTED or MERGED")
-    if not is_safe_json_integer(decision.get("sequence")) or decision.get("sequence", 0) < 1:
-        findings.append("decision sequence must be a positive safe integer")
+    if not _is_positive_sequence(
+        decision.get("sequence"),
+        require_safe_integer=require_candidate_digest,
+    ):
+        qualifier = " safe" if require_candidate_digest else ""
+        findings.append(f"decision sequence must be a positive{qualifier} integer")
     sequence = decision.get("sequence")
     previous_ref = decision.get("previous_decision_ref")
     if sequence == 1 and previous_ref is not None:
         findings.append("sequence 1 decision must not reference a previous decision")
-    if is_safe_json_integer(sequence) and sequence > 1:
+    if (
+        _is_positive_sequence(
+            sequence,
+            require_safe_integer=require_candidate_digest,
+        )
+        and sequence > 1
+    ):
         findings.extend(
             _verify_predecessor_chain(
                 root,
@@ -137,10 +157,8 @@ def verify_decision(
     if action not in decision.get("authorized_actions", []):
         findings.append(f"decision does not authorize action: {action}")
     decision_lease_generation = decision.get("lease_generation")
-    if decision_lease_generation is not None and not is_safe_json_integer(
-        decision_lease_generation
-    ):
-        findings.append("non-null lease_generation must be a safe integer")
+    if decision_lease_generation is not None and type(decision_lease_generation) is not int:
+        findings.append("non-null lease_generation must be an integer")
     if require_candidate_digest:
         decision_lease_id = decision.get("lease_id")
         if not isinstance(decision_lease_id, str):

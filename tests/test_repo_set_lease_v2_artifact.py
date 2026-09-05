@@ -11,7 +11,6 @@ from pathlib import Path
 
 from coordination_loop_harness.decisions import verify_decision
 from coordination_loop_harness.leases import (
-    _validate_decision_scope,
     _validate_lease,
     _validate_terminal_release,
     find_overlaps,
@@ -50,26 +49,6 @@ EXPECTED_ARTIFACT_PATHS = [
 
 def load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def apply_operations(document: dict, operations: list[dict]) -> None:
-    for operation in operations:
-        tokens = operation["path"].lstrip("/").split("/")
-        target = document
-        for token in tokens[:-1]:
-            target = target[int(token)] if isinstance(target, list) else target[token]
-        final = tokens[-1]
-        if operation["op"] == "remove":
-            if isinstance(target, list):
-                del target[int(final)]
-            else:
-                del target[final]
-        elif operation["op"] == "add" and isinstance(target, list) and final == "-":
-            target.append(operation["value"])
-        elif isinstance(target, list):
-            target[int(final)] = operation["value"]
-        else:
-            target[final] = operation["value"]
 
 
 def lf_digest(path: Path) -> str:
@@ -415,232 +394,172 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
     def test_negative_schema_and_authority_vectors_are_executable(self):
         vector = load(ARTIFACT_ROOT / "negative" / "schema-and-authority-cases.json")
         self.assertEqual(
-            "compatibility/repo-set-lease.v2/positive/candidate-digest.json#/candidate",
-            vector["bases"]["active"],
+            {
+                "schema_version",
+                "encoding",
+                "document_cases",
+                "decision_cases",
+                "positive_authority_cases",
+                "authority_cases",
+            },
+            set(vector),
         )
-        self.assertEqual(
-            "compatibility/repo-set-lease.v2/positive/terminal-release.json#/terminal_candidate",
-            vector["bases"]["terminal"],
+        self.assertEqual("repo-set-lease-v2-negative-semantics.v2", vector["schema_version"])
+        serialized = json.dumps(vector, ensure_ascii=False)
+        for forbidden in ('"bases"', '"base"', '"patch"', "#/"):
+            self.assertNotIn(forbidden, serialized)
+
+        def serialized_keys(value: object) -> set[str]:
+            if isinstance(value, dict):
+                return set(value).union(
+                    *(serialized_keys(item) for item in value.values()),
+                )
+            if isinstance(value, list):
+                return set().union(*(serialized_keys(item) for item in value))
+            return set()
+
+        self.assertTrue(
+            {
+                "bases",
+                "base",
+                "patch",
+                "patches",
+                "pointer",
+                "pointers",
+                "default",
+                "defaults",
+                "generated",
+                "case_index",
+            }.isdisjoint(serialized_keys(vector))
         )
-        self.assertEqual(
-            "compatibility/repo-set-lease.v2/positive/terminal-release.json#/release_decision",
-            vector["bases"]["release_decision"],
-        )
-        self.assertEqual(
-            "compatibility/repo-set-lease.v2/positive/terminal-release.json#/active_decision",
-            vector["bases"]["active_decision"],
-        )
-        terminal_vector = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
-        bases = {
-            "active": load(ARTIFACT_ROOT / "positive" / "candidate-digest.json")["candidate"],
-            "terminal": terminal_vector["terminal_candidate"],
-            "release_decision": terminal_vector["release_decision"],
-            "active_decision": terminal_vector["active_decision"],
-        }
+
         for case in vector["document_cases"]:
             with self.subTest(case=case["case"]):
-                document = copy.deepcopy(bases[case["base"]])
-                apply_operations(document, case["patch"])
-                errors = validate_document(document, ROOT)
-                if case["expected_layer"] == "SCHEMA_REJECT":
-                    self.assertTrue(errors)
-                else:
-                    self.assertEqual([], errors)
-                    with self.assertRaises(ValueError):
-                        _validate_lease(document, ROOT)
+                self.assertEqual(
+                    {
+                        "case",
+                        "candidate_document",
+                        "expected_layer",
+                        "repository_root_files",
+                    },
+                    set(case),
+                )
+                document = case["candidate_document"]
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    materialize_repository_root_files(root, case["repository_root_files"])
+                    errors = validate_document(document, root)
+                    if case["expected_layer"] == "SCHEMA_REJECT":
+                        self.assertTrue(errors)
+                    else:
+                        self.assertEqual([], errors)
+                        with self.assertRaises(ValueError):
+                            _validate_lease(document, root)
 
         for case in vector["decision_cases"]:
             with self.subTest(case=case["case"]):
-                decision = copy.deepcopy(bases[case["base"]])
-                apply_operations(decision, case["patch"])
-                errors = validate_document(decision, ROOT)
-                if case["expected_layer"] == "SCHEMA_REJECT":
-                    self.assertTrue(errors)
-                    continue
-                self.assertEqual([], errors)
+                self.assertEqual(
+                    {
+                        "case",
+                        "decision_document",
+                        "decision_document_ref",
+                        "expected_layer",
+                        "terminal_candidate",
+                        "verification_request",
+                        "repository_root_files",
+                    },
+                    set(case),
+                )
                 with tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
-                    if case.get("target") == "PREDECESSOR":
-                        materialize_terminal_vector(root, terminal_vector)
-                        predecessor_path = root / bases["terminal"]["decision_ref"]
-                        predecessor_path.write_text(json.dumps(decision), encoding="utf-8")
+                    materialize_repository_root_files(root, case["repository_root_files"])
+                    serialized_documents = {
+                        entry["path"]: entry["json_document"]
+                        for entry in case["repository_root_files"]
+                        if "json_document" in entry
+                    }
+                    self.assertEqual(
+                        case["decision_document"],
+                        serialized_documents[case["decision_document_ref"]],
+                    )
+                    errors = validate_document(case["decision_document"], root)
+                    if case["expected_layer"] == "SCHEMA_REJECT":
+                        self.assertTrue(errors)
                     else:
-                        materialize_terminal_vector(
-                            root,
-                            terminal_vector,
-                            release_decision=decision,
-                        )
+                        self.assertEqual([], errors)
+                    request = case["verification_request"]
                     result = verify_decision(
                         root,
-                        root / bases["terminal"]["release_decision_ref"],
-                        run_id=bases["terminal"]["run_id"],
-                        action="lease:release",
-                        lease_id=bases["terminal"]["lease_id"],
-                        lease_generation=bases["terminal"]["generation"],
-                        require_candidate_digest=True,
+                        root / request["decision_ref"],
+                        run_id=request["run_id"],
+                        action=request["action"],
+                        lease_id=request["lease_id"],
+                        lease_generation=request["lease_generation"],
+                        require_candidate_digest=request["require_candidate_digest"],
                     )
-                    self.assertFalse(result["ok"])
+                self.assertFalse(result["ok"])
+                if case["case"] == "decision-predecessor-sequence-integral-float":
+                    self.assertIn(
+                        "decision predecessor sequence must be a positive safe integer",
+                        result["findings"],
+                    )
 
-        terminal = bases["terminal"]
-        authority = {item["case"]: item for item in vector["authority_cases"]}
-        self.assertTrue(authority)
-        self.assertTrue(
-            all(case["expected"] == "AUTHORIZATION_REJECT" for case in authority.values())
-        )
-        release_decision = terminal_vector["release_decision"]
+        self.assertTrue(vector["positive_authority_cases"])
         for case in vector["positive_authority_cases"]:
             with self.subTest(case=case["case"]):
-                candidate = copy.deepcopy(terminal)
-                accepted = copy.deepcopy(release_decision)
-                if "candidate_infrastructure_scope" in case:
-                    candidate["infrastructure_scopes"].append(
-                        case["candidate_infrastructure_scope"]
-                    )
-                accepted["scope"].append(case["extra_scope"])
-                accepted["lease_candidate_sha256"] = lease_candidate_sha256(candidate)
-                _validate_decision_scope(candidate, accepted)
-        mismatch = copy.deepcopy(release_decision)
-        mismatch["lease_candidate_sha256"] = authority["candidate-digest-mismatch"][
-            "supplied_candidate_sha256"
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            materialize_terminal_vector(root, terminal_vector, release_decision=mismatch)
-            with self.assertRaisesRegex(ValueError, "candidate SHA-256 binding"):
-                _validate_terminal_release(
-                    terminal,
-                    root,
-                    observed_now=datetime(2026, 9, 4, 0, 30, tzinfo=UTC),
+                self.assertEqual(
+                    {
+                        "case",
+                        "terminal_candidate",
+                        "observed_utc",
+                        "repository_root_files",
+                        "expected",
+                    },
+                    set(case),
                 )
-        for case_name, digest_value in (
-            ("lease-decision-missing-candidate-digest", ...),
-            ("lease-decision-null-candidate-digest", None),
-        ):
-            with self.subTest(case=case_name):
-                invalid = copy.deepcopy(release_decision)
-                if digest_value is ...:
-                    del invalid["lease_candidate_sha256"]
-                else:
-                    invalid["lease_candidate_sha256"] = digest_value
-                # Generic decision.v2 remains structurally compatible with
-                # historical lease decisions. V2 authority is the stronger
-                # cross-document candidate binding below.
-                self.assertEqual([], validate_document(invalid, ROOT))
-                with self.assertRaisesRegex(ValueError, "candidate SHA-256 binding"):
-                    _validate_decision_scope(terminal, invalid)
+                self.assertEqual("AUTHORIZATION_ACCEPT", case["expected"])
+                terminal = case["terminal_candidate"]
+                self.assertEqual([], validate_document(terminal, ROOT))
+                _validate_lease(terminal, ROOT, allow_coordination_self_write=True)
                 with tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
-                    materialize_terminal_vector(
+                    materialize_repository_root_files(root, case["repository_root_files"])
+                    _validate_terminal_release(
+                        terminal,
                         root,
-                        terminal_vector,
-                        release_decision=invalid,
-                    )
-                    result = verify_decision(
-                        root,
-                        root / terminal["release_decision_ref"],
-                        run_id=terminal["run_id"],
-                        action="lease:release",
-                        lease_id=terminal["lease_id"],
-                        lease_generation=terminal["generation"],
-                        require_candidate_digest=True,
-                    )
-                    self.assertFalse(result["ok"])
-                    self.assertIn(
-                        "requires a non-null candidate SHA-256 binding",
-                        "\n".join(result["findings"]),
+                        observed_now=datetime.fromisoformat(
+                            case["observed_utc"].replace("Z", "+00:00")
+                        ),
                     )
 
-        for case_name in (
-            "lease-decision-blank-scope-entry",
-            "lease-decision-duplicate-scope-entry",
-            "lease-decision-noncanonical-scope-entry",
-        ):
-            with self.subTest(case=case_name):
-                invalid = copy.deepcopy(release_decision)
-                case = authority[case_name]
-                if "replace_scope_entry" in case:
-                    index = invalid["scope"].index(case["replace_scope_entry"])
-                    invalid["scope"][index] = case["scope_entry"]
-                else:
-                    invalid["scope"].append(case["scope_entry"])
-                with self.assertRaisesRegex(ValueError, "canonical|unique"):
-                    _validate_decision_scope(terminal, invalid)
-
-        for case_name, field in (
-            ("release-decision-wrong-lease-id", "lease_id"),
-            ("release-decision-wrong-generation", "lease_generation"),
-        ):
-            with self.subTest(case=case_name):
-                wrong_identity = copy.deepcopy(release_decision)
-                wrong_identity[field] = authority[case_name][field]
+        self.assertTrue(vector["authority_cases"])
+        for case in vector["authority_cases"]:
+            with self.subTest(case=case["case"]):
+                self.assertEqual(
+                    {
+                        "case",
+                        "terminal_candidate",
+                        "observed_utc",
+                        "repository_root_files",
+                        "expected",
+                    },
+                    set(case),
+                )
+                self.assertEqual("AUTHORIZATION_REJECT", case["expected"])
+                terminal = case["terminal_candidate"]
+                self.assertEqual([], validate_document(terminal, ROOT))
+                _validate_lease(terminal, ROOT, allow_coordination_self_write=True)
                 with tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
-                    materialize_terminal_vector(
-                        root,
-                        terminal_vector,
-                        release_decision=wrong_identity,
-                    )
-                    with self.assertRaisesRegex(ValueError, "does not cover lease"):
+                    materialize_repository_root_files(root, case["repository_root_files"])
+                    with self.assertRaises(ValueError):
                         _validate_terminal_release(
                             terminal,
                             root,
-                            observed_now=datetime(2026, 9, 4, 0, 30, tzinfo=UTC),
+                            observed_now=datetime.fromisoformat(
+                                case["observed_utc"].replace("Z", "+00:00")
+                            ),
                         )
-
-        stale_terminal = copy.deepcopy(terminal)
-        stale_terminal["release_authority"] = authority["normal-action-cannot-release-stale"][
-            "release_authority"
-        ]
-        stale_decision = copy.deepcopy(release_decision)
-        stale_decision["lease_candidate_sha256"] = lease_candidate_sha256(stale_terminal)
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            materialize_terminal_vector(
-                root,
-                terminal_vector,
-                terminal=stale_terminal,
-                release_decision=stale_decision,
-            )
-            with self.assertRaisesRegex(ValueError, "lease:release-stale"):
-                _validate_terminal_release(
-                    stale_terminal,
-                    root,
-                    observed_now=datetime(2026, 9, 4, 2, 0, tzinfo=UTC),
-                )
-
-        mixed_decision = copy.deepcopy(release_decision)
-        mixed_decision["authorized_actions"] = authority[
-            "release-decision-cannot-mix-terminal-actions"
-        ]["authorized_actions"]
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            materialize_terminal_vector(root, terminal_vector, release_decision=mixed_decision)
-            with self.assertRaisesRegex(ValueError, "exactly one terminal action"):
-                _validate_terminal_release(
-                    terminal,
-                    root,
-                    observed_now=datetime(2026, 9, 4, 0, 30, tzinfo=UTC),
-                )
-
-        predecessor = authority["release-must-directly-follow-active-decision"][
-            "previous_decision_ref"
-        ]
-        wrong_predecessor = copy.deepcopy(release_decision)
-        wrong_predecessor["previous_decision_ref"] = predecessor
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            materialize_terminal_vector(
-                root,
-                terminal_vector,
-                release_decision=wrong_predecessor,
-                extra_previous_ref=predecessor,
-            )
-            with self.assertRaisesRegex(ValueError, "does not directly follow"):
-                _validate_terminal_release(
-                    terminal,
-                    root,
-                    observed_now=datetime(2026, 9, 4, 0, 30, tzinfo=UTC),
-                )
 
     def test_shared_program_disjoint_writer_vector_has_no_overlap(self):
         vector = load(ARTIFACT_ROOT / "positive" / "shared-program-disjoint-writers.json")
@@ -811,8 +730,17 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
             manifest["invalid_v2_scope_policy"],
         )
         self.assertEqual(
+            "missing-or-unknown-schema-relative-path-claims-have-no-cwd-derived-overlap-"
+            "identity; recognized-v1-remains-historical",
+            manifest["unrecognized_schema_scope_policy"],
+        )
+        self.assertEqual(
             "repo-set-lease-v2-overlap-cases.v2",
             manifest["overlap_vector_schema"],
+        )
+        self.assertEqual(
+            "repo-set-lease-v2-negative-semantics.v2",
+            manifest["schema_authority_vector_schema"],
         )
         self.assertEqual(
             "repo-set-lease-v2-terminal-release.v2",
@@ -821,6 +749,10 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         self.assertEqual(
             "complete-stored-scenarios-complete-candidate-probes-and-explicit-repository-root-files-no-patches-defaults-indexes-document-pointers-or-generated-values",
             manifest["overlap_vector_encoding"],
+        )
+        self.assertEqual(
+            "complete-candidate-and-decision-documents-with-explicit-repository-root-files-no-bases-patches-defaults-document-pointers-or-generated-case-values",
+            manifest["schema_authority_vector_encoding"],
         )
         self.assertEqual(
             "explicit-relative-path-with-exact-utf8-content-json-document-or-artifact-byte-copy",

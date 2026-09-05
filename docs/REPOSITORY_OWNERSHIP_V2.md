@@ -87,6 +87,10 @@ historical v1 lease decisions that predate candidate digests. Schema validity
 alone is therefore not v2 lease authority: every v2 acquire, replacement, and
 release consumer must require a non-null digest and compare it with the exact
 canonical candidate. Missing, null, or mismatched digests fail closed.
+Historical positive Decision sequence and lease-generation integers remain
+schema-valid outside that portable candidate-binding path. V2 lease consumers
+add the interoperable safe-integer bound when they require the candidate digest;
+the generic Decision schema does not retroactively narrow valid v1 evidence.
 
 Metadata is not treated as proof of the live worktree. Inside the common
 admission mutex, CLH exclusively creates the Git lock files for the index,
@@ -100,6 +104,13 @@ common Git metadata root. A mismatch fails before the lease file is published.
 An interrupted or replaced guard intentionally remains fail-closed for manual
 inspection; it is never reclaimed from PID or elapsed time. Lease files and
 admission mutexes remain local state outside Git.
+
+Authority and live writer identity are first validated before any Git guard is
+created. Replacement verifies its authorized candidate binding; release verifies
+the current writer plus terminal time, authority, decision lineage, and outcome.
+Those checks are repeated with a fresh clock and live binding while the Git
+guards are held so both pre-side-effect refusal and final TOCTOU protection are
+preserved.
 
 The transient admission mutex directory is intentionally empty. Normal release
 removes only that empty directory; it never enumerates or unlinks children. A
@@ -199,9 +210,11 @@ parsed and positively overlap the candidate. An opaque invalid JSON record has
 no provable resource set and never becomes a global lock, but its canonical
 filename still reserves that casefolded `lease_id` identity. A parseable
 mismatched record also retains its declared identity and resources
-conservatively. Invalid v2 relative paths have no portable resource identity and
-are ignored rather than resolved through the observer's working directory. The
-invalid record remains available for explicit operator inspection, and recognized
+conservatively. Relative paths in invalid v2, missing-schema, or unknown/future-
+schema records have no portable resource identity and are ignored rather than
+resolved through the observer's working directory. Only recognized v1 retains
+its historical cwd identity. The invalid record remains available for explicit
+operator inspection, and recognized
 pre-acceptance absolute, device, and double-root aliases remain reserved. Missing,
 null, malformed, or
 future schema versions are never silently treated as v1 during replacement or
@@ -227,9 +240,10 @@ release.
 - The compatibility artifact includes explicit READ/READ admission,
   READ/WRITE conflict in both directions, exact overlap, canonical candidate
   digest, schema lifecycle, and terminal release vectors. The negative vector
-  stores complete stored-entry scenarios and complete candidate documents for
-  every probe. Terminal cases also enumerate each repository-root path and its
-  exact UTF-8 content, JSON document, or artifact-byte copy source. Consumers
+  stores complete stored-entry scenarios plus complete candidate and Decision
+  documents for every probe. Decision and terminal cases also enumerate each
+  repository-root path and its exact UTF-8 content, JSON document, or
+  artifact-byte copy source. Consumers
   perform no base cloning, patching, generated defaults, pointer resolution, or
   case-index calculations. Consumers pin the serialized artifact and manifest
   digest rather than importing CLH source.

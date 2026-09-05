@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coordination_loop_harness.decisions import verify_decision
 from coordination_loop_harness.leases import (
     acquire,
     find_overlaps,
@@ -25,6 +26,7 @@ from coordination_loop_harness.util import (
     paths_overlap,
     sha256_file,
 )
+from coordination_loop_harness.validation import validate_document
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -512,7 +514,7 @@ class LeaseTests(unittest.TestCase):
                     candidate_path=terminal_path,
                     repo_root=base,
                 )
-            self.assertEqual(1, clock.call_count)
+            self.assertEqual(2, clock.call_count)
             self.assertEqual(
                 "TERMINAL_RELEASED",
                 observe("RUN-A", locks, repo_root=base)["ownership_status"],
@@ -613,6 +615,73 @@ class LeaseTests(unittest.TestCase):
                     candidate_path=stale_path,
                     repo_root=base,
                 )
+
+    def test_v2_release_rejects_terminal_authority_before_git_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            repo = self.repository_worktree(base, "product", repository="example/product")
+            active = self.lease_v2("RUN-A", "example/product", *repo)
+            active["expires_utc"] = "2026-09-04T01:00:00Z"
+            self.authorize(base, active, "lease:acquire")
+            active_path = base / "active.json"
+            self.write(active_path, active)
+            acquire(active_path, locks, repo_root=base)
+            from coordination_loop_harness import leases as lease_module
+
+            _, terminal_path = self.terminal_v2(
+                base,
+                active,
+                authority="NORMAL",
+                released_utc="2026-09-04T00:30:00Z",
+            )
+            with (
+                mock.patch.object(
+                    lease_module,
+                    "utc_now",
+                    return_value="2026-09-04T02:00:00Z",
+                ),
+                mock.patch.object(
+                    lease_module,
+                    "_writer_git_admission_guard",
+                    side_effect=AssertionError("Git guard entered before release authority"),
+                ) as guard,
+                self.assertRaisesRegex(ValueError, "expected STALE_RECOVERY"),
+            ):
+                release(
+                    "RUN-A",
+                    locks,
+                    expected_generation=1,
+                    candidate_path=terminal_path,
+                    repo_root=base,
+                )
+            guard.assert_not_called()
+
+            with (
+                mock.patch.object(
+                    lease_module,
+                    "utc_now",
+                    return_value="2026-09-04T00:20:00Z",
+                ),
+                mock.patch.object(
+                    lease_module,
+                    "_writer_git_admission_guard",
+                    side_effect=AssertionError("Git guard entered before release timestamp"),
+                ) as guard,
+                self.assertRaisesRegex(ValueError, "cannot be in the future"),
+            ):
+                release(
+                    "RUN-A",
+                    locks,
+                    expected_generation=1,
+                    candidate_path=terminal_path,
+                    repo_root=base,
+                )
+            guard.assert_not_called()
+            self.assertEqual(
+                "ACTIVE",
+                json.loads((locks / "RUN-A.lease.json").read_text(encoding="utf-8"))["state"],
+            )
 
     def test_v2_decision_digest_rejects_candidate_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1380,31 +1449,64 @@ class LeaseTests(unittest.TestCase):
             categories = [item.category for item in find_overlaps(contender, locks)]
             self.assertIn("path", categories)
 
-    def test_invalid_v2_relative_scope_does_not_inherit_ambient_cwd(self):
-        for field in ("local_scopes", "canonical_path", "worktree_root"):
-            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
-                base = Path(tmp)
-                locks = base / "locks"
-                locks.mkdir()
-                existing = lease("RUN-A", "example/a")
-                existing["schema_version"] = "coord.repo-set-lease.v2"
-                contender = lease("RUN-B", "example/b")
-                contender["schema_version"] = "coord.repo-set-lease.v2"
-                if field == "local_scopes":
-                    existing[field] = ["."]
-                    contender[field] = ["."]
-                else:
-                    existing["repositories"][0][field] = "."
-                    contender["repositories"][0][field] = "."
-                self.write(locks / "RUN-A.lease.json", existing)
+    def test_invalid_or_unknown_relative_scope_does_not_inherit_ambient_cwd(self):
+        for schema_version in (
+            "coord.repo-set-lease.v2",
+            "coord.repo-set-lease.future",
+            None,
+        ):
+            for field in ("local_scopes", "canonical_path", "worktree_root"):
+                with (
+                    self.subTest(
+                        schema_version=schema_version,
+                        field=field,
+                    ),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    base = Path(tmp)
+                    locks = base / "locks"
+                    locks.mkdir()
+                    existing = lease("RUN-A", "example/a")
+                    contender = lease("RUN-B", "example/b")
+                    if schema_version is None:
+                        del existing["schema_version"]
+                        del contender["schema_version"]
+                    else:
+                        existing["schema_version"] = schema_version
+                        contender["schema_version"] = schema_version
+                    if field == "local_scopes":
+                        existing[field] = ["."]
+                        contender[field] = ["."]
+                    else:
+                        existing["repositories"][0][field] = "."
+                        contender["repositories"][0][field] = "."
+                    self.write(locks / "RUN-A.lease.json", existing)
 
-                self.assertEqual([], find_overlaps(contender, locks))
-                contender["repositories"][0]["repository"] = "example/a"
-                contender["active_writer_repository"] = "example/a"
-                self.assertEqual(
-                    ["repository"],
-                    [item.category for item in find_overlaps(contender, locks)],
-                )
+                    self.assertEqual([], find_overlaps(contender, locks))
+                    contender["repositories"][0]["repository"] = "example/a"
+                    contender["active_writer_repository"] = "example/a"
+                    self.assertEqual(
+                        ["repository"],
+                        [item.category for item in find_overlaps(contender, locks)],
+                    )
+
+    def test_unknown_schema_retains_absolute_resource_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            shared = str(base / "shared")
+            existing = lease("RUN-A", "example/a")
+            existing["schema_version"] = "coord.repo-set-lease.future"
+            existing["local_scopes"] = [shared]
+            contender = lease("RUN-B", "example/b")
+            contender["schema_version"] = "coord.repo-set-lease.future"
+            contender["local_scopes"] = [shared]
+            self.write(locks / "RUN-A.lease.json", existing)
+            self.assertIn(
+                "path",
+                [item.category for item in find_overlaps(contender, locks)],
+            )
 
     def test_legacy_relative_scope_keeps_historical_cwd_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2258,6 +2360,114 @@ class LeaseTests(unittest.TestCase):
             self.assertEqual(
                 "RELEASED",
                 json.loads(released_path.read_text(encoding="utf-8"))["state"],
+            )
+
+    def test_generic_decision_schema_retains_unbounded_v1_integer_compatibility(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "schemas").mkdir()
+            shutil.copy2(
+                ROOT / "schemas" / "decision.v2.schema.json",
+                base / "schemas" / "decision.v2.schema.json",
+            )
+            markdown = base / "DEC-LEGACY.md"
+            markdown.write_text("# DEC-LEGACY\n", encoding="utf-8")
+            decision = {
+                "schema_version": "coord.decision.v2",
+                "decision_id": "DEC-LEGACY",
+                "run_id": "RUN-LEGACY",
+                "sequence": 1,
+                "decision_type": "OWNER_GATE",
+                "status": "ACCEPTED",
+                "issued_by": "owner",
+                "issued_utc": "2026-01-01T00:00:00Z",
+                "decision": "Retain the historical v1 integer range.",
+                "rationale": "The generic decision schema predates portable v2 digests.",
+                "scope": ["example/legacy"],
+                "conditions": [],
+                "authorized_actions": ["observe"],
+                "lease_id": "RUN-LEGACY",
+                "lease_generation": 9007199254740993,
+                "previous_decision_ref": None,
+                "markdown_sha256": sha256_file(markdown),
+            }
+            path = markdown.with_suffix(".json")
+            self.write(path, decision)
+            self.assertEqual([], validate_document(decision, base))
+            self.assertTrue(
+                verify_decision(
+                    base,
+                    path,
+                    run_id="RUN-LEGACY",
+                    action="observe",
+                    lease_id="RUN-LEGACY",
+                    lease_generation=9007199254740993,
+                )["ok"]
+            )
+
+            decision["lease_generation"] = 1.0
+            self.write(path, decision)
+            non_integer = verify_decision(
+                base,
+                path,
+                run_id="RUN-LEGACY",
+                action="observe",
+                lease_id="RUN-LEGACY",
+                lease_generation=1,
+            )
+            self.assertFalse(non_integer["ok"])
+            self.assertIn(
+                "non-null lease_generation must be an integer",
+                non_integer["findings"],
+            )
+
+            decision["lease_generation"] = 9007199254740993
+            decision["sequence"] = 9007199254740993
+            self.assertEqual([], validate_document(decision, base))
+
+    def test_v2_replace_rejects_writer_mismatch_before_git_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            repo = self.repository_worktree(base, "product", repository="example/product")
+            active = self.lease_v2("RUN-A", "example/product", *repo)
+            self.authorize(base, active, "lease:acquire")
+            active_path = base / "active.json"
+            self.write(active_path, active)
+            acquire(active_path, locks, repo_root=base)
+
+            replacement = json.loads(json.dumps(active))
+            replacement["generation"] = 2
+            replacement["repositories"][0]["exact_sha"] = "0" * 40
+            replacement["decision_ref"] = None
+            self.authorize(
+                base,
+                replacement,
+                "lease:expand",
+                previous_decision_ref=active["decision_ref"],
+            )
+            replacement_path = base / "replacement.json"
+            self.write(replacement_path, replacement)
+            from coordination_loop_harness import leases as lease_module
+
+            with (
+                mock.patch.object(
+                    lease_module,
+                    "_writer_git_admission_guard",
+                    side_effect=AssertionError("Git guard entered before writer binding"),
+                ) as guard,
+                self.assertRaisesRegex(ValueError, "Writer repository binding failed"),
+            ):
+                replace(
+                    replacement_path,
+                    locks,
+                    expected_generation=1,
+                    repo_root=base,
+                )
+            guard.assert_not_called()
+            self.assertEqual(
+                1,
+                json.loads((locks / "RUN-A.lease.json").read_text(encoding="utf-8"))["generation"],
             )
 
     def test_legacy_v1_terminal_classification_needs_no_schema_root(self):

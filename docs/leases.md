@@ -100,8 +100,10 @@ uses `lease:release`; an already expired lease requires the distinct
 opaque record also preserves the casefolded lease-id identity encoded by its
 canonical single-link filename entry, without becoming a machine-wide lock. A
 valid terminal record releases resources but keeps that bounded filename
-identity reserved. Invalid v2 relative path claims are ignored instead of being
-resolved through ambient cwd; valid absolute and recognized absolute alias
+identity reserved. Relative path claims in invalid v2, missing-schema, and
+unknown/future-schema records are ignored instead of being resolved through
+ambient cwd; only recognized v1 retains its historical cwd identity. Valid
+absolute and recognized absolute alias
 claims remain conservative. V2 terminal verification needs
 an explicit repository root and never inherits the current directory. Unknown
 schema versions cannot fall through to legacy replacement or release. See

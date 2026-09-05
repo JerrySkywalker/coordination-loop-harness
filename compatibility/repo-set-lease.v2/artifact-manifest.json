@@ -24,14 +24,17 @@
     "valid-terminal-casefold-id-refusal"
   ],
   "invalid_v2_scope_policy": "relative-path-claims-have-no-cwd-derived-overlap-identity",
+  "unrecognized_schema_scope_policy": "missing-or-unknown-schema-relative-path-claims-have-no-cwd-derived-overlap-identity; recognized-v1-remains-historical",
   "invalid_v2_relative_overlap_cases": [
     "invalid-v2-relative-canonical-path",
     "invalid-v2-relative-worktree-root",
     "invalid-v2-relative-local-scope"
   ],
   "overlap_vector_schema": "repo-set-lease-v2-overlap-cases.v2",
+  "schema_authority_vector_schema": "repo-set-lease-v2-negative-semantics.v2",
   "terminal_release_vector_schema": "repo-set-lease-v2-terminal-release.v2",
   "overlap_vector_encoding": "complete-stored-scenarios-complete-candidate-probes-and-explicit-repository-root-files-no-patches-defaults-indexes-document-pointers-or-generated-values",
+  "schema_authority_vector_encoding": "complete-candidate-and-decision-documents-with-explicit-repository-root-files-no-bases-patches-defaults-document-pointers-or-generated-case-values",
   "terminal_fixture_encoding": "explicit-relative-path-with-exact-utf8-content-json-document-or-artifact-byte-copy",
   "access_mode_conformance": "versioned-fully-serialized-vectors; explicit-read-read-admits-and-read-write-conflicts-in-both-directions",
   "access_mode_cases": [
@@ -68,7 +71,7 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
-      "sha256": "3f01131606b415e9448f7561a130bfee1f61517147a8a65dd9fddd2fc4b31ca4"
+      "sha256": "d673ad3171cb1931ef14d38110fc6167e9fda6f828d5594df523d9d85b9b2f64"
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
@@ -84,7 +87,7 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "606c03237f1c788d9854e1bc3760d5ee5e90913a4d2baf725fd20ccfeabd65dd"
+      "sha256": "223a2d503b4561f40967aa8a5b0953ac82789395d1913045942534df0ebbbde3"
     },
     {
       "path": "docs/command-reference.md",
@@ -92,11 +95,11 @@
     },
     {
       "path": "docs/leases.md",
-      "sha256": "5d33dde5d6e025b558f703981c1af7656350c05f3dacdae5be7658c5706bc5c2"
+      "sha256": "aff7090bbafaf59b0a597c2fdf31bba11f815a23fb77185ceabbb4935cb651da"
     },
     {
       "path": "schemas/decision.v2.schema.json",
-      "sha256": "09dcf44e01a9a655354e2142a3a232aa5b1da7d718ac024f3a7f09ca66d4f354"
+      "sha256": "ceabd8d19f74e180e918401610e6892fe534d5f6a317371152fb1b0d38e39df9"
     },
     {
       "path": "schemas/repo-set-lease.v2.schema.json",
@@ -108,11 +111,11 @@
     },
     {
       "path": "src/coordination_loop_harness/decisions.py",
-      "sha256": "6483bb0017ba49e402bae6f5b2649f1f257274d937a3584ae63d32e64ebaaac9"
+      "sha256": "6bdadeff92d808f0650f79de924afb0e2b4ba23344a73d6e9c5ef433e216015c"
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "1fe87fab1059091b28e6fb79d43042aeec9eddd0422df4625de3c1f6dc96a7c9"
+      "sha256": "8a8e47eb21bed1a19f37775a8fb620d914a940cf6b777f00ced7df727d20ea2b"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -136,11 +139,11 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "c856894ae98e7a2de8f36a13b8c2d632200aea9baf2f2dcf4fb1cff1e5d29685"
+      "sha256": "9d3fb7c946e8e27039366146d6587a24a51be57478c9b6124811e798ba842177"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "075e09baa736d722a8c36c181418501e45e8b4a66b2c39e108bea8fd6b698c34"
+      "sha256": "66950549ed66d41aee41b4f10b24202d6b5de3eeab0118dba678f384a9b1e845"
     },
     {
       "path": "tests/test_repository.py",
@@ -245,6 +248,6 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:30a619de2119139a7045040f4dbe33b7715452e82042ba01eacc385f63b2d8f6",
-  "artifact_set_sha256": "30a619de2119139a7045040f4dbe33b7715452e82042ba01eacc385f63b2d8f6"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:1390c994afe53c242b43d9a338b45482435d77b18f648ecfd99a71f8dc276553",
+  "artifact_set_sha256": "1390c994afe53c242b43d9a338b45482435d77b18f648ecfd99a71f8dc276553"
 }

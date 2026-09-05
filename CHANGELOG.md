@@ -21,14 +21,19 @@
   lease suffixes fail closed while safely readable exact resource claims remain
   reserved.
 - Made CLH admission reserve lease-id filenames by portable casefold across
-  active and terminal records, prevented invalid v2 relative scopes from
-  inheriting ambient cwd, and sealed explicit READ/READ plus bidirectional
+  active and terminal records, prevented invalid v2 and unknown-schema relative
+  scopes from inheriting ambient cwd, and sealed explicit READ/READ plus bidirectional
   READ/WRITE conformance vectors. The portable overlap corpus now carries
   complete stored and candidate documents, including executable terminal
   identity/resource-release and invalid-relative-path cases, plus the exact
   repository-root file map needed to reproduce terminal validation. The
   terminal-release vector proves local and infrastructure claim release too,
   while historical v1 repository-name canonicalization remains unchanged.
+- Moved replacement writer-binding and release authority/lineage/outcome checks
+  ahead of Git-guard creation while retaining guarded final revalidation. The
+  schema/authority corpus now embeds every complete candidate and Decision plus
+  its explicit repository-root file map, and portable v2 safe-integer checks no
+  longer narrow the generic Decision schema's historical v1 integer range.
 - Required explicit repository roots for every v2 mutation, exact serialized
   active-writer matching, nonblank infrastructure identities, portable
   repository-relative references, v2-aware origin normalization, and executable

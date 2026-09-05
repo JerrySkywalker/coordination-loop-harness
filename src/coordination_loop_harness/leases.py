@@ -434,7 +434,9 @@ def _active_leases(
 
 
 def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
-    shared_access = lease.get("schema_version") == _V2_SCHEMA
+    schema_version = lease.get("schema_version")
+    shared_access = schema_version == _V2_SCHEMA
+    require_absolute_paths = schema_version != _V1_SCHEMA
     repositories: dict[str, str] = {}
     paths: dict[str, str] = {}
     branches: dict[str, str] = {}
@@ -456,7 +458,7 @@ def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
             if isinstance(item.get(key), str) and item[key].strip():
                 for identity in _scope_overlap_identities(
                     item[key],
-                    require_absolute=shared_access,
+                    require_absolute=require_absolute_paths,
                 ):
                     _merge_access(paths, identity, mode)
         branch_ref = item.get("branch_ref")
@@ -468,7 +470,10 @@ def _sets(lease: dict[str, Any]) -> dict[str, dict[str, str]]:
     for item in local_scopes:
         if not isinstance(item, str) or not item.strip():
             continue
-        for identity in _scope_overlap_identities(item, require_absolute=shared_access):
+        for identity in _scope_overlap_identities(
+            item,
+            require_absolute=require_absolute_paths,
+        ):
             _merge_access(paths, identity, "WRITE")
     raw_infrastructure = lease.get("infrastructure_scopes")
     infrastructure_items = raw_infrastructure if isinstance(raw_infrastructure, list) else []
@@ -1332,6 +1337,28 @@ def _validate_terminal_release(
         raise ValueError("Active decision sequence must match the active lease generation")
 
 
+def _validate_release_authority(
+    candidate: dict[str, Any],
+    current: dict[str, Any],
+    repo_root: Path,
+    *,
+    observed_now: datetime,
+) -> None:
+    released = _timestamp(candidate["released_utc"], label="released_utc")
+    if released > observed_now:
+        raise ValueError("Terminal candidate released_utc cannot be in the future")
+    expected_authority = (
+        "STALE_RECOVERY"
+        if observed_now > _timestamp(current["expires_utc"], label="expires_utc")
+        else "NORMAL"
+    )
+    if candidate.get("release_authority") != expected_authority:
+        raise ValueError(
+            f"Terminal candidate release authority mismatch: expected {expected_authority}"
+        )
+    _validate_terminal_release(candidate, repo_root, observed_now=observed_now)
+
+
 def _validate_lease(
     data: dict[str, Any],
     repo_root: Path,
@@ -1540,6 +1567,7 @@ def replace(
             label="lease decision_ref",
         )
         _validate_replacement_authority(candidate, current, repo_root, decision_path)
+        _validate_writer_binding(candidate)
         with _writer_git_admission_guard(candidate) as git_locks:
             _validate_writer_binding(candidate, admitted_git_locks=git_locks)
             overlaps = find_overlaps(
@@ -1645,25 +1673,29 @@ def release(
             for field in immutable_fields:
                 if candidate.get(field) != current.get(field):
                     raise ValueError(f"Terminal candidate must preserve lease field: {field}")
+            _validate_writer_binding(current)
+            _validate_release_authority(
+                candidate,
+                current,
+                repo_root,
+                observed_now=_timestamp(utc_now(), label="current_utc"),
+            )
             with _writer_git_admission_guard(current) as git_locks:
                 _validate_writer_binding(current, admitted_git_locks=git_locks)
                 now = _timestamp(utc_now(), label="current_utc")
-                released = _timestamp(candidate["released_utc"], label="released_utc")
-                if released > now:
-                    raise ValueError("Terminal candidate released_utc cannot be in the future")
-                expected_authority = (
-                    "STALE_RECOVERY"
-                    if now > _timestamp(current["expires_utc"], label="expires_utc")
-                    else "NORMAL"
+                _validate_release_authority(
+                    candidate,
+                    current,
+                    repo_root,
+                    observed_now=now,
                 )
-                if candidate.get("release_authority") != expected_authority:
-                    raise ValueError(
-                        "Terminal candidate release authority mismatch: "
-                        f"expected {expected_authority}"
-                    )
-                _validate_terminal_release(candidate, repo_root, observed_now=now)
                 _validate_writer_binding(current, admitted_git_locks=git_locks)
-                _validate_terminal_release(candidate, repo_root, observed_now=now)
+                _validate_release_authority(
+                    candidate,
+                    current,
+                    repo_root,
+                    observed_now=now,
+                )
                 _assert_lease_entry_unchanged(
                     lock_root,
                     lease_path,

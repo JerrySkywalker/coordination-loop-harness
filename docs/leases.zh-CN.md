@@ -29,6 +29,8 @@ POSIX 在原子 no-replace 发布后同步目录项，替换则把已完整持�
 读者只会看到旧记录或完整新记录。替换后的目录同步失败会原样报告，不推断旧记录已恢复。
 通用 `decision.v2` schema 为兼容历史 v1 Decision 仍允许该字段为空，因此单纯 schema
 合法不构成 v2 lease 授权；v2 操作必须执行跨文档候选摘要精确比对。
+历史 v1 的正整数 Decision sequence 与 lease generation 仍保持 schema 合法；只有要求
+候选摘要的 v2 lease consumer 才额外施加可互操作的安全整数边界。
 canonical v2 JSON 拒绝重复对象键、所有浮点数以及超出 `[-(2^53-1), 2^53-1]` 的整数，
 按对象键排序、直接输出非 ASCII 字符、使用紧凑分隔符并以唯一一个 LF 结束，再编码为
 UTF-8。
@@ -43,6 +45,9 @@ v2 序列化路径仅允许盘符限定的 Windows 绝对路径或单根 POSIX �
 元数据根内。系统绑定 canonical 仓库与 writer worktree 的同一 common Git dir，重新验证
 文件系统身份、完整 lock 集合和每个自有 marker，然后完成重叠扫描与 lease 发布。崩溃或
 被替换的 Git lock 只允许人工核实，不能按 PID 或超时自动回收。
+替换会在创建 Git guard 前验证候选 writer binding；释放会先验证当前 writer、terminal
+时间、权限、Decision lineage 与 outcome。进入 guard 后再用新时钟及 live binding 完整复验，
+同时保证副作用前拒绝与发布前 TOCTOU 防护。
 同一 `lease_id` 即使声明了完全不相交的资源也会冲突。
 
 Decision scope 的每一项必须非空、唯一且已 canonical 化，并覆盖 lease 的完整资源集合。
@@ -59,8 +64,9 @@ Decision 链、候选摘要与 outcome 内容全部通过时才是 `TERMINAL_REL
 `UNKNOWN_FAIL_CLOSED`，并继续阻挡可解析出的同资源 writer。完全不可解析的记录不会变成
 机器级全局锁，但仍按其规范文件名保留 casefold 后的 `lease_id` 冲突；有效 terminal 只释放
 资源，其有界文件名身份继续保留，使遵循协议的 CLH admission 在写入前拒绝仅大小写不同的
-第二条记录。无效 v2 相对路径不会通过观察者 cwd 获得资源身份，只有稳定的绝对路径声明及
-可识别的绝对别名才参与 overlap。
+第二条记录。无效 v2、缺少 schema 或未知/未来 schema 的相对路径不会通过观察者 cwd 获得
+资源身份；只有已识别 v1 保留历史 cwd 行为，稳定的绝对路径声明及可识别的绝对别名仍参与
+overlap。
 overlap scan、按名 observe、
 list、replace 和 release 所使用的 lease 记录必须是 lock root 的大小写精确、直接、普通且
 只有一个文件系统链接的目录项；symlink、reparse point、hardlink 和目录项别名一律 fail

@@ -26,7 +26,7 @@
     "schema_version": {"const": "coord.decision.v2"},
     "decision_id": {"$ref": "#/$defs/id"},
     "run_id": {"$ref": "#/$defs/id"},
-    "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "sequence": {"type": "integer", "minimum": 1},
     "decision_type": {
       "enum": [
         "OWNER_GATE",
@@ -52,8 +52,7 @@
     "lease_id": {"type": ["string", "null"]},
     "lease_generation": {
       "type": ["integer", "null"],
-      "minimum": 1,
-      "maximum": 9007199254740991
+      "minimum": 1
     },
     "lease_candidate_sha256": {
       "type": ["string", "null"],
