@@ -19,12 +19,29 @@
   "v2_mutation_root_policy": "explicit-repository-root-no-ambient-cwd",
   "lease_record_entry_policy": "exact-case-sensitive-direct-regular-single-link-entry-with-bracketed-filesystem-identity; symlink-reparse-hardlink-and-resolved-aliases-fail-closed",
   "lease_id_filename_policy": "cooperating-admission-reserves-ascii-casefold-collisions-even-after-valid-terminal-release",
+  "lease_id_filename_cases": [
+    "case-only-lease-id",
+    "valid-terminal-casefold-id-refusal"
+  ],
   "invalid_v2_scope_policy": "relative-path-claims-have-no-cwd-derived-overlap-identity",
-  "access_mode_conformance": "versioned-vector-materialization; explicit-read-read-admits-and-read-write-conflicts-in-both-directions",
+  "invalid_v2_relative_overlap_cases": [
+    "invalid-v2-relative-canonical-path",
+    "invalid-v2-relative-worktree-root",
+    "invalid-v2-relative-local-scope"
+  ],
+  "overlap_vector_schema": "repo-set-lease-v2-overlap-cases.v2",
+  "terminal_release_vector_schema": "repo-set-lease-v2-terminal-release.v2",
+  "overlap_vector_encoding": "complete-stored-scenarios-complete-candidate-probes-and-explicit-repository-root-files-no-patches-defaults-indexes-document-pointers-or-generated-values",
+  "terminal_fixture_encoding": "explicit-relative-path-with-exact-utf8-content-json-document-or-artifact-byte-copy",
+  "access_mode_conformance": "versioned-fully-serialized-vectors; explicit-read-read-admits-and-read-write-conflicts-in-both-directions",
   "access_mode_cases": [
-    "shared-program-disjoint-writers:shared-observer-read-read",
+    "reader-versus-reader",
     "writer-versus-reader",
     "reader-versus-writer"
+  ],
+  "zero_overlap_cases": [
+    "reader-versus-reader",
+    "valid-terminal-resource-release"
   ],
   "terminal_observation_policy": "explicit-repository-root-no-ambient-cwd",
   "consumer_barrier": "CLT_E2_COMPATIBILITY_LOCK_BEFORE_GOAL_08",
@@ -39,7 +56,7 @@
   "artifacts": [
     {
       "path": "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
-      "sha256": "196c2b903cd21e7e0bd636f817edf50f842592c214202c10156a080e73aa09d8"
+      "sha256": "8fc99cf0db7ff3dad6eafa1508624224b7638d4068fab94a8644300477ae34ae"
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
@@ -55,11 +72,11 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/positive/terminal-release.json",
-      "sha256": "0aa48f5f0cbae9af5218855d8583977539a409f80eabf9541645c180dec5317a"
+      "sha256": "93e5eb3cc74e144277b99fdd38ca3e95805e61d06f1417c3a7292865b6f19945"
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "f98d7f5e9ae7a8ceda73b2b32e30774ad26d29a4113a77b663be558ab08828cc"
+      "sha256": "606c03237f1c788d9854e1bc3760d5ee5e90913a4d2baf725fd20ccfeabd65dd"
     },
     {
       "path": "docs/command-reference.md",
@@ -115,7 +132,7 @@
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "aea0cd51e8ec6235e98538bc01738e5eccbfc8645fc9a2bf37c2350f9c56af40"
+      "sha256": "58bc04effe3501cd8198cbd185c3a32a254143ad1f14a9dca36851b810996451"
     },
     {
       "path": "tests/test_repository.py",
@@ -141,7 +158,15 @@
     "root-local-resource": ["path", "path", "path"],
     "same-infrastructure-resource": ["infrastructure"],
     "writer-versus-reader": ["repository", "branch", "path", "path"],
-    "reader-versus-writer": ["repository", "branch", "path", "path"]
+    "reader-versus-writer": ["repository", "branch", "path", "path"],
+    "reader-versus-reader": [],
+    "invalid-v2-relative-canonical-path": ["repository"],
+    "invalid-v2-relative-worktree-root": ["repository"],
+    "invalid-v2-relative-local-scope": ["repository"]
+  },
+  "terminal_overlap_expected_categories": {
+    "valid-terminal-casefold-id-refusal": ["lease_id"],
+    "valid-terminal-resource-release": []
   },
   "negative_schema_and_authority_cases": [
     "active-with-terminal-field",
@@ -212,6 +237,6 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:d1c3006c0d84067c2f4c98e8e61223a617648923d154425f96702681739c55d5",
-  "artifact_set_sha256": "d1c3006c0d84067c2f4c98e8e61223a617648923d154425f96702681739c55d5"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:42a7e89573cc201f1f192b20340031aa0194941b7673c7f8ac030c936ce78fb8",
+  "artifact_set_sha256": "42a7e89573cc201f1f192b20340031aa0194941b7673c7f8ac030c936ce78fb8"
 }

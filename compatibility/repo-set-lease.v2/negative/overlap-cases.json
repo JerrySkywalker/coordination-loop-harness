@@ -1,191 +1,763 @@
 {
-  "schema_version": "repo-set-lease-v2-overlap-cases.v1",
-  "materialization": {
-    "stored_document": "deep-copy-base_lease-per-case",
-    "candidate_document": "deep-copy-base_lease-per-case",
-    "default_base_mode": "WRITE",
-    "default_candidate_mode": "WRITE",
-    "mode_writer_binding": "repository-when-write-otherwise-null",
-    "candidate_case_overrides": [
-      "lease_id",
-      "run_id-from-lease_id",
-      "owner-generated-per-case",
-      "repository",
-      "canonical_path-or-repository-derived-default",
-      "worktree_root",
-      "branch_ref",
-      "exact_sha-generated-per-case",
-      "local_scopes",
-      "infrastructure_scopes"
-    ]
-  },
-  "base_lease": {
-    "schema_version": "coord.repo-set-lease.v2",
-    "lease_id": "BASE-WRITER",
-    "run_id": "BASE-WRITER",
-    "state": "ACTIVE",
-    "generation": 1,
-    "created_utc": "2026-09-04T00:00:00Z",
-    "heartbeat_utc": "2026-09-04T00:00:00Z",
-    "expires_utc": "2026-09-04T01:00:00Z",
-    "owner": "implementer-base",
-    "coordination_repository": "example/program",
-    "repositories": [
-      {
-        "repository": "example/clh",
-        "mode": "WRITE",
-        "canonical_path": "V:/src/coordination-loop-harness",
-        "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
-        "branch_ref": "refs/heads/agent/shared",
-        "exact_sha": "1111111111111111111111111111111111111111"
-      }
-    ],
-    "local_scopes": [
-      "V:/src/_state/shared-resource"
-    ],
-    "infrastructure_scopes": [
-      "runner:windows-a"
-    ],
-    "active_writer_repository": "example/clh",
-    "decision_ref": "decisions/BASE-WRITER/DEC-1.json",
-    "release_decision_ref": null,
-    "release_authority": null,
-    "released_utc": null,
-    "outcome_ref": null,
-    "outcome_sha256": null
-  },
-  "cases": [
+  "schema_version": "repo-set-lease-v2-overlap-cases.v2",
+  "operation": "FIND_OVERLAPS",
+  "scenarios": [
     {
-      "case": "same-lease-id",
-      "lease_id": "BASE-WRITER",
-      "repository": "example/cle",
-      "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
-      "branch_ref": "refs/heads/agent/cle-disjoint",
-      "local_scopes": [],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "lease_id"
+      "scenario": "active-write-base",
+      "repository_root": "OMIT",
+      "stored_entry": {
+        "filename": "BASE-WRITER.lease.json",
+        "validation": "SCHEMA_ACCEPT",
+        "document": {
+          "schema_version": "coord.repo-set-lease.v2",
+          "lease_id": "BASE-WRITER",
+          "run_id": "BASE-WRITER",
+          "state": "ACTIVE",
+          "generation": 1,
+          "created_utc": "2026-09-04T00:00:00Z",
+          "heartbeat_utc": "2026-09-04T00:00:00Z",
+          "expires_utc": "2026-09-04T01:00:00Z",
+          "owner": "implementer-base-writer",
+          "coordination_repository": "example/program",
+          "repositories": [
+            {
+              "repository": "example/clh",
+              "mode": "WRITE",
+              "canonical_path": "V:/src/coordination-loop-harness",
+              "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+              "branch_ref": "refs/heads/agent/shared",
+              "exact_sha": "1111111111111111111111111111111111111111"
+            }
+          ],
+          "local_scopes": [
+            "V:/src/_state/shared-resource"
+          ],
+          "infrastructure_scopes": [
+            "runner:windows-a"
+          ],
+          "active_writer_repository": "example/clh",
+          "decision_ref": "decisions/BASE-WRITER/DEC-1.json",
+          "release_decision_ref": null,
+          "release_authority": null,
+          "released_utc": null,
+          "outcome_ref": null,
+          "outcome_sha256": null
+        }
+      },
+      "probes": [
+        {
+          "case": "same-lease-id",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "BASE-WRITER",
+            "run_id": "BASE-WRITER",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-same-id",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/cle",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/coordination-loop-engine",
+                "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
+                "branch_ref": "refs/heads/agent/cle-disjoint",
+                "exact_sha": "2222222222222222222222222222222222222222"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/cle",
+            "decision_ref": "decisions/BASE-WRITER/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "lease_id"
+          ]
+        },
+        {
+          "case": "case-only-lease-id",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "base-writer",
+            "run_id": "base-writer",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-case-only-id",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/cle",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/coordination-loop-engine",
+                "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
+                "branch_ref": "refs/heads/agent/cle-disjoint",
+                "exact_sha": "2222222222222222222222222222222222222222"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/cle",
+            "decision_ref": "decisions/base-writer/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "lease_id"
+          ]
+        },
+        {
+          "case": "same-repository",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-SAME-REPOSITORY",
+            "run_id": "CANDIDATE-SAME-REPOSITORY",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-same-repository",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/clh",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/coordination-loop-harness-copy",
+                "worktree_root": "V:/src/_worktrees/other/coordination-loop-harness-copy",
+                "branch_ref": "refs/heads/agent/other",
+                "exact_sha": "3333333333333333333333333333333333333333"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/clh",
+            "decision_ref": "decisions/CANDIDATE-SAME-REPOSITORY/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "repository"
+          ]
+        },
+        {
+          "case": "same-worktree",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-SAME-WORKTREE",
+            "run_id": "CANDIDATE-SAME-WORKTREE",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-same-worktree",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/cle",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/coordination-loop-engine",
+                "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+                "branch_ref": "refs/heads/agent/cle",
+                "exact_sha": "4444444444444444444444444444444444444444"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/cle",
+            "decision_ref": "decisions/CANDIDATE-SAME-WORKTREE/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "path"
+          ]
+        },
+        {
+          "case": "same-branch",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-SAME-BRANCH",
+            "run_id": "CANDIDATE-SAME-BRANCH",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-same-branch",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/clh",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/coordination-loop-harness-copy",
+                "worktree_root": "V:/src/_worktrees/other/coordination-loop-harness-copy",
+                "branch_ref": "refs/heads/agent/shared",
+                "exact_sha": "5555555555555555555555555555555555555555"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/clh",
+            "decision_ref": "decisions/CANDIDATE-SAME-BRANCH/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "repository",
+            "branch"
+          ]
+        },
+        {
+          "case": "overlapping-local-resource",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-OVERLAPPING-LOCAL",
+            "run_id": "CANDIDATE-OVERLAPPING-LOCAL",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-overlapping-local",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/cle",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/coordination-loop-engine",
+                "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
+                "branch_ref": "refs/heads/agent/cle-local",
+                "exact_sha": "6666666666666666666666666666666666666666"
+              }
+            ],
+            "local_scopes": [
+              "V:/src/_state/shared-resource/child"
+            ],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/cle",
+            "decision_ref": "decisions/CANDIDATE-OVERLAPPING-LOCAL/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "path"
+          ]
+        },
+        {
+          "case": "root-local-resource",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-ROOT-LOCAL",
+            "run_id": "CANDIDATE-ROOT-LOCAL",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-root-local",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/cle",
+                "mode": "WRITE",
+                "canonical_path": "V:/isolated/coordination-loop-engine",
+                "worktree_root": "V:/isolated-worktrees/coordination-loop-engine",
+                "branch_ref": "refs/heads/agent/cle-root-scope",
+                "exact_sha": "7777777777777777777777777777777777777777"
+              }
+            ],
+            "local_scopes": [
+              "V:/"
+            ],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/cle",
+            "decision_ref": "decisions/CANDIDATE-ROOT-LOCAL/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "path",
+            "path",
+            "path"
+          ]
+        },
+        {
+          "case": "same-infrastructure-resource",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-SAME-INFRASTRUCTURE",
+            "run_id": "CANDIDATE-SAME-INFRASTRUCTURE",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-same-infrastructure",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/cle",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/coordination-loop-engine",
+                "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
+                "branch_ref": "refs/heads/agent/cle-infrastructure",
+                "exact_sha": "8888888888888888888888888888888888888888"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [
+              "RUNNER:WINDOWS-A"
+            ],
+            "active_writer_repository": "example/cle",
+            "decision_ref": "decisions/CANDIDATE-SAME-INFRASTRUCTURE/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "infrastructure"
+          ]
+        },
+        {
+          "case": "writer-versus-reader",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-WRITER-READER",
+            "run_id": "CANDIDATE-WRITER-READER",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "observer-writer-reader",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/clh",
+                "mode": "READ",
+                "canonical_path": "V:/src/coordination-loop-harness",
+                "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+                "branch_ref": "refs/heads/agent/shared",
+                "exact_sha": "1111111111111111111111111111111111111111"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": null,
+            "decision_ref": "decisions/CANDIDATE-WRITER-READER/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "repository",
+            "branch",
+            "path",
+            "path"
+          ]
+        }
       ]
     },
     {
-      "case": "case-only-lease-id",
-      "lease_id": "base-writer",
-      "repository": "example/cle",
-      "worktree_root": "V:/src/_worktrees/other/coordination-loop-engine",
-      "branch_ref": "refs/heads/agent/cle-disjoint",
-      "local_scopes": [],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "lease_id"
+      "scenario": "active-read-base",
+      "repository_root": "OMIT",
+      "stored_entry": {
+        "filename": "BASE-READER.lease.json",
+        "validation": "SCHEMA_ACCEPT",
+        "document": {
+          "schema_version": "coord.repo-set-lease.v2",
+          "lease_id": "BASE-READER",
+          "run_id": "BASE-READER",
+          "state": "ACTIVE",
+          "generation": 1,
+          "created_utc": "2026-09-04T00:00:00Z",
+          "heartbeat_utc": "2026-09-04T00:00:00Z",
+          "expires_utc": "2026-09-04T01:00:00Z",
+          "owner": "observer-base-reader",
+          "coordination_repository": "example/program",
+          "repositories": [
+            {
+              "repository": "example/clh",
+              "mode": "READ",
+              "canonical_path": "V:/src/coordination-loop-harness",
+              "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+              "branch_ref": "refs/heads/agent/shared",
+              "exact_sha": "1111111111111111111111111111111111111111"
+            }
+          ],
+          "local_scopes": [],
+          "infrastructure_scopes": [],
+          "active_writer_repository": null,
+          "decision_ref": "decisions/BASE-READER/DEC-1.json",
+          "release_decision_ref": null,
+          "release_authority": null,
+          "released_utc": null,
+          "outcome_ref": null,
+          "outcome_sha256": null
+        }
+      },
+      "probes": [
+        {
+          "case": "reader-versus-reader",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-READER-READER",
+            "run_id": "CANDIDATE-READER-READER",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "observer-reader-reader",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/clh",
+                "mode": "READ",
+                "canonical_path": "V:/src/coordination-loop-harness",
+                "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+                "branch_ref": "refs/heads/agent/shared",
+                "exact_sha": "1111111111111111111111111111111111111111"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": null,
+            "decision_ref": "decisions/CANDIDATE-READER-READER/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": []
+        },
+        {
+          "case": "reader-versus-writer",
+          "candidate_validation": "SCHEMA_ACCEPT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "CANDIDATE-READER-WRITER",
+            "run_id": "CANDIDATE-READER-WRITER",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-reader-writer",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/clh",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/coordination-loop-harness",
+                "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
+                "branch_ref": "refs/heads/agent/shared",
+                "exact_sha": "1111111111111111111111111111111111111111"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/clh",
+            "decision_ref": "decisions/CANDIDATE-READER-WRITER/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "repository",
+            "branch",
+            "path",
+            "path"
+          ]
+        }
       ]
     },
     {
-      "case": "same-repository",
-      "repository": "example/clh",
-      "worktree_root": "V:/src/_worktrees/other/clh",
-      "branch_ref": "refs/heads/agent/other",
-      "local_scopes": [],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "repository"
+      "scenario": "invalid-v2-relative-canonical-path",
+      "repository_root": "OMIT",
+      "stored_entry": {
+        "filename": "INVALID-CANONICAL-STORED.lease.json",
+        "validation": "SCHEMA_REJECT",
+        "document": {
+          "schema_version": "coord.repo-set-lease.v2",
+          "lease_id": "INVALID-CANONICAL-STORED",
+          "run_id": "INVALID-CANONICAL-STORED",
+          "state": "ACTIVE",
+          "generation": 1,
+          "created_utc": "2026-09-04T00:00:00Z",
+          "heartbeat_utc": "2026-09-04T00:00:00Z",
+          "expires_utc": "2026-09-04T01:00:00Z",
+          "owner": "implementer-invalid-canonical-stored",
+          "coordination_repository": "example/program",
+          "repositories": [
+            {
+              "repository": "example/a",
+              "mode": "WRITE",
+              "canonical_path": ".",
+              "worktree_root": "V:/src/_worktrees/invalid-canonical/stored",
+              "branch_ref": "refs/heads/agent/invalid-canonical-stored",
+              "exact_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "local_scopes": [],
+          "infrastructure_scopes": [],
+          "active_writer_repository": "example/a",
+          "decision_ref": "decisions/INVALID-CANONICAL-STORED/DEC-1.json",
+          "release_decision_ref": null,
+          "release_authority": null,
+          "released_utc": null,
+          "outcome_ref": null,
+          "outcome_sha256": null
+        }
+      },
+      "probes": [
+        {
+          "case": "invalid-v2-relative-canonical-path",
+          "candidate_validation": "SCHEMA_REJECT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "INVALID-CANONICAL-CANDIDATE",
+            "run_id": "INVALID-CANONICAL-CANDIDATE",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-invalid-canonical-candidate",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/a",
+                "mode": "WRITE",
+                "canonical_path": ".",
+                "worktree_root": "V:/src/_worktrees/invalid-canonical/candidate",
+                "branch_ref": "refs/heads/agent/invalid-canonical-candidate",
+                "exact_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/a",
+            "decision_ref": "decisions/INVALID-CANONICAL-CANDIDATE/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "repository"
+          ]
+        }
       ]
     },
     {
-      "case": "same-worktree",
-      "repository": "example/cle",
-      "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
-      "branch_ref": "refs/heads/agent/cle",
-      "local_scopes": [],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "path"
+      "scenario": "invalid-v2-relative-worktree-root",
+      "repository_root": "OMIT",
+      "stored_entry": {
+        "filename": "INVALID-WORKTREE-STORED.lease.json",
+        "validation": "SCHEMA_REJECT",
+        "document": {
+          "schema_version": "coord.repo-set-lease.v2",
+          "lease_id": "INVALID-WORKTREE-STORED",
+          "run_id": "INVALID-WORKTREE-STORED",
+          "state": "ACTIVE",
+          "generation": 1,
+          "created_utc": "2026-09-04T00:00:00Z",
+          "heartbeat_utc": "2026-09-04T00:00:00Z",
+          "expires_utc": "2026-09-04T01:00:00Z",
+          "owner": "implementer-invalid-worktree-stored",
+          "coordination_repository": "example/program",
+          "repositories": [
+            {
+              "repository": "example/a",
+              "mode": "WRITE",
+              "canonical_path": "V:/src/invalid-worktree/stored",
+              "worktree_root": ".",
+              "branch_ref": "refs/heads/agent/invalid-worktree-stored",
+              "exact_sha": "cccccccccccccccccccccccccccccccccccccccc"
+            }
+          ],
+          "local_scopes": [],
+          "infrastructure_scopes": [],
+          "active_writer_repository": "example/a",
+          "decision_ref": "decisions/INVALID-WORKTREE-STORED/DEC-1.json",
+          "release_decision_ref": null,
+          "release_authority": null,
+          "released_utc": null,
+          "outcome_ref": null,
+          "outcome_sha256": null
+        }
+      },
+      "probes": [
+        {
+          "case": "invalid-v2-relative-worktree-root",
+          "candidate_validation": "SCHEMA_REJECT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "INVALID-WORKTREE-CANDIDATE",
+            "run_id": "INVALID-WORKTREE-CANDIDATE",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-invalid-worktree-candidate",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/a",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/invalid-worktree/candidate",
+                "worktree_root": ".",
+                "branch_ref": "refs/heads/agent/invalid-worktree-candidate",
+                "exact_sha": "dddddddddddddddddddddddddddddddddddddddd"
+              }
+            ],
+            "local_scopes": [],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/a",
+            "decision_ref": "decisions/INVALID-WORKTREE-CANDIDATE/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "repository"
+          ]
+        }
       ]
     },
     {
-      "case": "same-branch",
-      "repository": "example/clh",
-      "worktree_root": "V:/src/_worktrees/other/clh",
-      "branch_ref": "refs/heads/agent/shared",
-      "local_scopes": [],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "repository",
-        "branch"
-      ]
-    },
-    {
-      "case": "overlapping-local-resource",
-      "repository": "example/cle",
-      "worktree_root": "V:/src/_worktrees/other/cle",
-      "branch_ref": "refs/heads/agent/cle",
-      "local_scopes": [
-        "V:/src/_state/shared-resource/child"
-      ],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "path"
-      ]
-    },
-    {
-      "case": "root-local-resource",
-      "repository": "example/cle",
-      "worktree_root": "V:/src/_worktrees/other/cle",
-      "branch_ref": "refs/heads/agent/cle-root-scope",
-      "local_scopes": [
-        "V:/"
-      ],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "path",
-        "path",
-        "path"
-      ]
-    },
-    {
-      "case": "same-infrastructure-resource",
-      "repository": "example/cle",
-      "worktree_root": "V:/src/_worktrees/other/cle",
-      "branch_ref": "refs/heads/agent/cle",
-      "local_scopes": [],
-      "infrastructure_scopes": [
-        "RUNNER:WINDOWS-A"
-      ],
-      "expected_categories": [
-        "infrastructure"
-      ]
-    },
-    {
-      "case": "writer-versus-reader",
-      "base_mode": "WRITE",
-      "candidate_mode": "READ",
-      "repository": "example/clh",
-      "canonical_path": "V:/src/coordination-loop-harness",
-      "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
-      "branch_ref": "refs/heads/agent/shared",
-      "local_scopes": [],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "repository",
-        "branch",
-        "path",
-        "path"
-      ]
-    },
-    {
-      "case": "reader-versus-writer",
-      "base_mode": "READ",
-      "candidate_mode": "WRITE",
-      "repository": "example/clh",
-      "canonical_path": "V:/src/coordination-loop-harness",
-      "worktree_root": "V:/src/_worktrees/base/coordination-loop-harness",
-      "branch_ref": "refs/heads/agent/shared",
-      "local_scopes": [],
-      "infrastructure_scopes": [],
-      "expected_categories": [
-        "repository",
-        "branch",
-        "path",
-        "path"
+      "scenario": "invalid-v2-relative-local-scope",
+      "repository_root": "OMIT",
+      "stored_entry": {
+        "filename": "INVALID-LOCAL-STORED.lease.json",
+        "validation": "SCHEMA_REJECT",
+        "document": {
+          "schema_version": "coord.repo-set-lease.v2",
+          "lease_id": "INVALID-LOCAL-STORED",
+          "run_id": "INVALID-LOCAL-STORED",
+          "state": "ACTIVE",
+          "generation": 1,
+          "created_utc": "2026-09-04T00:00:00Z",
+          "heartbeat_utc": "2026-09-04T00:00:00Z",
+          "expires_utc": "2026-09-04T01:00:00Z",
+          "owner": "implementer-invalid-local-stored",
+          "coordination_repository": "example/program",
+          "repositories": [
+            {
+              "repository": "example/a",
+              "mode": "WRITE",
+              "canonical_path": "V:/src/invalid-local/stored",
+              "worktree_root": "V:/src/_worktrees/invalid-local/stored",
+              "branch_ref": "refs/heads/agent/invalid-local-stored",
+              "exact_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            }
+          ],
+          "local_scopes": [
+            "."
+          ],
+          "infrastructure_scopes": [],
+          "active_writer_repository": "example/a",
+          "decision_ref": "decisions/INVALID-LOCAL-STORED/DEC-1.json",
+          "release_decision_ref": null,
+          "release_authority": null,
+          "released_utc": null,
+          "outcome_ref": null,
+          "outcome_sha256": null
+        }
+      },
+      "probes": [
+        {
+          "case": "invalid-v2-relative-local-scope",
+          "candidate_validation": "SCHEMA_REJECT",
+          "candidate_document": {
+            "schema_version": "coord.repo-set-lease.v2",
+            "lease_id": "INVALID-LOCAL-CANDIDATE",
+            "run_id": "INVALID-LOCAL-CANDIDATE",
+            "state": "ACTIVE",
+            "generation": 1,
+            "created_utc": "2026-09-04T00:00:00Z",
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "expires_utc": "2026-09-04T01:00:00Z",
+            "owner": "implementer-invalid-local-candidate",
+            "coordination_repository": "example/program",
+            "repositories": [
+              {
+                "repository": "example/a",
+                "mode": "WRITE",
+                "canonical_path": "V:/src/invalid-local/candidate",
+                "worktree_root": "V:/src/_worktrees/invalid-local/candidate",
+                "branch_ref": "refs/heads/agent/invalid-local-candidate",
+                "exact_sha": "ffffffffffffffffffffffffffffffffffffffff"
+              }
+            ],
+            "local_scopes": [
+              "."
+            ],
+            "infrastructure_scopes": [],
+            "active_writer_repository": "example/a",
+            "decision_ref": "decisions/INVALID-LOCAL-CANDIDATE/DEC-1.json",
+            "release_decision_ref": null,
+            "release_authority": null,
+            "released_utc": null,
+            "outcome_ref": null,
+            "outcome_sha256": null
+          },
+          "expected_overlap_categories": [
+            "repository"
+          ]
+        }
       ]
     }
   ]

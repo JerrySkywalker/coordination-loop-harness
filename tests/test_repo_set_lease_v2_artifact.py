@@ -90,6 +90,7 @@ def materialize_terminal_vector(
     release_decision = copy.deepcopy(release_decision or vector["release_decision"])
     (root / "schemas").mkdir(parents=True)
     shutil.copy2(ROOT / "schemas" / "decision.v2.schema.json", root / "schemas")
+    shutil.copy2(ROOT / "schemas" / "repo-set-lease.v2.schema.json", root / "schemas")
     (root / "TEMPLATE_VERSION").write_text("test\n", encoding="utf-8")
 
     active_path = root / terminal["decision_ref"]
@@ -116,6 +117,44 @@ def materialize_terminal_vector(
     outcome_path.parent.mkdir(parents=True, exist_ok=True)
     outcome_path.write_text(vector["outcome_utf8"], encoding="utf-8", newline="")
     return terminal
+
+
+def materialize_repository_root_files(root: Path, entries: list[dict]) -> None:
+    for entry in entries:
+        relative = entry["path"]
+        path = Path(relative)
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or path.is_absolute()
+            or ".." in path.parts
+            or "\\" in relative
+        ):
+            raise ValueError(f"invalid serialized repository-root path: {relative!r}")
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if set(entry) == {"path", "content_utf8"}:
+            target.write_text(entry["content_utf8"], encoding="utf-8", newline="")
+        elif set(entry) == {"path", "json_document"}:
+            target.write_text(
+                json.dumps(entry["json_document"], ensure_ascii=False) + "\n",
+                encoding="utf-8",
+                newline="",
+            )
+        elif set(entry) == {"path", "copy_artifact_bytes_from"}:
+            source_relative = entry["copy_artifact_bytes_from"]
+            source = Path(source_relative)
+            if (
+                not isinstance(source_relative, str)
+                or not source_relative
+                or source.is_absolute()
+                or ".." in source.parts
+                or "\\" in source_relative
+            ):
+                raise ValueError(f"invalid serialized artifact path: {source_relative!r}")
+            shutil.copy2(ROOT / source, target)
+        else:
+            raise ValueError(f"unsupported serialized repository-root entry: {entry!r}")
 
 
 class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
@@ -180,6 +219,134 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
                 root,
                 observed_now=datetime(2026, 9, 4, 0, 30, tzinfo=UTC),
             )
+
+    def test_terminal_overlap_vector_reserves_identity_and_releases_resources(self):
+        vector = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
+        self.assertEqual("repo-set-lease-v2-terminal-release.v2", vector["schema_version"])
+        scenario = vector["overlap_scenario"]
+        self.assertEqual(
+            {
+                "scenario",
+                "operation",
+                "repository_root",
+                "lock_root_relative",
+                "repository_root_files",
+                "stored_entry",
+                "probes",
+            },
+            set(scenario),
+        )
+        self.assertEqual("valid-terminal-overlap", scenario["scenario"])
+        self.assertEqual("FIND_OVERLAPS", scenario["operation"])
+        self.assertEqual("CREATE_EMPTY_DIRECTORY", scenario["repository_root"])
+        self.assertEqual("locks", scenario["lock_root_relative"])
+        files = {entry["path"]: entry for entry in scenario["repository_root_files"]}
+        self.assertEqual(
+            [
+                "TEMPLATE_VERSION",
+                "decisions/TERMINAL-VECTOR/DEC-1.json",
+                "decisions/TERMINAL-VECTOR/DEC-1.md",
+                "decisions/TERMINAL-VECTOR/DEC-2.json",
+                "decisions/TERMINAL-VECTOR/DEC-2.md",
+                "runs/TERMINAL-VECTOR/outcome.json",
+                "schemas/decision.v2.schema.json",
+                "schemas/repo-set-lease.v2.schema.json",
+            ],
+            list(files),
+        )
+        self.assertEqual(
+            vector["active_decision"],
+            files["decisions/TERMINAL-VECTOR/DEC-1.json"]["json_document"],
+        )
+        self.assertEqual(
+            vector["active_decision_markdown_utf8"],
+            files["decisions/TERMINAL-VECTOR/DEC-1.md"]["content_utf8"],
+        )
+        self.assertEqual(
+            vector["release_decision"],
+            files["decisions/TERMINAL-VECTOR/DEC-2.json"]["json_document"],
+        )
+        self.assertEqual(
+            vector["release_decision_markdown_utf8"],
+            files["decisions/TERMINAL-VECTOR/DEC-2.md"]["content_utf8"],
+        )
+        self.assertEqual(
+            vector["outcome_utf8"],
+            files["runs/TERMINAL-VECTOR/outcome.json"]["content_utf8"],
+        )
+        for schema_path in (
+            "schemas/decision.v2.schema.json",
+            "schemas/repo-set-lease.v2.schema.json",
+        ):
+            self.assertEqual(schema_path, files[schema_path]["copy_artifact_bytes_from"])
+        stored = scenario["stored_entry"]
+        self.assertEqual({"filename", "validation", "document"}, set(stored))
+        self.assertEqual("VALID_TERMINAL", stored["validation"])
+        self.assertEqual("TERMINAL-VECTOR.lease.json", stored["filename"])
+        self.assertEqual(vector["terminal_candidate"], stored["document"])
+        self.assertEqual(
+            {"case", "candidate_validation", "candidate_document", "expected_overlaps"},
+            set(scenario["probes"][0]),
+        )
+        self.assertEqual(
+            {"case", "candidate_validation", "candidate_document", "expected_overlaps"},
+            set(scenario["probes"][1]),
+        )
+        self.assertEqual(
+            ["valid-terminal-casefold-id-refusal", "valid-terminal-resource-release"],
+            [probe["case"] for probe in scenario["probes"]],
+        )
+        probes = {probe["case"]: probe for probe in scenario["probes"]}
+        casefold_candidate = probes["valid-terminal-casefold-id-refusal"]["candidate_document"]
+        self.assertEqual("terminal-vector", casefold_candidate["lease_id"])
+        self.assertNotEqual(
+            stored["document"]["repositories"][0]["repository"],
+            casefold_candidate["repositories"][0]["repository"],
+        )
+        reuse_candidate = probes["valid-terminal-resource-release"]["candidate_document"]
+        self.assertNotEqual(
+            stored["document"]["lease_id"].casefold(),
+            reuse_candidate["lease_id"].casefold(),
+        )
+        for field in ("repository", "canonical_path", "worktree_root", "branch_ref"):
+            self.assertEqual(
+                stored["document"]["repositories"][0][field],
+                reuse_candidate["repositories"][0][field],
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            materialize_repository_root_files(root, scenario["repository_root_files"])
+            terminal = stored["document"]
+            _validate_terminal_release(
+                terminal,
+                root,
+                observed_now=datetime(2026, 9, 4, 0, 30, tzinfo=UTC),
+            )
+            locks = root / scenario["lock_root_relative"]
+            locks.mkdir()
+            (locks / stored["filename"]).write_text(
+                json.dumps(stored["document"], ensure_ascii=False) + "\n",
+                encoding="utf-8",
+                newline="",
+            )
+            for probe in scenario["probes"]:
+                with self.subTest(case=probe["case"]):
+                    self.assertEqual("SCHEMA_ACCEPT", probe["candidate_validation"])
+                    self.assertEqual([], validate_document(probe["candidate_document"], ROOT))
+                    overlaps = find_overlaps(
+                        probe["candidate_document"],
+                        locks,
+                        repo_root=root,
+                    )
+                    serialized = [
+                        {
+                            "lease_id": overlap.lease_id,
+                            "category": overlap.category,
+                            "value": overlap.value,
+                        }
+                        for overlap in overlaps
+                    ]
+                    self.assertEqual(probe["expected_overlaps"], serialized)
 
     def test_schema_enforces_portable_lifecycle_and_writer_counts(self):
         base = load(ARTIFACT_ROOT / "positive" / "shared-program-disjoint-writers.json")["left"]
@@ -484,72 +651,119 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
 
     def test_negative_vectors_cover_exact_resource_conflicts(self):
         vector = load(ARTIFACT_ROOT / "negative" / "overlap-cases.json")
-        materialization = vector["materialization"]
-        self.assertEqual("deep-copy-base_lease-per-case", materialization["stored_document"])
-        self.assertEqual("deep-copy-base_lease-per-case", materialization["candidate_document"])
         self.assertEqual(
-            "repository-when-write-otherwise-null",
-            materialization["mode_writer_binding"],
+            {"schema_version", "operation", "scenarios"},
+            set(vector),
         )
+        self.assertEqual("repo-set-lease-v2-overlap-cases.v2", vector["schema_version"])
+        self.assertEqual("FIND_OVERLAPS", vector["operation"])
+        scenario_names: set[str] = set()
+        case_names: set[str] = set()
+        case_documents: dict[str, tuple[dict, dict]] = {}
+        for scenario in vector["scenarios"]:
+            self.assertEqual(
+                {"scenario", "repository_root", "stored_entry", "probes"},
+                set(scenario),
+            )
+            self.assertNotIn(scenario["scenario"], scenario_names)
+            scenario_names.add(scenario["scenario"])
+            self.assertEqual("OMIT", scenario["repository_root"])
+            stored = scenario["stored_entry"]
+            self.assertEqual({"filename", "validation", "document"}, set(stored))
+            self.assertEqual(
+                f"{stored['document']['lease_id']}.lease.json",
+                stored["filename"],
+            )
+            stored_errors = validate_document(stored["document"], ROOT)
+            if stored["validation"] == "SCHEMA_ACCEPT":
+                self.assertEqual([], stored_errors)
+            else:
+                self.assertEqual("SCHEMA_REJECT", stored["validation"])
+                self.assertTrue(stored_errors)
+            for probe in scenario["probes"]:
+                self.assertEqual(
+                    {
+                        "case",
+                        "candidate_validation",
+                        "candidate_document",
+                        "expected_overlap_categories",
+                    },
+                    set(probe),
+                )
+                self.assertNotIn(probe["case"], case_names)
+                case_names.add(probe["case"])
+                candidate_errors = validate_document(probe["candidate_document"], ROOT)
+                if probe["candidate_validation"] == "SCHEMA_ACCEPT":
+                    self.assertEqual([], candidate_errors)
+                else:
+                    self.assertEqual("SCHEMA_REJECT", probe["candidate_validation"])
+                    self.assertTrue(candidate_errors)
+                with tempfile.TemporaryDirectory() as tmp:
+                    locks = Path(tmp)
+                    (locks / stored["filename"]).write_text(
+                        json.dumps(stored["document"], ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                        newline="",
+                    )
+                    categories = [
+                        item.category for item in find_overlaps(probe["candidate_document"], locks)
+                    ]
+                self.assertEqual(probe["expected_overlap_categories"], categories)
+                case_documents[probe["case"]] = (
+                    stored["document"],
+                    probe["candidate_document"],
+                )
+
         self.assertEqual(
-            [
-                "lease_id",
-                "run_id-from-lease_id",
-                "owner-generated-per-case",
-                "repository",
-                "canonical_path-or-repository-derived-default",
-                "worktree_root",
-                "branch_ref",
-                "exact_sha-generated-per-case",
-                "local_scopes",
-                "infrastructure_scopes",
-            ],
-            materialization["candidate_case_overrides"],
+            {
+                "active-write-base",
+                "active-read-base",
+                "invalid-v2-relative-canonical-path",
+                "invalid-v2-relative-worktree-root",
+                "invalid-v2-relative-local-scope",
+            },
+            scenario_names,
         )
-        base = vector["base_lease"]
-        self.assertEqual([], validate_document(base, ROOT))
-        with tempfile.TemporaryDirectory() as tmp:
-            locks = Path(tmp)
-            for index, case in enumerate(vector["cases"], start=1):
-                with self.subTest(case=case["case"]):
-                    stored = copy.deepcopy(base)
-                    base_mode = case.get("base_mode", materialization["default_base_mode"])
-                    stored["repositories"][0]["mode"] = base_mode
-                    stored["active_writer_repository"] = (
-                        stored["repositories"][0]["repository"] if base_mode == "WRITE" else None
-                    )
-                    self.assertEqual([], validate_document(stored, ROOT))
-                    (locks / "BASE-WRITER.lease.json").write_text(
-                        json.dumps(stored), encoding="utf-8"
-                    )
-                    candidate = copy.deepcopy(base)
-                    candidate["lease_id"] = case.get("lease_id", f"CANDIDATE-{index}")
-                    candidate["run_id"] = candidate["lease_id"]
-                    candidate["owner"] = f"owner-{index}"
-                    candidate_mode = case.get(
-                        "candidate_mode", materialization["default_candidate_mode"]
-                    )
-                    candidate["active_writer_repository"] = (
-                        case["repository"] if candidate_mode == "WRITE" else None
-                    )
-                    candidate["local_scopes"] = case["local_scopes"]
-                    candidate["infrastructure_scopes"] = case["infrastructure_scopes"]
-                    candidate["repositories"][0].update(
-                        {
-                            "repository": case["repository"],
-                            "mode": candidate_mode,
-                            "canonical_path": case.get(
-                                "canonical_path",
-                                f"V:/src/{case['repository'].split('/')[-1]}",
-                            ),
-                            "worktree_root": case["worktree_root"],
-                            "branch_ref": case["branch_ref"],
-                            "exact_sha": f"{(index + 2) % 16:x}" * 40,
-                        }
-                    )
-                    self.assertEqual([], validate_document(candidate, ROOT))
-                    categories = [item.category for item in find_overlaps(candidate, locks)]
-                    self.assertEqual(case["expected_categories"], categories)
+        left_reader, right_reader = case_documents["reader-versus-reader"]
+        self.assertEqual("READ", left_reader["repositories"][0]["mode"])
+        self.assertIsNone(left_reader["active_writer_repository"])
+        self.assertEqual("READ", right_reader["repositories"][0]["mode"])
+        self.assertIsNone(right_reader["active_writer_repository"])
+        writer, reader = case_documents["writer-versus-reader"]
+        self.assertEqual("WRITE", writer["repositories"][0]["mode"])
+        self.assertEqual("example/clh", writer["active_writer_repository"])
+        self.assertEqual("READ", reader["repositories"][0]["mode"])
+        self.assertIsNone(reader["active_writer_repository"])
+        reader, writer = case_documents["reader-versus-writer"]
+        self.assertEqual("READ", reader["repositories"][0]["mode"])
+        self.assertIsNone(reader["active_writer_repository"])
+        self.assertEqual("WRITE", writer["repositories"][0]["mode"])
+        self.assertEqual("example/clh", writer["active_writer_repository"])
+
+        for case_name, field in (
+            ("invalid-v2-relative-canonical-path", "canonical_path"),
+            ("invalid-v2-relative-worktree-root", "worktree_root"),
+        ):
+            stored, candidate = case_documents[case_name]
+            stored_binding = stored["repositories"][0]
+            candidate_binding = candidate["repositories"][0]
+            self.assertEqual("example/a", stored_binding["repository"])
+            self.assertEqual(stored_binding["repository"], candidate_binding["repository"])
+            self.assertEqual(".", stored_binding[field])
+            self.assertEqual(".", candidate_binding[field])
+            self.assertNotEqual(stored_binding["branch_ref"], candidate_binding["branch_ref"])
+
+        stored, candidate = case_documents["invalid-v2-relative-local-scope"]
+        self.assertEqual(["."], stored["local_scopes"])
+        self.assertEqual(["."], candidate["local_scopes"])
+        self.assertEqual(
+            stored["repositories"][0]["repository"],
+            candidate["repositories"][0]["repository"],
+        )
+        self.assertNotEqual(
+            stored["repositories"][0]["branch_ref"],
+            candidate["repositories"][0]["branch_ref"],
+        )
 
     def test_manifest_hashes_exact_artifact_set(self):
         manifest = load(ARTIFACT_ROOT / "artifact-manifest.json")
@@ -566,11 +780,43 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         )
         self.assertEqual(
             [
-                "shared-program-disjoint-writers:shared-observer-read-read",
+                "reader-versus-reader",
                 "writer-versus-reader",
                 "reader-versus-writer",
             ],
             manifest["access_mode_cases"],
+        )
+        self.assertEqual(
+            "cooperating-admission-reserves-ascii-casefold-collisions-even-after-valid-terminal-release",
+            manifest["lease_id_filename_policy"],
+        )
+        self.assertEqual(
+            "relative-path-claims-have-no-cwd-derived-overlap-identity",
+            manifest["invalid_v2_scope_policy"],
+        )
+        self.assertEqual(
+            "repo-set-lease-v2-overlap-cases.v2",
+            manifest["overlap_vector_schema"],
+        )
+        self.assertEqual(
+            "repo-set-lease-v2-terminal-release.v2",
+            manifest["terminal_release_vector_schema"],
+        )
+        self.assertEqual(
+            "complete-stored-scenarios-complete-candidate-probes-and-explicit-repository-root-files-no-patches-defaults-indexes-document-pointers-or-generated-values",
+            manifest["overlap_vector_encoding"],
+        )
+        self.assertEqual(
+            "explicit-relative-path-with-exact-utf8-content-json-document-or-artifact-byte-copy",
+            manifest["terminal_fixture_encoding"],
+        )
+        self.assertEqual(
+            ["case-only-lease-id", "valid-terminal-casefold-id-refusal"],
+            manifest["lease_id_filename_cases"],
+        )
+        self.assertEqual(
+            ["reader-versus-reader", "valid-terminal-resource-release"],
+            manifest["zero_overlap_cases"],
         )
         records: list[bytes] = []
         for item in manifest["artifacts"]:
@@ -586,9 +832,28 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
         )
 
         overlap = load(ARTIFACT_ROOT / "negative" / "overlap-cases.json")
+        overlap_probes = [
+            probe for scenario in overlap["scenarios"] for probe in scenario["probes"]
+        ]
         self.assertEqual(
-            {case["case"]: case["expected_categories"] for case in overlap["cases"]},
+            {probe["case"]: probe["expected_overlap_categories"] for probe in overlap_probes},
             manifest["negative_expected_categories"],
+        )
+        self.assertEqual(
+            [
+                "invalid-v2-relative-canonical-path",
+                "invalid-v2-relative-worktree-root",
+                "invalid-v2-relative-local-scope",
+            ],
+            manifest["invalid_v2_relative_overlap_cases"],
+        )
+        terminal = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
+        self.assertEqual(
+            {
+                probe["case"]: [item["category"] for item in probe["expected_overlaps"]]
+                for probe in terminal["overlap_scenario"]["probes"]
+            },
+            manifest["terminal_overlap_expected_categories"],
         )
         negative = load(ARTIFACT_ROOT / "negative" / "schema-and-authority-cases.json")
         expected_negative = [case["case"] for case in negative["document_cases"]]

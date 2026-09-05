@@ -100,5 +100,7 @@ sync remains plan-only in v0.2.0.
 
 The sealed CLH compatibility vectors include explicit READ/READ admission and
 READ/WRITE conflict in both directions so CLT can lock the access model without
-importing CLH source. The negative vector serializes its per-case materialization
-defaults and writer-binding rule for language-neutral reproduction.
+importing CLH source. The overlap vector serializes complete stored-entry
+scenarios, complete candidate documents, and the exact terminal repository-root
+file map; consumers do not clone a base, apply patches, generate defaults,
+resolve pointers, or calculate case values.

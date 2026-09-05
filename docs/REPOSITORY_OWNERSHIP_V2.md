@@ -227,9 +227,12 @@ release.
 - The compatibility artifact includes explicit READ/READ admission,
   READ/WRITE conflict in both directions, exact overlap, canonical candidate
   digest, schema lifecycle, and terminal release vectors. The negative vector
-  declares its versioned per-case materialization rules so non-Python consumers
-  reproduce the same stored/candidate documents. Consumers pin the serialized
-  artifact and manifest digest rather than importing CLH source.
+  stores complete stored-entry scenarios and complete candidate documents for
+  every probe. Terminal cases also enumerate each repository-root path and its
+  exact UTF-8 content, JSON document, or artifact-byte copy source. Consumers
+  perform no base cloning, patching, generated defaults, pointer resolution, or
+  case-index calculations. Consumers pin the serialized artifact and manifest
+  digest rather than importing CLH source.
 - CLH owns validation and ownership semantics; CLT may pin and validate the
   serialized contract but does not copy CLH runtime implementation.
 - DGF RepoHealth Writer Lease is not part of this execution path.
