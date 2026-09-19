@@ -398,17 +398,18 @@ class LeaseTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 acquire(pb, locks, repo_root=base)
 
-    def test_coordination_self_write_replacement_passes_and_can_release(self):
+    def test_coordination_self_write_successor_is_denied_until_positive_release(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             locks = base / "locks"
             candidate = self.admit_product_then_replace_with_coordination_self_write(base, locks)
             replacement_path = base / "replacement.json"
-            replace(replacement_path, locks, expected_generation=1, repo_root=base)
+            with self.assertRaisesRegex(RuntimeError, "CUSTODY_UNCERTAIN"):
+                replace(replacement_path, locks, expected_generation=1, repo_root=base)
             released = release(
                 candidate["lease_id"],
                 locks,
-                expected_generation=2,
+                expected_generation=1,
                 outcome_ref="runs/RUN-A/outcome.json",
             )
             stored = json.loads(released.read_text(encoding="utf-8"))
