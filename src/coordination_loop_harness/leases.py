@@ -1,3 +1,25 @@
+"""CLH lease acquire / replace / release — logical writer authority contract.
+
+# Writer-authority trust boundary (I0-A, LEAF-04)
+
+This module owns **logical** writer authority.  Physical OS write access is
+independent; CLH does not OS-revoke filesystem handles.  Authority is determined
+solely by the lease state and generation stored in the lock root.
+
+Writer-custody invariants (I0-SHARED-INTERFACE-CONTRACT §2, Rules F1):
+
+1. Positive release evidence is required before successor admission.
+2. CUSTODY_UNCERTAIN → deny successor (fail closed).
+3. Process death alone does NOT release authority.
+4. TTL alone does NOT release uncertain authority.
+5. Stale generation cannot release or replace the current writer (CAS enforced
+   in ``replace`` and ``release`` via ``expected_generation`` parameter).
+6. Only CLH mutates writer authority; CLF/CLE may supply evidence packages.
+
+See ``writer_custody.py`` for the explicit custody API
+(``record_release_evidence``, ``evaluate_successor_admission``, ``CustodyStatus``).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -194,6 +216,14 @@ def _validate_lease(
 
 
 def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = None) -> Path:
+    """Admit a new writer lease (generation=1) under the CLH custody contract.
+
+    Custody note: only generation-1 leases are admitted here.  The candidate
+    must carry a valid decision_ref.  No prior writer exists, so no release
+    evidence is required for generation-1 admission.  For successor admission
+    (generation > 1) use ``replace()``, which enforces the stale-generation
+    CAS and requires positive release evidence when the prior lease is ACTIVE.
+    """
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
     candidate = load_json(candidate_path)
@@ -240,6 +270,17 @@ def replace(
     expected_generation: int,
     repo_root: Path | None = None,
 ) -> Path:
+    """Replace an ACTIVE lease with a new generation (successor writer admission).
+
+    Custody note (I0-A contract):
+    - ``expected_generation`` enforces the stale-generation CAS: a stale
+      generation cannot replace the current writer (invariant 5).
+    - The current writer remains the authority until ``release()`` records a
+      RELEASED state.  Replace does NOT imply the prior writer has ceased
+      activity; callers must separately record release evidence via
+      ``writer_custody.record_release_evidence`` if needed.
+    - Process death of the prior writer does NOT constitute release evidence.
+    """
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
     candidate = load_json(candidate_path)
@@ -254,8 +295,8 @@ def replace(
         current = load_json(lease_path)
         if current.get("lease_id") != candidate["lease_id"]:
             raise RuntimeError("Lease file is not bound to the requested lease_id")
-        if current.get("state") != "ACTIVE":
-            raise RuntimeError("Only an ACTIVE lease can be replaced")
+        if current.get("state") not in {"ACTIVE", "RELEASED"}:
+            raise RuntimeError("Only an ACTIVE or positively RELEASED lease can be replaced")
         if current.get("generation") != expected_generation:
             raise RuntimeError(
                 f"Lease generation mismatch: expected {expected_generation}, "
@@ -265,6 +306,13 @@ def replace(
             raise ValueError("Replacement generation must equal expected_generation + 1")
         if candidate.get("state") != "ACTIVE":
             raise ValueError("Use release() to close a lease")
+        current_writer = current.get("active_writer_repository")
+        candidate_writer = candidate.get("active_writer_repository")
+        if current["state"] == "ACTIVE" and candidate_writer != current_writer:
+            raise RuntimeError(
+                "CUSTODY_UNCERTAIN: successor writer admission is denied while the prior "
+                "generation remains ACTIVE; process absence and TTL do not establish release"
+            )
         if not candidate.get("decision_ref"):
             raise ValueError("Lease replacement requires decision_ref")
         decision = verify_decision(
@@ -300,6 +348,20 @@ def release(
     expected_generation: int,
     outcome_ref: str,
 ) -> Path:
+    """Record the terminal RELEASED state for an ACTIVE lease.
+
+    Custody note (I0-A contract):
+    - ``expected_generation`` enforces the stale-generation CAS: a stale
+      generation cannot release the current writer (invariant 5).
+    - This function is the **only** path that transitions a lease to RELEASED
+      state; only CLH calls it (invariant 6).
+    - After this function returns, ``active_writer_repository`` is set to
+      ``None`` and the lease state becomes RELEASED, providing positive
+      release evidence for successor admission.
+    - If this function is NOT called (e.g. process crash), the lease remains
+      ACTIVE and ``evaluate_successor_admission`` will return
+      ``CUSTODY_UNCERTAIN`` (invariants 3 & 4).
+    """
     lease_id = require_safe_id(lease_id, "lease_id")
     lock_root = canonical_path(lock_root)
     lease_path = ensure_within(
