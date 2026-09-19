@@ -9,11 +9,35 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+WINDOWS_DEVICE_PATH_RE = re.compile(r"^(?:\\\\|//)[?.](?:\\|/)")
+WINDOWS_RESERVED_COMPONENT_RE = re.compile(
+    r"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$",
+    re.IGNORECASE,
+)
+WINDOWS_INVALID_COMPONENT_CHARACTERS = frozenset('<>:"|?*')
+REPOSITORY_RELATIVE_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+MOVEFILE_REPLACE_EXISTING = 0x1
+MOVEFILE_WRITE_THROUGH = 0x8
+MAX_SAFE_JSON_INTEGER = (1 << 53) - 1
+
+
+def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_json(value: str) -> Any:
+    raise ValueError(f"Non-finite JSON number is not permitted: {value}")
 
 
 def utc_now() -> str:
@@ -26,12 +50,25 @@ def require_safe_id(value: str, label: str = "identifier") -> str:
     return value
 
 
-def load_json(path: Path) -> dict[str, Any]:
+def load_json(
+    path: Path,
+    *,
+    expected_identity: tuple[int, int] | None = None,
+) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("r", encoding="utf-8") as handle:
+            if expected_identity is not None:
+                metadata = os.fstat(handle.fileno())
+                if (metadata.st_dev, metadata.st_ino) != expected_identity:
+                    raise ValueError(f"File identity changed before reading JSON: {path}")
+            data = json.load(
+                handle,
+                object_pairs_hook=_reject_duplicate_object_keys,
+                parse_constant=_reject_non_finite_json,
+            )
     except FileNotFoundError as exc:
         raise ValueError(f"JSON file not found: {path}") from exc
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         raise ValueError(f"Invalid JSON in {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"Expected a JSON object in {path}")
@@ -48,35 +85,117 @@ def write_json_atomic(
     if trusted_root is not None:
         trusted_root = canonical_path(trusted_root)
         path = ensure_within(path, trusted_root, label="atomic JSON target")
+    payload = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     if trusted_root is not None:
         path = ensure_within(path, trusted_root, label="atomic JSON target")
-    payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    if create_new:
-        with path.open("x", encoding="utf-8", newline="\n") as handle:
-            handle.write(payload)
-        return
-
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        if trusted_root is not None:
-            ensure_within(Path(tmp_name), trusted_root, label="atomic JSON temporary file")
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            fd = -1
+            if trusted_root is not None:
+                ensure_within(Path(tmp_name), trusted_root, label="atomic JSON temporary file")
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
+        if create_new:
+            # A direct ``open('x')`` exposes a partially written final record if
+            # the process dies between creation and the last write.  Linking a
+            # fully flushed same-directory temporary file gives us both
+            # create-if-absent semantics and an atomic visible publication.
+            # Failure is deliberately closed; there is no unsafe direct-write
+            # fallback.
+            if os.name == "nt":
+                _move_file_windows(Path(tmp_name), path, replace_existing=False)
+            else:
+                os.link(tmp_name, path)
+                os.unlink(tmp_name)
+                tmp_name = ""
+        else:
+            if os.name == "nt":
+                _move_file_windows(Path(tmp_name), path, replace_existing=True)
+            else:
+                os.replace(tmp_name, path)
+        _fsync_directory(path.parent)
     finally:
+        if fd >= 0:
+            os.close(fd)
         try:
-            os.unlink(tmp_name)
+            if tmp_name:
+                os.unlink(tmp_name)
         except FileNotFoundError:
             pass
 
 
+def _fsync_directory(path: Path) -> None:
+    """Sync POSIX directory metadata; Windows publication is write-through."""
+
+    if os.name != "posix":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _move_file_windows(source: Path, target: Path, *, replace_existing: bool) -> None:
+    """Atomically publish a flushed file using Windows write-through semantics."""
+
+    if os.name != "nt":
+        raise RuntimeError("Windows write-through move requested on a non-Windows platform")
+    import ctypes
+
+    flags = MOVEFILE_WRITE_THROUGH
+    if replace_existing:
+        flags |= MOVEFILE_REPLACE_EXISTING
+    move_file = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+    move_file.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    move_file.restype = ctypes.c_int
+    if not move_file(str(source), str(target), flags):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
 def canonical_json_bytes(data: object) -> bytes:
+    _validate_canonical_json_numbers(data)
     return (
-        json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
     ).encode("utf-8")
+
+
+def _validate_canonical_json_numbers(value: object) -> None:
+    """Keep canonical JSON in the portable exact-integer numeric domain."""
+
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if type(value) is int:
+        if not is_safe_json_integer(value):
+            raise ValueError(
+                "Canonical JSON integers must stay within the IEEE-754 safe integer range"
+            )
+        return
+    if isinstance(value, float):
+        raise ValueError("Canonical JSON does not permit floating-point numbers")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("Canonical JSON object keys must be strings")
+            _validate_canonical_json_numbers(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_canonical_json_numbers(item)
+
+
+def is_safe_json_integer(value: object) -> bool:
+    return type(value) is int and abs(value) <= MAX_SAFE_JSON_INTEGER
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -133,6 +252,110 @@ def canonical_repo(value: str) -> str:
     return value.strip("/").casefold()
 
 
+def canonical_repo_v2(value: str) -> str:
+    """Canonicalize a v2 repository identity defensively and case-insensitively."""
+
+    value = value.strip()
+    lowered = value.casefold()
+    for prefix in (
+        "https://github.com/",
+        "http://github.com/",
+        "ssh://git@github.com/",
+        "git@github.com:",
+    ):
+        if lowered.startswith(prefix):
+            value = value[len(prefix) :]
+            break
+    value = value.strip("/")
+    if value.casefold().endswith(".git"):
+        value = value[:-4]
+    return value.casefold()
+
+
+def is_absolute_scope(value: str) -> bool:
+    raw = value.strip()
+    return bool(raw) and (PureWindowsPath(raw).is_absolute() or PurePosixPath(raw).is_absolute())
+
+
+def is_v2_absolute_scope(value: str) -> bool:
+    """Classify the portable, alias-resistant v2 path grammar."""
+
+    raw = value.strip()
+    if (
+        not raw
+        or raw != value
+        or WINDOWS_DEVICE_PATH_RE.match(raw)
+        or raw.startswith(("\\\\", "//"))
+    ):
+        return False
+    if WINDOWS_DRIVE_PATH_RE.match(raw):
+        suffix = raw.replace("\\", "/")[3:]
+    elif raw.startswith("/") and "\\" not in raw:
+        suffix = raw[1:]
+    else:
+        return False
+    return not suffix or _portable_v2_path_components_are_safe(suffix.split("/"))
+
+
+def is_repository_relative_path_v2(value: str) -> bool:
+    """Validate one portable repository-relative reference used by a v2 lease."""
+
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or "\\" in value
+        or value.startswith("/")
+        or WINDOWS_DRIVE_PATH_RE.match(value)
+        or REPOSITORY_RELATIVE_PATH_RE.fullmatch(value) is None
+    ):
+        return False
+    return _portable_v2_path_components_are_safe(value.split("/"))
+
+
+def _portable_v2_path_components_are_safe(components: list[str]) -> bool:
+    return all(
+        component
+        and all(ord(character) >= 32 and ord(character) != 127 for character in component)
+        and not any(character in WINDOWS_INVALID_COMPONENT_CHARACTERS for character in component)
+        and component not in {".", ".."}
+        and not component.endswith((".", " "))
+        and WINDOWS_RESERVED_COMPONENT_RE.fullmatch(component) is None
+        for component in components
+    )
+
+
+def is_native_absolute_scope(value: str) -> bool:
+    """Return whether a portable absolute scope belongs to this host dialect."""
+
+    raw = value.strip()
+    if not is_v2_absolute_scope(raw):
+        return False
+    if os.name == "nt":
+        return bool(WINDOWS_DRIVE_PATH_RE.match(raw))
+    if os.name == "posix":
+        return raw.startswith("/") and not raw.startswith("//")
+    return False
+
+
+def windows_device_scope_alias(value: str) -> str | None:
+    """Map a recognized extended drive/UNC spelling for conservative scans only."""
+
+    raw = value.strip()
+    if not WINDOWS_DEVICE_PATH_RE.match(raw):
+        return None
+    normalized = raw.replace("\\", "/")
+    suffix = normalized[4:]
+    if WINDOWS_DRIVE_PATH_RE.match(suffix):
+        return suffix
+    if suffix.casefold().startswith("unc/"):
+        unc = suffix[4:]
+        parts = [part for part in unc.split("/") if part]
+        if len(parts) >= 2:
+            return "//" + "/".join(parts)
+    return None
+
+
 def canonical_scope(value: str) -> str:
     raw = value.strip()
     if not raw:
@@ -149,7 +372,7 @@ def canonical_scope(value: str) -> str:
     if normalized.startswith("/"):
         if os.name == "posix":
             return str(canonical_path(normalized))
-        return posixpath.normpath(normalized)
+        return posixpath.normpath(normalized).casefold()
     return str(canonical_path(normalized)).replace("\\", "/")
 
 
@@ -158,7 +381,9 @@ def paths_overlap(left: str | Path, right: str | Path) -> bool:
     right_scope = canonical_scope(str(right))
     if left_scope == right_scope:
         return True
-    return left_scope.startswith(right_scope + "/") or right_scope.startswith(left_scope + "/")
+    left_prefix = left_scope if left_scope.endswith("/") else left_scope + "/"
+    right_prefix = right_scope if right_scope.endswith("/") else right_scope + "/"
+    return left_scope.startswith(right_prefix) or right_scope.startswith(left_prefix)
 
 
 @contextmanager
@@ -185,15 +410,34 @@ def admission_mutex(lock_root: Path) -> Iterator[None]:
             "Inspect it manually; the harness will not delete it automatically."
         ) from exc
 
+    mutex_identity = mutex.lstat()
+    mutex_resolved = canonical_path(mutex, must_exist=True)
+    body_error: BaseException | None = None
     try:
-        write_json_atomic(
-            mutex / "owner.json",
-            {"pid": os.getpid(), "created_utc": utc_now()},
-            create_new=True,
-            trusted_root=mutex,
-        )
         yield
+    except BaseException as exc:
+        body_error = exc
+        raise
     finally:
-        for child in mutex.iterdir():
-            child.unlink()
-        mutex.rmdir()
+        cleanup_error: BaseException | None = None
+        try:
+            current_mutex = mutex.lstat()
+            if (
+                (current_mutex.st_dev, current_mutex.st_ino)
+                != (mutex_identity.st_dev, mutex_identity.st_ino)
+                or mutex.is_symlink()
+                or (hasattr(os.path, "isjunction") and os.path.isjunction(mutex))
+                or canonical_path(mutex, must_exist=True) != mutex_resolved
+            ):
+                raise RuntimeError("Lease admission mutex identity changed during use")
+            # The mutex deliberately remains empty. Removing an empty directory
+            # (or refusing a swapped non-directory/non-empty entry) cannot
+            # traverse and unlink attacker-controlled children.
+            mutex.rmdir()
+        except BaseException as exc:
+            cleanup_error = exc
+        if cleanup_error is not None:
+            if body_error is not None:
+                body_error.add_note(f"Lease admission mutex cleanup also failed: {cleanup_error}")
+            else:
+                raise cleanup_error

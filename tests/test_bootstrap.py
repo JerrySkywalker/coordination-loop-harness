@@ -358,56 +358,9 @@ class BootstrapTests(unittest.TestCase):
             provenance = json.loads((derived / ".coord-template.json").read_text(encoding="utf-8"))
             self.assertEqual(template_sha, provenance["template_exact_sha"])
 
-    def test_workflow_run_blocks_do_not_interpolate_dispatch_inputs(self):
-        workflow = (ROOT / ".github" / "workflows" / "bootstrap-derived-repository.yml").read_text(
-            encoding="utf-8"
-        )
-        lines = workflow.splitlines()
-        run_text: list[str] = []
-        index = 0
-        while index < len(lines):
-            line = lines[index]
-            indent = len(line) - len(line.lstrip())
-            if line.lstrip().startswith("run:"):
-                run_text.append(line.split("run:", 1)[1])
-                index += 1
-                while index < len(lines):
-                    child = lines[index]
-                    child_indent = len(child) - len(child.lstrip())
-                    if child.strip() and child_indent <= indent:
-                        break
-                    run_text.append(child)
-                    index += 1
-                continue
-            index += 1
-        joined = "\n".join(run_text)
-        self.assertNotIn("${{ inputs.", joined)
-        self.assertNotIn("${{ github.event.", joined)
-        self.assertIn("PROJECT_NAME: ${{ inputs.project_name }}", workflow)
-        self.assertIn('"$PROJECT_NAME"', joined)
-
-    def test_workflow_binds_checkout_and_template_provenance(self):
-        workflow = (ROOT / ".github" / "workflows" / "bootstrap-derived-repository.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("git rev-parse HEAD", workflow)
-        self.assertIn("git remote get-url origin", workflow)
-        self.assertNotIn("github.event.repository.template_repository", workflow)
-        self.assertIn("repository template-provenance", workflow)
-        self.assertIn('--target-repository "$TARGET_REPOSITORY"', workflow)
-        self.assertIn("existing_bootstrap_pr_count", workflow)
-        self.assertIn("An open bootstrap pull request already exists", workflow)
-
-    def test_workflow_contract(self):
-        workflow = (ROOT / ".github" / "workflows" / "bootstrap-derived-repository.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("contents: write", workflow)
-        self.assertIn("pull-requests: write", workflow)
-        self.assertIn("git switch -c", workflow)
-        self.assertIn("gh pr create", workflow)
-        self.assertIn("--draft", workflow)
-        self.assertNotIn("gh repo create", workflow)
-        self.assertNotIn("push origin main", workflow)
-        self.assertNotIn("PERSONAL_ACCESS_TOKEN", workflow)
+    def test_v5_has_no_active_clh_bootstrap_distribution_workflow(self):
+        workflow = ROOT / ".github" / "workflows" / "bootstrap-derived-repository.yml"
+        self.assertFalse(workflow.exists())
+        boundary = (ROOT / "docs" / "CLH_CLT_BOUNDARY.md").read_text(encoding="utf-8")
+        self.assertIn("CLT is the sole active starter", boundary)
+        self.assertIn("frozen v0.2/v0.3 local compatibility window", boundary)
