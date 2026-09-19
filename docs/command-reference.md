@@ -55,6 +55,9 @@ or authorization failures.
   `--repo-root` is required to validate v2 decisions and terminal outcome
   lineage; omission never falls back to the current directory and therefore
   reports `UNKNOWN_FAIL_CLOSED` for v2 evidence.
+- A matching writer identity, process death, or TTL expiry does not release an
+  unresolved v2 predecessor. An overlapping successor requires CLH's validated
+  terminal-release record and remains denied while custody is uncertain.
 
 ## Frozen local compatibility
 

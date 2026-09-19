@@ -59,6 +59,7 @@
   "source_import_prohibited": true,
   "dgf_writer_lease_dependency": false,
   "automatic_stale_reclaim": false,
+  "successor_custody_policy": "matching-writer-identity-native-process-absence-and-ttl-expiry-are-not-release-evidence; unresolved-active-predecessor-denies-overlapping-successor-until-clh-validated-terminal-release",
   "compatibility_window": {
     "producer": "CLH exact repo-set-lease.v2 artifact identity",
     "consumer": "CLT validates a pinned serialized schema and conformance set without importing CLH source",
@@ -87,15 +88,15 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "223a2d503b4561f40967aa8a5b0953ac82789395d1913045942534df0ebbbde3"
+      "sha256": "d342499cccd456021768da19e373f85118d07f41679f6e97208b40d7fc68f218"
     },
     {
       "path": "docs/command-reference.md",
-      "sha256": "8ff6b0a883f985801218a0fe523d0bc7ef24abe7f0cd306b46dfa9163084c6a9"
+      "sha256": "b38e31b31e6318f777b873d439c5c536459cd85370acc102beba159b544aad78"
     },
     {
       "path": "docs/leases.md",
-      "sha256": "aff7090bbafaf59b0a597c2fdf31bba11f815a23fb77185ceabbb4935cb651da"
+      "sha256": "361d66f29da1145776e1cab77a8278fc509c964a9fc5a5bf6c30ccbf0db21984"
     },
     {
       "path": "schemas/decision.v2.schema.json",
@@ -139,11 +140,11 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "9d3fb7c946e8e27039366146d6587a24a51be57478c9b6124811e798ba842177"
+      "sha256": "4e566cd6cbe6d146ffece6f1d861320772dae8da954fad66a266a9c9211bfed3"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "66950549ed66d41aee41b4f10b24202d6b5de3eeab0118dba678f384a9b1e845"
+      "sha256": "0dce293f853fe8e733f8b49c1d2e1b43d9f9fbc9dbef7e2afcecebf99f5302cd"
     },
     {
       "path": "tests/test_repository.py",
@@ -248,6 +249,6 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:1390c994afe53c242b43d9a338b45482435d77b18f648ecfd99a71f8dc276553",
-  "artifact_set_sha256": "1390c994afe53c242b43d9a338b45482435d77b18f648ecfd99a71f8dc276553"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:fc85b224ded7f9f082f376a0dae46eea522148c9987b5b3eb9476d967018276c",
+  "artifact_set_sha256": "fc85b224ded7f9f082f376a0dae46eea522148c9987b5b3eb9476d967018276c"
 }

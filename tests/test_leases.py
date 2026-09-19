@@ -483,6 +483,65 @@ class LeaseTests(unittest.TestCase):
             )
             acquire(pb, locks, repo_root=base)
 
+    def test_v2_same_writer_identity_cannot_bypass_unresolved_predecessor(self):
+        """An expired or absent native writer is not durable release evidence."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            repo = self.repository_worktree(base, "product", repository="example/product")
+            predecessor = self.authorize(
+                base,
+                self.lease_v2("RUN-A", "example/product", *repo),
+                "lease:acquire",
+            )
+            successor = self.authorize(
+                base,
+                self.lease_v2("RUN-B", "example/product", *repo),
+                "lease:acquire",
+            )
+            predecessor_path, successor_path = base / "predecessor.json", base / "successor.json"
+            self.write(predecessor_path, predecessor)
+            self.write(successor_path, successor)
+            active_path = acquire(predecessor_path, locks, repo_root=base)
+
+            # The serialized writer identity is deliberately identical.  No PID,
+            # process-death observation, or TTL observation is accepted as a
+            # release transition; the stale ACTIVE record remains the authority.
+            self.assertEqual(
+                predecessor["active_writer_repository"], successor["active_writer_repository"]
+            )
+            stale = observe(
+                "RUN-A",
+                locks,
+                observed_utc="2026-01-01T00:10:01Z",
+                repo_root=base,
+            )
+            self.assertEqual("STALE_ACTIVE", stale["ownership_status"])
+            self.assertFalse(stale["automatic_reclaim"])
+            before = active_path.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "overlap detected"):
+                acquire(successor_path, locks, repo_root=base)
+            self.assertEqual(before, active_path.read_bytes())
+
+            _, terminal_path = self.terminal_v2(
+                base,
+                predecessor,
+                authority="STALE_RECOVERY",
+                released_utc="2026-01-01T00:10:01Z",
+            )
+            release(
+                "RUN-A",
+                locks,
+                expected_generation=1,
+                candidate_path=terminal_path,
+                repo_root=base,
+            )
+            self.assertEqual(
+                "TERMINAL_RELEASED",
+                observe("RUN-A", locks, repo_root=base)["ownership_status"],
+            )
+            acquire(successor_path, locks, repo_root=base)
+
     def test_v2_normal_release_is_exactly_authorized_and_outcome_bound(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

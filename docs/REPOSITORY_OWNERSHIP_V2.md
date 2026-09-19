@@ -169,6 +169,12 @@ block overlapping writers. CLH never deletes, steals, or automatically reclaims
 it. A root coordinator failure therefore fails closed until a separately
 authorized recovery resolves the ownership record.
 
+Matching the prior `active_writer_repository` is not release evidence. An
+unresolved predecessor generation blocks an otherwise identical successor: a
+native process death, an absent process, and TTL expiry are observations only.
+Only CLH's exact terminal transition, including its generation-fenced decision
+and outcome lineage, makes the resource available to a successor writer.
+
 V2 completion supplies an exact terminal candidate. It preserves the active
 resource identity, advances generation by one, names a repository-relative
 outcome file and its SHA-256, and points to a distinct accepted release

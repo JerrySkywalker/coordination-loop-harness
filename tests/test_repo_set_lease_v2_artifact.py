@@ -726,6 +726,12 @@ class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
             manifest["lease_id_filename_policy"],
         )
         self.assertEqual(
+            "matching-writer-identity-native-process-absence-and-ttl-expiry-are-not-release-"
+            "evidence; unresolved-active-predecessor-denies-overlapping-successor-until-clh-"
+            "validated-terminal-release",
+            manifest["successor_custody_policy"],
+        )
+        self.assertEqual(
             "relative-path-claims-have-no-cwd-derived-overlap-identity",
             manifest["invalid_v2_scope_policy"],
         )

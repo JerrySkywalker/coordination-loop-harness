@@ -13,6 +13,12 @@ Admission uses an atomic mutex directory and create-new lease file. The harness 
 stale mutex automatically. Lease expansion uses a full replacement candidate, a required decision
 reference, and `expected_generation`.
 
+Writer identity continuity is not successor-release evidence. An ACTIVE v2
+predecessor remains authoritative even when a proposed successor serializes the
+same writer repository, the native process is absent, or its TTL has expired.
+Only the generation-fenced terminal release path makes overlapping resources
+available again; otherwise custody is uncertain and admission fails closed.
+
 Lease records used by overlap scanning, named observation, listing, replacement,
 and release must be exact case-sensitive direct children of the lock root. Those
 paths reject symbolic links, reparse points, hardlinks, and directory-entry
