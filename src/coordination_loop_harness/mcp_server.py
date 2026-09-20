@@ -8,7 +8,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from .leases import acquire, observe, release
-from .util import load_json
+from .util import canonical_json_bytes, load_json
 
 
 def _result(*, identity: dict[str, Any], disposition: str, **payload: Any) -> dict[str, Any]:
@@ -59,6 +59,7 @@ def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
             lease_id = load_json(candidate)["lease_id"]
             lease_path = acquire(candidate, lock_root, repo_root=repo_root)
             authority = observe(lease_id, lock_root, repo_root=repo_root)
+            serialized_authority = canonical_json_bytes(load_json(lease_path)).decode("utf-8")
         except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return _refusal(identity=identity, reason=str(exc))
         return _result(
@@ -66,6 +67,7 @@ def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
             disposition="OK",
             lease_path=str(lease_path),
             authority=authority,
+            serialized_authority=serialized_authority,
         )
 
     @server.tool(name="release_writer", structured_output=True)
