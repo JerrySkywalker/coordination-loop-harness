@@ -1827,6 +1827,33 @@ class LeaseTests(unittest.TestCase):
                 acquire(candidate_path, base / "locks", repo_root=base)
             self.assertFalse((base / "locks" / "RUN-A.lease.json").exists())
 
+    def test_v2_local_only_writer_requires_no_origin_and_admits_without_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = self.repository_worktree(base, "local-product", repository="example/product")
+            self.git(repo[0], "remote", "remove", "origin")
+            candidate = self.authorize(
+                base,
+                self.lease_v2("LOCAL-OK", "local/product", *repo),
+                "lease:acquire",
+            )
+            candidate_path = base / "local-ok.json"
+            self.write(candidate_path, candidate)
+            acquire(candidate_path, base / "locks", repo_root=base)
+            self.assertTrue((base / "locks" / "LOCAL-OK.lease.json").exists())
+
+            self.git(repo[0], "remote", "add", "origin", "https://github.com/example/product.git")
+            rejected = self.authorize(
+                base,
+                self.lease_v2("LOCAL-ORIGIN", "local/product", *repo),
+                "lease:acquire",
+            )
+            rejected_path = base / "local-origin.json"
+            self.write(rejected_path, rejected)
+            with self.assertRaisesRegex(ValueError, "local-only writer repository must not configure origin"):
+                acquire(rejected_path, base / "other-locks", repo_root=base)
+            self.assertFalse((base / "other-locks" / "LOCAL-ORIGIN.lease.json").exists())
+
     def test_v2_writer_filesystem_identity_change_fails_before_publication(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

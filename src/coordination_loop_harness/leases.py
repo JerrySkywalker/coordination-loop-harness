@@ -1026,6 +1026,7 @@ def _validate_writer_binding(
         return
     writer = writers[0]
     repository_identity_version = "v2" if schema_version == _V2_SCHEMA else "v1"
+    local_only = schema_version == _V2_SCHEMA and writer["repository"].startswith("local/")
     canonical_root = canonical_path(writer["canonical_path"], must_exist=True)
     writer_root = canonical_path(writer["worktree_root"], must_exist=True)
     branch = _writer_branch_name(_writer_branch_ref(data, writer))
@@ -1038,7 +1039,7 @@ def _validate_writer_binding(
         raise ValueError("Writer worktree must belong to the canonical repository common Git dir")
     canonical_result = verify_repository(
         canonical_root,
-        expected_origin=writer["repository"],
+        expected_origin=None if local_only else writer["repository"],
         repository_identity_version=repository_identity_version,
         offline=True,
     )
@@ -1048,7 +1049,7 @@ def _validate_writer_binding(
         )
     writer_result = verify_repository(
         writer_root,
-        expected_origin=writer["repository"],
+        expected_origin=None if local_only else writer["repository"],
         repository_identity_version=repository_identity_version,
         stable_branch=branch if schema_version == _V2_SCHEMA else None,
         expected_sha=writer["exact_sha"],
@@ -1056,6 +1057,8 @@ def _validate_writer_binding(
         offline=True,
     )
     findings = list(writer_result["findings"])
+    if local_only and (canonical_result["origin"] is not None or writer_result["origin"] is not None):
+        findings.append("local-only writer repository must not configure origin")
     if writer_result["tracked_dirty"]:
         findings.append("writer worktree has tracked changes")
     if writer_result["untracked"]:
