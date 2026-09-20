@@ -116,7 +116,7 @@
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "8a8e47eb21bed1a19f37775a8fb620d914a940cf6b777f00ced7df727d20ea2b"
+      "sha256": "01893755985959387c1181adcb9bffcc9d3622101e389892b54d8c3d3f0a45a9"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -140,7 +140,7 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "4e566cd6cbe6d146ffece6f1d861320772dae8da954fad66a266a9c9211bfed3"
+      "sha256": "e88cc52a23efde807aac5c6a44433cf799f9a86c6b330bfdf2d9038880974907"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
@@ -249,6 +249,6 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:fc85b224ded7f9f082f376a0dae46eea522148c9987b5b3eb9476d967018276c",
-  "artifact_set_sha256": "fc85b224ded7f9f082f376a0dae46eea522148c9987b5b3eb9476d967018276c"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:4c617d0977fc1073d44e3ae97693ec97f8c314b64330eb22b2055f6e49b8a551",
+  "artifact_set_sha256": "4c617d0977fc1073d44e3ae97693ec97f8c314b64330eb22b2055f6e49b8a551"
 }
