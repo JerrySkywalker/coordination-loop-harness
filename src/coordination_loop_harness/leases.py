@@ -1057,7 +1057,9 @@ def _validate_writer_binding(
         offline=True,
     )
     findings = list(writer_result["findings"])
-    if local_only and (canonical_result["origin"] is not None or writer_result["origin"] is not None):
+    if local_only and (
+        canonical_result["origin"] is not None or writer_result["origin"] is not None
+    ):
         findings.append("local-only writer repository must not configure origin")
     if writer_result["tracked_dirty"]:
         findings.append("writer worktree has tracked changes")

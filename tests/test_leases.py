@@ -1850,7 +1850,8 @@ class LeaseTests(unittest.TestCase):
             )
             rejected_path = base / "local-origin.json"
             self.write(rejected_path, rejected)
-            with self.assertRaisesRegex(ValueError, "local-only writer repository must not configure origin"):
+            message = "local-only writer repository must not configure origin"
+            with self.assertRaisesRegex(ValueError, message):
                 acquire(rejected_path, base / "other-locks", repo_root=base)
             self.assertFalse((base / "other-locks" / "LOCAL-ORIGIN.lease.json").exists())
 
