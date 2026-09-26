@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from mcp.server import MCPServer
 
-from .leases import acquire, observe, release
+from .leases import acquire, lease_candidate_sha256, observe, release
 from .util import canonical_json_bytes, load_json
 
 
@@ -56,11 +59,35 @@ def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
         identity = {"candidate_path": candidate_path}
         try:
             candidate = _repository_file(candidate_path, repo_root)
-            lease_id = load_json(candidate)["lease_id"]
-            lease_path = acquire(candidate, lock_root, repo_root=repo_root)
+            expected = load_json(candidate)
+            if expected.get("schema_version") != "coord.repo-set-lease.v2":
+                raise ValueError("MCP writer admission requires a v2 lease candidate")
+            expected_digest = lease_candidate_sha256(expected)
+            # The core opens its candidate path independently. Give it a private
+            # snapshot so a caller cannot swap the public path between reads.
+            descriptor, snapshot_name = tempfile.mkstemp(
+                prefix=".clh-mcp-candidate-", suffix=".json", dir=repo_root
+            )
+            snapshot = Path(snapshot_name)
+            try:
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(canonical_json_bytes(expected))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                lease_path = acquire(snapshot, lock_root, repo_root=repo_root)
+            finally:
+                # A failed cleanup must not hide a lease that was already created.
+                with suppress(OSError):
+                    snapshot.unlink(missing_ok=True)
+            lease_id = lease_path.name.removesuffix(".lease.json")
+            admitted = load_json(lease_path)
+            if admitted.get("lease_id") != lease_id:
+                raise ValueError("Acquired lease record identity does not match its path")
+            if lease_candidate_sha256(admitted) != expected_digest:
+                raise ValueError("Acquired lease record does not match the admitted candidate")
             authority = observe(lease_id, lock_root, repo_root=repo_root)
-            serialized_authority = canonical_json_bytes(load_json(lease_path)).decode("utf-8")
-        except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            serialized_authority = canonical_json_bytes(admitted).decode("utf-8")
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return _refusal(identity=identity, reason=str(exc))
         return _result(
             identity={"lease_id": lease_id},
