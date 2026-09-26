@@ -22,6 +22,7 @@ SCHEMA_BY_VERSION = {
     "coord.status.v2": "status.v2.schema.json",
     "coord.bundle-seal.v1": "bundle-seal.v1.schema.json",
     "coord.repo-set-lease.v1": "repo-set-lease.v1.schema.json",
+    "coord.repo-set-lease.v2": "repo-set-lease.v2.schema.json",
     "coord.template-provenance.v1": "template-provenance.v1.schema.json",
     "coord.harness-model.v1": "harness-model.v1.schema.json",
     "coord.profile-pack.v1": "profile-pack.v1.schema.json",
