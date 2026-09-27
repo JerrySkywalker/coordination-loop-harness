@@ -81,17 +81,24 @@ def write_json_atomic(
     *,
     create_new: bool = False,
     trusted_root: Path | None = None,
+    canonical: bool = False,
 ) -> None:
     if trusted_root is not None:
         trusted_root = canonical_path(trusted_root)
         path = ensure_within(path, trusted_root, label="atomic JSON target")
-    payload = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+    payload = (
+        canonical_json_bytes(data)
+        if canonical
+        else (json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode(
+            "utf-8"
+        )
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     if trusted_root is not None:
         path = ensure_within(path, trusted_root, label="atomic JSON target")
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        with os.fdopen(fd, "wb") as handle:
             fd = -1
             if trusted_root is not None:
                 ensure_within(Path(tmp_name), trusted_root, label="atomic JSON temporary file")

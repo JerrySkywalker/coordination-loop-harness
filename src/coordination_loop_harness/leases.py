@@ -1485,7 +1485,13 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
                 error_label="Lease decision",
                 sequence_label="Acquisition",
             )
-            write_json_atomic(lease_path, candidate, create_new=True, trusted_root=lock_root)
+            write_json_atomic(
+                lease_path,
+                candidate,
+                create_new=True,
+                trusted_root=lock_root,
+                canonical=candidate.get("schema_version") == _V2_SCHEMA,
+            )
     return lease_path
 
 
@@ -1594,7 +1600,12 @@ def replace(
                 entry_identity,
                 label="replacement lease file",
             )
-            write_json_atomic(lease_path, candidate, trusted_root=lock_root)
+            write_json_atomic(
+                lease_path,
+                candidate,
+                trusted_root=lock_root,
+                canonical=candidate.get("schema_version") == _V2_SCHEMA,
+            )
     return lease_path
 
 
@@ -1707,7 +1718,7 @@ def release(
                     entry_identity,
                     label="released lease file",
                 )
-                write_json_atomic(lease_path, candidate, trusted_root=lock_root)
+                write_json_atomic(lease_path, candidate, trusted_root=lock_root, canonical=True)
         elif current_schema == _V1_SCHEMA:
             if not isinstance(outcome_ref, str) or not outcome_ref:
                 raise ValueError("A legacy release requires outcome_ref")

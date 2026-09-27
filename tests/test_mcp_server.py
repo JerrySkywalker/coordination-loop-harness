@@ -13,6 +13,7 @@ from mcp import Client
 
 from coordination_loop_harness import mcp_server
 from coordination_loop_harness.mcp_server import create_server
+from coordination_loop_harness.util import canonical_json_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -152,6 +153,18 @@ class McpServerTests(unittest.TestCase):
                     )
                     self.assertEqual("OK", admitted.structured_content["disposition"])
                     self.assertEqual("MCP-RUN", admitted.structured_content["identity"]["lease_id"])
+                    authority_bytes = admitted.structured_content["serialized_authority"].encode(
+                        "utf-8"
+                    )
+                    custody_bytes = Path(admitted.structured_content["lease_path"]).read_bytes()
+                    self.assertEqual(canonical_json_bytes(active["MCP-RUN"]), authority_bytes)
+                    self.assertEqual(authority_bytes, custody_bytes)
+                    self.assertNotEqual(
+                        (json.dumps(active["MCP-RUN"], indent=2, ensure_ascii=False) + "\n").encode(
+                            "utf-8"
+                        ),
+                        authority_bytes,
+                    )
                     self.assertEqual(
                         "MCP-RUN",
                         json.loads(admitted.structured_content["serialized_authority"])["lease_id"],

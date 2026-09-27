@@ -279,6 +279,48 @@ class AtomicJsonTests(unittest.TestCase):
             ):
                 canonical_json_bytes({"value": value})
 
+    def test_canonical_atomic_write_preserves_bytes_and_create_new(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "record.json"
+            first = {"z": "héllo", "a": 1}
+            second = {"a": 2, "z": "world"}
+            write_json_atomic(target, first, create_new=True, trusted_root=root, canonical=True)
+            self.assertEqual(canonical_json_bytes(first), target.read_bytes())
+            with self.assertRaises(FileExistsError):
+                write_json_atomic(
+                    target, second, create_new=True, trusted_root=root, canonical=True
+                )
+            self.assertEqual(canonical_json_bytes(first), target.read_bytes())
+            with mock.patch(
+                "coordination_loop_harness.util.os.fsync",
+                side_effect=OSError("synthetic fsync failure"),
+            ):
+                with self.assertRaisesRegex(OSError, "synthetic fsync failure"):
+                    write_json_atomic(target, second, trusted_root=root, canonical=True)
+            self.assertEqual(canonical_json_bytes(first), target.read_bytes())
+            write_json_atomic(target, second, trusted_root=root, canonical=True)
+            self.assertEqual(canonical_json_bytes(second), target.read_bytes())
+            self.assertEqual([], list(root.glob("*.tmp")))
+
+    def test_canonical_atomic_write_enforces_trusted_root_and_numeric_domain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted = root / "trusted"
+            trusted.mkdir()
+            outside = root / "outside.json"
+            with self.assertRaisesRegex(ValueError, "within"):
+                write_json_atomic(outside, {"a": 1}, trusted_root=trusted, canonical=True)
+            self.assertFalse(outside.exists())
+            with self.assertRaisesRegex(ValueError, "safe integer"):
+                write_json_atomic(
+                    trusted / "invalid.json",
+                    {"a": MAX_SAFE_JSON_INTEGER + 1},
+                    trusted_root=trusted,
+                    canonical=True,
+                )
+            self.assertFalse((trusted / "invalid.json").exists())
+
     def test_create_new_preserves_existing_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

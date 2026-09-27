@@ -21,6 +21,7 @@ from coordination_loop_harness.leases import (
     replace,
 )
 from coordination_loop_harness.util import (
+    canonical_json_bytes,
     canonical_repo,
     canonical_scope,
     paths_overlap,
@@ -65,6 +66,61 @@ def lease(
 
 
 class LeaseTests(unittest.TestCase):
+    def test_v2_custody_bytes_are_canonical_through_acquire_expand_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            repo = self.repository_worktree(base, "product", repository="example/product")
+            active = self.lease_v2("RUN-A", "example/product", *repo)
+            active["expires_utc"] = "2026-09-04T01:00:00Z"
+            self.authorize(base, active, "lease:acquire")
+            active_candidate_path = base / "active.json"
+            self.write(active_candidate_path, active)
+            custody_path = acquire(active_candidate_path, locks, repo_root=base)
+            self.assertEqual(canonical_json_bytes(active), custody_path.read_bytes())
+            self.assertEqual(lease_candidate_sha256(active), sha256_file(custody_path))
+
+            expanded = json.loads(json.dumps(active))
+            expanded["generation"] = 2
+            expanded["decision_ref"] = None
+            self.authorize(
+                base, expanded, "lease:expand", previous_decision_ref=active["decision_ref"]
+            )
+            expanded_candidate_path = base / "expanded.json"
+            self.write(expanded_candidate_path, expanded)
+            replace(expanded_candidate_path, locks, expected_generation=1, repo_root=base)
+            self.assertEqual(canonical_json_bytes(expanded), custody_path.read_bytes())
+
+            terminal, terminal_path = self.terminal_v2(
+                base, expanded, authority="NORMAL", released_utc="2026-09-04T00:30:00Z"
+            )
+            with mock.patch(
+                "coordination_loop_harness.leases.utc_now", return_value="2026-09-04T00:30:01Z"
+            ):
+                release(
+                    "RUN-A",
+                    locks,
+                    expected_generation=2,
+                    candidate_path=terminal_path,
+                    repo_root=base,
+                )
+            self.assertEqual(canonical_json_bytes(terminal), custody_path.read_bytes())
+
+    def test_v1_custody_keeps_pretty_historical_serialization(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            candidate = self.authorize(base, lease("RUN-A", "example/product"), "lease:acquire")
+            candidate_path = base / "candidate.json"
+            self.write(candidate_path, candidate)
+            custody_path = acquire(candidate_path, base / "locks", repo_root=base)
+            self.assertEqual(
+                (
+                    json.dumps(candidate, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+                ).encode("utf-8"),
+                custody_path.read_bytes(),
+            )
+            self.assertNotEqual(canonical_json_bytes(candidate), custody_path.read_bytes())
+
     def write(self, path: Path, data: dict):
         path.write_text(json.dumps(data), encoding="utf-8")
 
