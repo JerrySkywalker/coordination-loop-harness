@@ -19,7 +19,9 @@ or authorization failures.
   `nameWithOwner` and the `github.com` repository URL.
 - `clh decision verify` requires an accepted/merged v2 decision that explicitly
   authorizes the requested action and has a complete, contiguous, bound predecessor
-  chain back to sequence 1.
+  chain back to sequence 1. V2 lease consumers add
+  `--require-candidate-digest`; generic verification keeps historical v1 lease
+  decisions structurally compatible and is not by itself v2 lease authority.
 - `clh bind-goal` writes a local-only Bound Goal package. Its default state root is
   `.coord-local`.
 - `clh render-attach` preserves the v0.1 durable attach renderer.
@@ -36,13 +38,32 @@ or authorization failures.
 
 ## Repository-set leases
 
-- `clh lease inspect` is non-mutating.
-- `clh lease acquire` requires a verified `lease:acquire` decision.
+- `clh lease inspect` is non-mutating. Supply `--repo-root` when the result must
+  prove and exclude valid v2 terminal records; omission deliberately yields
+  fail-closed evidence rather than inheriting the current directory.
+- `clh lease acquire` requires a verified `lease:acquire` decision. V2 also
+  requires an explicit `--repo-root`; omission never inherits the current directory.
 - `clh lease replace` requires `lease:expand` authorization and the next generation.
-- `clh lease release` uses an optimistic generation and outcome reference.
+  V2 also requires an explicit `--repo-root`.
+- `clh lease release` keeps the legacy v1 outcome-reference form. V2 requires
+  `--candidate` and `--repo-root`; the exact terminal candidate advances the
+  optimistic generation and carries a directly chained release decision plus
+  the repository-relative outcome hash.
 - `clh lease list` reads a local lock root.
+- `clh lease observe` reports `ACTIVE`, `STALE_ACTIVE`, `TERMINAL_RELEASED`, or
+  `UNKNOWN_FAIL_CLOSED` without reclaiming or mutating a lease. An explicit
+  `--repo-root` is required to validate v2 decisions and terminal outcome
+  lineage; omission never falls back to the current directory and therefore
+  reports `UNKNOWN_FAIL_CLOSED` for v2 evidence.
+- A matching writer identity, process death, or TTL expiry does not release an
+  unresolved v2 predecessor. An overlapping successor requires CLH's validated
+  terminal-release record and remains denied while custody is uncertain.
 
-## Derived repositories
+## Frozen local compatibility
+
+The following v0.2/v0.3 local interfaces are retained only for compatibility.
+They receive no new bootstrap features; active v5 starter/bootstrap/distribution
+behavior belongs to CLT. CLH has no active bootstrap PR workflow.
 
 - `clh bootstrap-repository` verifies the template checkout or GitHub template tree
   before recording provenance, then renders ownership-classified files. Use

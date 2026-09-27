@@ -50,7 +50,14 @@
       "items": {"type": "string", "minLength": 1}
     },
     "lease_id": {"type": ["string", "null"]},
-    "lease_generation": {"type": ["integer", "null"], "minimum": 1},
+    "lease_generation": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "lease_candidate_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "previous_decision_ref": {"type": ["string", "null"]},
     "markdown_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },

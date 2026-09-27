@@ -2,7 +2,7 @@
 
 Coordination Loop Harness separates four planes:
 
-1. **Conversation plane** — human owner and web architect discuss intent.
+1. **Conversation plane** — the human owner and replaceable planning or review interfaces discuss intent.
 2. **Durable coordination plane** — tracked requests, plans, decisions, status, outcomes, and audits.
 3. **Local execution plane** — worktrees, leases, raw logs, build output, and credentials.
 4. **Infrastructure plane** — deployment surfaces that always require a separate apply gate.
@@ -23,6 +23,8 @@ local CLI.
 5. Privileged transitions consume verified owner decisions, not reference strings.
 6. Local leases and raw evidence remain outside the sealed durable plane.
 
-Template bootstrap is a separate derived-repository plane. Ownership classes determine whether a
-file is template-managed, rendered once, derived-owned, or template-source-only. Synchronization
-stops at a non-mutating plan.
+The historical v0.2/v0.3 CLH template renderer classified files as
+template-managed, rendered once, derived-owned, or template-source-only and
+stopped synchronization at a non-mutating plan. That renderer is now a frozen
+compatibility surface. CLT is the sole active Minimum-V1 starter, bootstrap,
+and distribution product.

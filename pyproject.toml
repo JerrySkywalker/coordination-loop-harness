@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "Jerry Wang" }]
-dependencies = ["jsonschema>=4.23,<5"]
+dependencies = [
+    "jsonschema>=4.23,<5",
+    "mcp[cli]>=2,<3",
+]
 keywords = ["coordination", "human-in-the-loop", "agent-harness", "durable-workflow", "development-control", "git"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -23,6 +26,7 @@ classifiers = [
 
 [project.scripts]
 clh = "coordination_loop_harness.cli:main"
+clh-mcp = "coordination_loop_harness.mcp_server:main"
 
 [project.optional-dependencies]
 dev = ["build>=1.2", "ruff>=0.12"]

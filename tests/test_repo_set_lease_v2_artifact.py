@@ -1,0 +1,838 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import shutil
+import tempfile
+import unittest
+from datetime import UTC, datetime
+from pathlib import Path
+
+from coordination_loop_harness.decisions import verify_decision
+from coordination_loop_harness.leases import (
+    _validate_lease,
+    _validate_terminal_release,
+    find_overlaps,
+    lease_candidate_sha256,
+)
+from coordination_loop_harness.util import canonical_json_bytes, load_json
+from coordination_loop_harness.validation import validate_document
+
+ROOT = Path(__file__).resolve().parents[1]
+ARTIFACT_ROOT = ROOT / "compatibility" / "repo-set-lease.v2"
+EXPECTED_ARTIFACT_PATHS = [
+    "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
+    "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
+    "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
+    "compatibility/repo-set-lease.v2/positive/shared-program-disjoint-writers.json",
+    "compatibility/repo-set-lease.v2/positive/terminal-release.json",
+    "docs/REPOSITORY_OWNERSHIP_V2.md",
+    "docs/command-reference.md",
+    "docs/leases.md",
+    "schemas/decision.v2.schema.json",
+    "schemas/repo-set-lease.v2.schema.json",
+    "src/coordination_loop_harness/cli.py",
+    "src/coordination_loop_harness/decisions.py",
+    "src/coordination_loop_harness/leases.py",
+    "src/coordination_loop_harness/repository.py",
+    "src/coordination_loop_harness/util.py",
+    "src/coordination_loop_harness/validation.py",
+    "templates/decision.example.json",
+    "tests/test_cli.py",
+    "tests/test_leases.py",
+    "tests/test_repo_set_lease_v2_artifact.py",
+    "tests/test_repository.py",
+    "tests/test_util.py",
+]
+
+
+def load(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def lf_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def materialize_terminal_vector(
+    root: Path,
+    vector: dict,
+    *,
+    terminal: dict | None = None,
+    active_decision: dict | None = None,
+    release_decision: dict | None = None,
+    extra_previous_ref: str | None = None,
+) -> dict:
+    terminal = copy.deepcopy(terminal or vector["terminal_candidate"])
+    active_decision = copy.deepcopy(active_decision or vector["active_decision"])
+    release_decision = copy.deepcopy(release_decision or vector["release_decision"])
+    (root / "schemas").mkdir(parents=True)
+    shutil.copy2(ROOT / "schemas" / "decision.v2.schema.json", root / "schemas")
+    shutil.copy2(ROOT / "schemas" / "repo-set-lease.v2.schema.json", root / "schemas")
+    (root / "TEMPLATE_VERSION").write_text("test\n", encoding="utf-8")
+
+    active_path = root / terminal["decision_ref"]
+    active_path.parent.mkdir(parents=True, exist_ok=True)
+    active_path.write_text(json.dumps(active_decision), encoding="utf-8")
+    active_path.with_suffix(".md").write_text(
+        vector["active_decision_markdown_utf8"], encoding="utf-8", newline=""
+    )
+    if extra_previous_ref is not None:
+        previous_path = root / extra_previous_ref
+        previous_path.parent.mkdir(parents=True, exist_ok=True)
+        previous_path.write_text(json.dumps(active_decision), encoding="utf-8")
+        previous_path.with_suffix(".md").write_text(
+            vector["active_decision_markdown_utf8"], encoding="utf-8", newline=""
+        )
+
+    release_path = root / terminal["release_decision_ref"]
+    release_path.parent.mkdir(parents=True, exist_ok=True)
+    release_path.write_text(json.dumps(release_decision), encoding="utf-8")
+    release_path.with_suffix(".md").write_text(
+        vector["release_decision_markdown_utf8"], encoding="utf-8", newline=""
+    )
+    outcome_path = root / terminal["outcome_ref"]
+    outcome_path.parent.mkdir(parents=True, exist_ok=True)
+    outcome_path.write_text(vector["outcome_utf8"], encoding="utf-8", newline="")
+    return terminal
+
+
+def materialize_repository_root_files(root: Path, entries: list[dict]) -> None:
+    for entry in entries:
+        relative = entry["path"]
+        path = Path(relative)
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or path.is_absolute()
+            or ".." in path.parts
+            or "\\" in relative
+        ):
+            raise ValueError(f"invalid serialized repository-root path: {relative!r}")
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if set(entry) == {"path", "content_utf8"}:
+            target.write_text(entry["content_utf8"], encoding="utf-8", newline="")
+        elif set(entry) == {"path", "json_document"}:
+            target.write_text(
+                json.dumps(entry["json_document"], ensure_ascii=False) + "\n",
+                encoding="utf-8",
+                newline="",
+            )
+        elif set(entry) == {"path", "copy_artifact_bytes_from"}:
+            source_relative = entry["copy_artifact_bytes_from"]
+            source = Path(source_relative)
+            if (
+                not isinstance(source_relative, str)
+                or not source_relative
+                or source.is_absolute()
+                or ".." in source.parts
+                or "\\" in source_relative
+            ):
+                raise ValueError(f"invalid serialized artifact path: {source_relative!r}")
+            shutil.copy2(ROOT / source, target)
+        else:
+            raise ValueError(f"unsupported serialized repository-root entry: {entry!r}")
+
+
+class RepositorySetLeaseV2ArtifactTests(unittest.TestCase):
+    def test_candidate_digest_vector_is_language_neutral_and_exact(self):
+        vector = load(ARTIFACT_ROOT / "positive" / "candidate-digest.json")
+        probe_bytes = canonical_json_bytes(vector["canonicalization_probe"])
+        self.assertEqual(vector["canonicalization_probe_json_utf8"].encode(), probe_bytes)
+        self.assertEqual(
+            vector["canonicalization_probe_sha256"], hashlib.sha256(probe_bytes).hexdigest()
+        )
+        self.assertEqual([], validate_document(vector["candidate"], ROOT))
+        self.assertEqual(
+            vector["candidate_sha256"],
+            lease_candidate_sha256(vector["candidate"]),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rejected.json"
+            for raw in vector["rejected_json_utf8"]:
+                with self.subTest(raw=raw):
+                    path.write_text(raw, encoding="utf-8", newline="")
+                    with self.assertRaises(ValueError):
+                        load_json(path)
+        for value in vector["rejected_canonical_values"]:
+            with self.subTest(canonical_value=value), self.assertRaises(ValueError):
+                canonical_json_bytes(value)
+
+    def test_terminal_release_vector_binds_decision_and_outcome(self):
+        vector = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
+        terminal = vector["terminal_candidate"]
+        decision = vector["release_decision"]
+        self.assertEqual([], validate_document(terminal, ROOT))
+        self.assertEqual([], validate_document(decision, ROOT))
+        self.assertEqual(
+            terminal["outcome_sha256"],
+            hashlib.sha256(vector["outcome_utf8"].encode("utf-8")).hexdigest(),
+        )
+        self.assertEqual(
+            decision["markdown_sha256"],
+            hashlib.sha256(vector["release_decision_markdown_utf8"].encode("utf-8")).hexdigest(),
+        )
+        self.assertEqual(
+            decision["lease_candidate_sha256"],
+            lease_candidate_sha256(terminal),
+        )
+        self.assertEqual(terminal["decision_ref"], decision["previous_decision_ref"])
+        self.assertEqual("lease:release", decision["authorized_actions"][0])
+        self.assertEqual("NORMAL", terminal["release_authority"])
+        active = vector["active_candidate"]
+        active_decision = vector["active_decision"]
+        self.assertEqual([], validate_document(active, ROOT))
+        self.assertEqual([], validate_document(active_decision, ROOT))
+        self.assertEqual(active_decision["lease_candidate_sha256"], lease_candidate_sha256(active))
+        self.assertEqual(
+            active_decision["markdown_sha256"],
+            hashlib.sha256(vector["active_decision_markdown_utf8"].encode()).hexdigest(),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            materialize_terminal_vector(root, vector)
+            _validate_terminal_release(
+                terminal,
+                root,
+                observed_now=datetime(2026, 9, 4, 0, 30, tzinfo=UTC),
+            )
+
+    def test_terminal_overlap_vector_reserves_identity_and_releases_resources(self):
+        vector = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
+        self.assertEqual("repo-set-lease-v2-terminal-release.v2", vector["schema_version"])
+        scenario = vector["overlap_scenario"]
+        self.assertEqual(
+            {
+                "scenario",
+                "operation",
+                "repository_root",
+                "lock_root_relative",
+                "repository_root_files",
+                "stored_entry",
+                "probes",
+            },
+            set(scenario),
+        )
+        self.assertEqual("valid-terminal-overlap", scenario["scenario"])
+        self.assertEqual("FIND_OVERLAPS", scenario["operation"])
+        self.assertEqual("CREATE_EMPTY_DIRECTORY", scenario["repository_root"])
+        self.assertEqual("locks", scenario["lock_root_relative"])
+        files = {entry["path"]: entry for entry in scenario["repository_root_files"]}
+        self.assertEqual(
+            [
+                "TEMPLATE_VERSION",
+                "decisions/TERMINAL-VECTOR/DEC-1.json",
+                "decisions/TERMINAL-VECTOR/DEC-1.md",
+                "decisions/TERMINAL-VECTOR/DEC-2.json",
+                "decisions/TERMINAL-VECTOR/DEC-2.md",
+                "runs/TERMINAL-VECTOR/outcome.json",
+                "schemas/decision.v2.schema.json",
+                "schemas/repo-set-lease.v2.schema.json",
+            ],
+            list(files),
+        )
+        self.assertEqual(
+            vector["active_decision"],
+            files["decisions/TERMINAL-VECTOR/DEC-1.json"]["json_document"],
+        )
+        self.assertEqual(
+            vector["active_decision_markdown_utf8"],
+            files["decisions/TERMINAL-VECTOR/DEC-1.md"]["content_utf8"],
+        )
+        self.assertEqual(
+            vector["release_decision"],
+            files["decisions/TERMINAL-VECTOR/DEC-2.json"]["json_document"],
+        )
+        self.assertEqual(
+            vector["release_decision_markdown_utf8"],
+            files["decisions/TERMINAL-VECTOR/DEC-2.md"]["content_utf8"],
+        )
+        self.assertEqual(
+            vector["outcome_utf8"],
+            files["runs/TERMINAL-VECTOR/outcome.json"]["content_utf8"],
+        )
+        for schema_path in (
+            "schemas/decision.v2.schema.json",
+            "schemas/repo-set-lease.v2.schema.json",
+        ):
+            self.assertEqual(schema_path, files[schema_path]["copy_artifact_bytes_from"])
+        stored = scenario["stored_entry"]
+        self.assertEqual({"filename", "validation", "document"}, set(stored))
+        self.assertEqual("VALID_TERMINAL", stored["validation"])
+        self.assertEqual("TERMINAL-VECTOR.lease.json", stored["filename"])
+        self.assertEqual(vector["terminal_candidate"], stored["document"])
+        self.assertEqual(
+            {"case", "candidate_validation", "candidate_document", "expected_overlaps"},
+            set(scenario["probes"][0]),
+        )
+        self.assertEqual(
+            {"case", "candidate_validation", "candidate_document", "expected_overlaps"},
+            set(scenario["probes"][1]),
+        )
+        self.assertEqual(
+            ["valid-terminal-casefold-id-refusal", "valid-terminal-resource-release"],
+            [probe["case"] for probe in scenario["probes"]],
+        )
+        probes = {probe["case"]: probe for probe in scenario["probes"]}
+        casefold_candidate = probes["valid-terminal-casefold-id-refusal"]["candidate_document"]
+        self.assertEqual("terminal-vector", casefold_candidate["lease_id"])
+        self.assertNotEqual(
+            stored["document"]["repositories"][0]["repository"],
+            casefold_candidate["repositories"][0]["repository"],
+        )
+        reuse_candidate = probes["valid-terminal-resource-release"]["candidate_document"]
+        self.assertNotEqual(
+            stored["document"]["lease_id"].casefold(),
+            reuse_candidate["lease_id"].casefold(),
+        )
+        for field in ("repository", "canonical_path", "worktree_root", "branch_ref"):
+            self.assertEqual(
+                stored["document"]["repositories"][0][field],
+                reuse_candidate["repositories"][0][field],
+            )
+        self.assertEqual(
+            ["V:/state/coordination-loop/terminal-vector"],
+            stored["document"]["local_scopes"],
+        )
+        self.assertEqual(
+            stored["document"]["local_scopes"],
+            reuse_candidate["local_scopes"],
+        )
+        self.assertEqual(
+            ["host:terminal-vector"],
+            stored["document"]["infrastructure_scopes"],
+        )
+        self.assertEqual(
+            stored["document"]["infrastructure_scopes"],
+            reuse_candidate["infrastructure_scopes"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            materialize_repository_root_files(root, scenario["repository_root_files"])
+            terminal = stored["document"]
+            _validate_terminal_release(
+                terminal,
+                root,
+                observed_now=datetime(2026, 9, 4, 0, 30, tzinfo=UTC),
+            )
+            locks = root / scenario["lock_root_relative"]
+            locks.mkdir()
+            (locks / stored["filename"]).write_text(
+                json.dumps(stored["document"], ensure_ascii=False) + "\n",
+                encoding="utf-8",
+                newline="",
+            )
+            for probe in scenario["probes"]:
+                with self.subTest(case=probe["case"]):
+                    self.assertEqual("SCHEMA_ACCEPT", probe["candidate_validation"])
+                    self.assertEqual([], validate_document(probe["candidate_document"], ROOT))
+                    overlaps = find_overlaps(
+                        probe["candidate_document"],
+                        locks,
+                        repo_root=root,
+                    )
+                    serialized = [
+                        {
+                            "lease_id": overlap.lease_id,
+                            "category": overlap.category,
+                            "value": overlap.value,
+                        }
+                        for overlap in overlaps
+                    ]
+                    self.assertEqual(probe["expected_overlaps"], serialized)
+
+    def test_schema_enforces_portable_lifecycle_and_writer_counts(self):
+        base = load(ARTIFACT_ROOT / "positive" / "shared-program-disjoint-writers.json")["left"]
+        cases: list[tuple[str, dict]] = []
+
+        active_with_terminal = copy.deepcopy(base)
+        active_with_terminal["outcome_sha256"] = "a" * 64
+        cases.append(("active-with-terminal-field", active_with_terminal))
+
+        writer_missing = copy.deepcopy(base)
+        writer_missing["repositories"][0]["mode"] = "READ"
+        cases.append(("active-writer-without-write", writer_missing))
+
+        writer_duplicated = copy.deepcopy(base)
+        second = copy.deepcopy(writer_duplicated["repositories"][0])
+        second["repository"] = "example/second"
+        second["canonical_path"] = "V:/src/second"
+        second["worktree_root"] = "V:/src/_worktrees/second"
+        second["branch_ref"] = "refs/heads/agent/second"
+        second["exact_sha"] = "2" * 40
+        writer_duplicated["repositories"].append(second)
+        cases.append(("two-writers", writer_duplicated))
+
+        null_writer = copy.deepcopy(base)
+        null_writer["active_writer_repository"] = None
+        cases.append(("write-with-null-active-writer", null_writer))
+
+        released_with_writer = copy.deepcopy(base)
+        released_with_writer.update(
+            {
+                "state": "RELEASED",
+                "generation": 2,
+                "release_decision_ref": "decisions/CLH-WRITER/DEC-2.json",
+                "release_authority": "NORMAL",
+                "released_utc": "2026-09-04T00:30:00Z",
+                "outcome_ref": "runs/CLH-WRITER/outcome.json",
+                "outcome_sha256": "a" * 64,
+            }
+        )
+        cases.append(("released-with-active-writer", released_with_writer))
+
+        extra_property = copy.deepcopy(base)
+        extra_property["unexpected"] = True
+        cases.append(("extra-property", extra_property))
+
+        for name, document in cases:
+            with self.subTest(case=name):
+                self.assertTrue(validate_document(document, ROOT))
+
+    def test_negative_schema_and_authority_vectors_are_executable(self):
+        vector = load(ARTIFACT_ROOT / "negative" / "schema-and-authority-cases.json")
+        self.assertEqual(
+            {
+                "schema_version",
+                "encoding",
+                "document_cases",
+                "decision_cases",
+                "positive_authority_cases",
+                "authority_cases",
+            },
+            set(vector),
+        )
+        self.assertEqual("repo-set-lease-v2-negative-semantics.v2", vector["schema_version"])
+        serialized = json.dumps(vector, ensure_ascii=False)
+        for forbidden in ('"bases"', '"base"', '"patch"', "#/"):
+            self.assertNotIn(forbidden, serialized)
+
+        def serialized_keys(value: object) -> set[str]:
+            if isinstance(value, dict):
+                return set(value).union(
+                    *(serialized_keys(item) for item in value.values()),
+                )
+            if isinstance(value, list):
+                return set().union(*(serialized_keys(item) for item in value))
+            return set()
+
+        self.assertTrue(
+            {
+                "bases",
+                "base",
+                "patch",
+                "patches",
+                "pointer",
+                "pointers",
+                "default",
+                "defaults",
+                "generated",
+                "case_index",
+            }.isdisjoint(serialized_keys(vector))
+        )
+
+        for case in vector["document_cases"]:
+            with self.subTest(case=case["case"]):
+                self.assertEqual(
+                    {
+                        "case",
+                        "candidate_document",
+                        "expected_layer",
+                        "repository_root_files",
+                    },
+                    set(case),
+                )
+                document = case["candidate_document"]
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    materialize_repository_root_files(root, case["repository_root_files"])
+                    errors = validate_document(document, root)
+                    if case["expected_layer"] == "SCHEMA_REJECT":
+                        self.assertTrue(errors)
+                    else:
+                        self.assertEqual([], errors)
+                        with self.assertRaises(ValueError):
+                            _validate_lease(document, root)
+
+        for case in vector["decision_cases"]:
+            with self.subTest(case=case["case"]):
+                self.assertEqual(
+                    {
+                        "case",
+                        "decision_document",
+                        "decision_document_ref",
+                        "expected_layer",
+                        "terminal_candidate",
+                        "verification_request",
+                        "repository_root_files",
+                    },
+                    set(case),
+                )
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    materialize_repository_root_files(root, case["repository_root_files"])
+                    serialized_documents = {
+                        entry["path"]: entry["json_document"]
+                        for entry in case["repository_root_files"]
+                        if "json_document" in entry
+                    }
+                    self.assertEqual(
+                        case["decision_document"],
+                        serialized_documents[case["decision_document_ref"]],
+                    )
+                    errors = validate_document(case["decision_document"], root)
+                    if case["expected_layer"] == "SCHEMA_REJECT":
+                        self.assertTrue(errors)
+                    else:
+                        self.assertEqual([], errors)
+                    request = case["verification_request"]
+                    result = verify_decision(
+                        root,
+                        root / request["decision_ref"],
+                        run_id=request["run_id"],
+                        action=request["action"],
+                        lease_id=request["lease_id"],
+                        lease_generation=request["lease_generation"],
+                        require_candidate_digest=request["require_candidate_digest"],
+                    )
+                self.assertFalse(result["ok"])
+                if case["case"] == "decision-predecessor-sequence-integral-float":
+                    self.assertIn(
+                        "decision predecessor sequence must be a positive safe integer",
+                        result["findings"],
+                    )
+
+        self.assertTrue(vector["positive_authority_cases"])
+        for case in vector["positive_authority_cases"]:
+            with self.subTest(case=case["case"]):
+                self.assertEqual(
+                    {
+                        "case",
+                        "terminal_candidate",
+                        "observed_utc",
+                        "repository_root_files",
+                        "expected",
+                    },
+                    set(case),
+                )
+                self.assertEqual("AUTHORIZATION_ACCEPT", case["expected"])
+                terminal = case["terminal_candidate"]
+                self.assertEqual([], validate_document(terminal, ROOT))
+                _validate_lease(terminal, ROOT, allow_coordination_self_write=True)
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    materialize_repository_root_files(root, case["repository_root_files"])
+                    _validate_terminal_release(
+                        terminal,
+                        root,
+                        observed_now=datetime.fromisoformat(
+                            case["observed_utc"].replace("Z", "+00:00")
+                        ),
+                    )
+
+        self.assertTrue(vector["authority_cases"])
+        for case in vector["authority_cases"]:
+            with self.subTest(case=case["case"]):
+                self.assertEqual(
+                    {
+                        "case",
+                        "terminal_candidate",
+                        "observed_utc",
+                        "repository_root_files",
+                        "expected",
+                    },
+                    set(case),
+                )
+                self.assertEqual("AUTHORIZATION_REJECT", case["expected"])
+                terminal = case["terminal_candidate"]
+                self.assertEqual([], validate_document(terminal, ROOT))
+                _validate_lease(terminal, ROOT, allow_coordination_self_write=True)
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    materialize_repository_root_files(root, case["repository_root_files"])
+                    with self.assertRaises(ValueError):
+                        _validate_terminal_release(
+                            terminal,
+                            root,
+                            observed_now=datetime.fromisoformat(
+                                case["observed_utc"].replace("Z", "+00:00")
+                            ),
+                        )
+
+    def test_shared_program_disjoint_writer_vector_has_no_overlap(self):
+        vector = load(ARTIFACT_ROOT / "positive" / "shared-program-disjoint-writers.json")
+        self.assertEqual([], validate_document(vector["left"], ROOT))
+        self.assertEqual([], validate_document(vector["right"], ROOT))
+        for side in ("left", "right"):
+            self.assertEqual(
+                ["example/shared-observer"],
+                [
+                    item["repository"]
+                    for item in vector[side]["repositories"]
+                    if item["mode"] == "READ"
+                ],
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            locks = Path(tmp)
+            (locks / "CLH-WRITER.lease.json").write_text(
+                json.dumps(vector["left"]), encoding="utf-8"
+            )
+            overlaps = find_overlaps(vector["right"], locks)
+        self.assertEqual(
+            vector["expected_overlap_categories"], [item.category for item in overlaps]
+        )
+
+    def test_negative_vectors_cover_exact_resource_conflicts(self):
+        vector = load(ARTIFACT_ROOT / "negative" / "overlap-cases.json")
+        self.assertEqual(
+            {"schema_version", "operation", "scenarios"},
+            set(vector),
+        )
+        self.assertEqual("repo-set-lease-v2-overlap-cases.v2", vector["schema_version"])
+        self.assertEqual("FIND_OVERLAPS", vector["operation"])
+        scenario_names: set[str] = set()
+        case_names: set[str] = set()
+        case_documents: dict[str, tuple[dict, dict]] = {}
+        for scenario in vector["scenarios"]:
+            self.assertEqual(
+                {"scenario", "repository_root", "stored_entry", "probes"},
+                set(scenario),
+            )
+            self.assertNotIn(scenario["scenario"], scenario_names)
+            scenario_names.add(scenario["scenario"])
+            self.assertEqual("OMIT", scenario["repository_root"])
+            stored = scenario["stored_entry"]
+            self.assertEqual({"filename", "validation", "document"}, set(stored))
+            self.assertEqual(
+                f"{stored['document']['lease_id']}.lease.json",
+                stored["filename"],
+            )
+            stored_errors = validate_document(stored["document"], ROOT)
+            if stored["validation"] == "SCHEMA_ACCEPT":
+                self.assertEqual([], stored_errors)
+            else:
+                self.assertEqual("SCHEMA_REJECT", stored["validation"])
+                self.assertTrue(stored_errors)
+            for probe in scenario["probes"]:
+                self.assertEqual(
+                    {
+                        "case",
+                        "candidate_validation",
+                        "candidate_document",
+                        "expected_overlap_categories",
+                    },
+                    set(probe),
+                )
+                self.assertNotIn(probe["case"], case_names)
+                case_names.add(probe["case"])
+                candidate_errors = validate_document(probe["candidate_document"], ROOT)
+                if probe["candidate_validation"] == "SCHEMA_ACCEPT":
+                    self.assertEqual([], candidate_errors)
+                else:
+                    self.assertEqual("SCHEMA_REJECT", probe["candidate_validation"])
+                    self.assertTrue(candidate_errors)
+                with tempfile.TemporaryDirectory() as tmp:
+                    locks = Path(tmp)
+                    (locks / stored["filename"]).write_text(
+                        json.dumps(stored["document"], ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                        newline="",
+                    )
+                    categories = [
+                        item.category for item in find_overlaps(probe["candidate_document"], locks)
+                    ]
+                self.assertEqual(probe["expected_overlap_categories"], categories)
+                case_documents[probe["case"]] = (
+                    stored["document"],
+                    probe["candidate_document"],
+                )
+
+        self.assertEqual(
+            {
+                "active-write-base",
+                "active-read-base",
+                "invalid-v2-relative-canonical-path",
+                "invalid-v2-relative-worktree-root",
+                "invalid-v2-relative-local-scope",
+            },
+            scenario_names,
+        )
+        left_reader, right_reader = case_documents["reader-versus-reader"]
+        self.assertEqual("READ", left_reader["repositories"][0]["mode"])
+        self.assertIsNone(left_reader["active_writer_repository"])
+        self.assertEqual("READ", right_reader["repositories"][0]["mode"])
+        self.assertIsNone(right_reader["active_writer_repository"])
+        writer, reader = case_documents["writer-versus-reader"]
+        self.assertEqual("WRITE", writer["repositories"][0]["mode"])
+        self.assertEqual("example/clh", writer["active_writer_repository"])
+        self.assertEqual("READ", reader["repositories"][0]["mode"])
+        self.assertIsNone(reader["active_writer_repository"])
+        reader, writer = case_documents["reader-versus-writer"]
+        self.assertEqual("READ", reader["repositories"][0]["mode"])
+        self.assertIsNone(reader["active_writer_repository"])
+        self.assertEqual("WRITE", writer["repositories"][0]["mode"])
+        self.assertEqual("example/clh", writer["active_writer_repository"])
+
+        for case_name, field in (
+            ("invalid-v2-relative-canonical-path", "canonical_path"),
+            ("invalid-v2-relative-worktree-root", "worktree_root"),
+        ):
+            stored, candidate = case_documents[case_name]
+            stored_binding = stored["repositories"][0]
+            candidate_binding = candidate["repositories"][0]
+            self.assertEqual("example/a", stored_binding["repository"])
+            self.assertEqual(stored_binding["repository"], candidate_binding["repository"])
+            self.assertEqual(".", stored_binding[field])
+            self.assertEqual(".", candidate_binding[field])
+            self.assertNotEqual(stored_binding["branch_ref"], candidate_binding["branch_ref"])
+
+        stored, candidate = case_documents["invalid-v2-relative-local-scope"]
+        self.assertEqual(["."], stored["local_scopes"])
+        self.assertEqual(["."], candidate["local_scopes"])
+        self.assertEqual(
+            stored["repositories"][0]["repository"],
+            candidate["repositories"][0]["repository"],
+        )
+        self.assertNotEqual(
+            stored["repositories"][0]["branch_ref"],
+            candidate["repositories"][0]["branch_ref"],
+        )
+
+    def test_manifest_hashes_exact_artifact_set(self):
+        manifest = load(ARTIFACT_ROOT / "artifact-manifest.json")
+        paths = [item["path"] for item in manifest["artifacts"]]
+        self.assertEqual(EXPECTED_ARTIFACT_PATHS, paths)
+        self.assertEqual(len(paths), len(set(paths)))
+        for path in paths:
+            self.assertFalse(Path(path).is_absolute())
+            self.assertNotIn("..", Path(path).parts)
+            self.assertNotIn("\\", path)
+        self.assertEqual(
+            ["candidate-digest", "shared-program-disjoint-writers", "terminal-release"],
+            manifest["positive_cases"],
+        )
+        self.assertEqual(
+            [
+                "reader-versus-reader",
+                "writer-versus-reader",
+                "reader-versus-writer",
+            ],
+            manifest["access_mode_cases"],
+        )
+        self.assertEqual(
+            "cooperating-admission-reserves-ascii-casefold-collisions-even-after-valid-terminal-release",
+            manifest["lease_id_filename_policy"],
+        )
+        self.assertEqual(
+            "matching-writer-identity-native-process-absence-and-ttl-expiry-are-not-release-"
+            "evidence; unresolved-active-predecessor-denies-overlapping-successor-until-clh-"
+            "validated-terminal-release",
+            manifest["successor_custody_policy"],
+        )
+        self.assertEqual(
+            "relative-path-claims-have-no-cwd-derived-overlap-identity",
+            manifest["invalid_v2_scope_policy"],
+        )
+        self.assertEqual(
+            "missing-or-unknown-schema-relative-path-claims-have-no-cwd-derived-overlap-"
+            "identity; recognized-v1-remains-historical",
+            manifest["unrecognized_schema_scope_policy"],
+        )
+        self.assertEqual(
+            "repo-set-lease-v2-overlap-cases.v2",
+            manifest["overlap_vector_schema"],
+        )
+        self.assertEqual(
+            "repo-set-lease-v2-negative-semantics.v2",
+            manifest["schema_authority_vector_schema"],
+        )
+        self.assertEqual(
+            "repo-set-lease-v2-terminal-release.v2",
+            manifest["terminal_release_vector_schema"],
+        )
+        self.assertEqual(
+            "complete-stored-scenarios-complete-candidate-probes-and-explicit-repository-root-files-no-patches-defaults-indexes-document-pointers-or-generated-values",
+            manifest["overlap_vector_encoding"],
+        )
+        self.assertEqual(
+            "complete-candidate-and-decision-documents-with-explicit-repository-root-files-no-bases-patches-defaults-document-pointers-or-generated-case-values",
+            manifest["schema_authority_vector_encoding"],
+        )
+        self.assertEqual(
+            "explicit-relative-path-with-exact-utf8-content-json-document-or-artifact-byte-copy",
+            manifest["terminal_fixture_encoding"],
+        )
+        self.assertEqual(
+            ["case-only-lease-id", "valid-terminal-casefold-id-refusal"],
+            manifest["lease_id_filename_cases"],
+        )
+        self.assertEqual(
+            ["reader-versus-reader", "valid-terminal-resource-release"],
+            manifest["zero_overlap_cases"],
+        )
+        self.assertEqual(
+            [
+                "repository",
+                "branch",
+                "canonical_path",
+                "worktree_root",
+                "local_scope",
+                "infrastructure_scope",
+            ],
+            manifest["terminal_resource_release_claim_types"],
+        )
+        records: list[bytes] = []
+        for item in manifest["artifacts"]:
+            path = ROOT / item["path"]
+            digest = lf_digest(path)
+            self.assertEqual(item["sha256"], digest, item["path"])
+            records.append(item["path"].encode() + b"\0" + digest.encode() + b"\n")
+        artifact_set_sha256 = hashlib.sha256(b"".join(records)).hexdigest()
+        self.assertEqual(manifest["artifact_set_sha256"], artifact_set_sha256)
+        self.assertEqual(
+            manifest["producer_artifact_id"],
+            f"repo-set-lease.v2+sha256:{artifact_set_sha256}",
+        )
+
+        overlap = load(ARTIFACT_ROOT / "negative" / "overlap-cases.json")
+        overlap_probes = [
+            probe for scenario in overlap["scenarios"] for probe in scenario["probes"]
+        ]
+        self.assertEqual(
+            {probe["case"]: probe["expected_overlap_categories"] for probe in overlap_probes},
+            manifest["negative_expected_categories"],
+        )
+        self.assertEqual(
+            [
+                "invalid-v2-relative-canonical-path",
+                "invalid-v2-relative-worktree-root",
+                "invalid-v2-relative-local-scope",
+            ],
+            manifest["invalid_v2_relative_overlap_cases"],
+        )
+        terminal = load(ARTIFACT_ROOT / "positive" / "terminal-release.json")
+        self.assertEqual(
+            {
+                probe["case"]: [item["category"] for item in probe["expected_overlaps"]]
+                for probe in terminal["overlap_scenario"]["probes"]
+            },
+            manifest["terminal_overlap_expected_categories"],
+        )
+        negative = load(ARTIFACT_ROOT / "negative" / "schema-and-authority-cases.json")
+        expected_negative = [case["case"] for case in negative["document_cases"]]
+        expected_negative.extend(case["case"] for case in negative["decision_cases"])
+        expected_negative.extend(case["case"] for case in negative["authority_cases"])
+        self.assertEqual(
+            expected_negative,
+            manifest["negative_schema_and_authority_cases"],
+        )
+        self.assertEqual(
+            [case["case"] for case in negative["positive_authority_cases"]],
+            manifest["positive_authority_cases"],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
