@@ -548,7 +548,10 @@ class LeaseTests(unittest.TestCase):
                     failures=failures,
                     **kwargs,
                 ):
-                    if phase == "publish" and Path(target_path) == locks / "ARCHIVE.lease.json":
+                    if (
+                        phase == "publish"
+                        and Path(target_path).resolve() == (locks / "ARCHIVE.lease.json").resolve()
+                    ):
                         failures.append(phase)
                         raise OSError("synthetic successor publication failure")
                     return operation(source_path, target_path, *args, **kwargs)
