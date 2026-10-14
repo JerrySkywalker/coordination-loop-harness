@@ -1556,8 +1556,23 @@ def _preserve_previous_candidate(lock_root: Path, current: dict[str, Any]) -> No
             raise ValueError("Previous lease candidate archive identity changed during reading")
     else:
         write_json_atomic(archive, current, trusted_root=lock_root, canonical=True, create_new=True)
-        _archive_entry_state(lock_root, archive)
-        if archive.read_bytes() != expected:
+        published = _archive_entry_state(lock_root, archive)
+        if not published or published[-1][0] != str(archive):
+            raise ValueError("Previous lease candidate archive publication is incomplete")
+        published_by_path = {entry[0]: entry for entry in published}
+        for ancestor in before:
+            # New children legitimately change directory timestamps/size. Their
+            # identities and kinds must still match the pre-publication ancestry.
+            observed = published_by_path.get(ancestor[0])
+            if observed is None or observed[1:4] != ancestor[1:4]:
+                raise ValueError("Previous lease archive ancestry changed during publication")
+        descriptor = os.open(archive, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as handle:
+            metadata = os.fstat(handle.fileno())
+            if (metadata.st_dev, metadata.st_ino) != published[-1][1:3]:
+                raise ValueError("Previous lease archive entry changed before final read")
+            stored = handle.read()
+        if stored != expected or _archive_entry_state(lock_root, archive) != published:
             raise ValueError("Previous lease candidate archive publication changed")
 
 

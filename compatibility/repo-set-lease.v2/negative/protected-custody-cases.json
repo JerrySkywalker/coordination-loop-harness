@@ -3325,6 +3325,192 @@
         "schema_version": "coord.repo-set-lease.v2",
         "state": "ACTIVE"
       }
+    },
+    {
+      "current_candidate": {
+        "active_writer_repository": "example/clh",
+        "coordination_repository": "example/program",
+        "created_utc": "2026-09-04T00:00:00Z",
+        "decision_ref": "decisions/DIGEST-VECTOR/DEC-2.json",
+        "expires_utc": "2099-01-01T00:00:00Z",
+        "generation": 2,
+        "heartbeat_utc": "2026-09-04T00:00:00Z",
+        "infrastructure_scopes": [],
+        "lease_id": "DIGEST-VECTOR",
+        "local_scopes": [],
+        "outcome_ref": null,
+        "outcome_sha256": null,
+        "owner": "implementer-vector",
+        "release_authority": null,
+        "release_decision_ref": null,
+        "released_utc": null,
+        "repositories": [
+          {
+            "branch_ref": "refs/heads/agent/vector",
+            "canonical_path": "V:/src/coordination-loop-harness",
+            "exact_sha": "1111111111111111111111111111111111111111",
+            "mode": "WRITE",
+            "repository": "example/clh",
+            "worktree_root": "V:/src/_worktrees/vector/coordination-loop-harness"
+          }
+        ],
+        "run_id": "DIGEST-VECTOR",
+        "schema_version": "coord.repo-set-lease.v2",
+        "state": "ACTIVE"
+      },
+      "expected": "REFUSE",
+      "expected_generation": 2,
+      "id": "predecessor-identity-run_id",
+      "lease_id": "DIGEST-VECTOR",
+      "lock_root_files": [
+        {
+          "json_document": {
+            "active_writer_repository": "example/clh",
+            "coordination_repository": "example/program",
+            "created_utc": "2026-09-04T00:00:00Z",
+            "decision_ref": "decisions/DIGEST-VECTOR/DEC-1.json",
+            "expires_utc": "2099-01-01T00:00:00Z",
+            "generation": 1,
+            "heartbeat_utc": "2026-09-04T00:00:00Z",
+            "infrastructure_scopes": [],
+            "lease_id": "DIGEST-VECTOR",
+            "local_scopes": [],
+            "outcome_ref": null,
+            "outcome_sha256": null,
+            "owner": "implementer-vector",
+            "release_authority": null,
+            "release_decision_ref": null,
+            "released_utc": null,
+            "repositories": [
+              {
+                "branch_ref": "refs/heads/agent/vector",
+                "canonical_path": "V:/src/coordination-loop-harness",
+                "exact_sha": "1111111111111111111111111111111111111111",
+                "mode": "WRITE",
+                "repository": "example/clh",
+                "worktree_root": "V:/src/_worktrees/vector/coordination-loop-harness"
+              }
+            ],
+            "run_id": "OTHER-RUN",
+            "schema_version": "coord.repo-set-lease.v2",
+            "state": "ACTIVE"
+          },
+          "path": "lease-history/DIGEST-VECTOR/1.json"
+        }
+      ],
+      "noncanonical_stored_bytes": false,
+      "repository_root_files": [
+        {
+          "json_document": {
+            "authorized_actions": [
+              "lease:acquire"
+            ],
+            "conditions": [],
+            "decision": "Authorize synthetic conformance candidate.",
+            "decision_id": "DEC-1",
+            "decision_type": "SCOPE_CHANGE",
+            "issued_by": "synthetic-operator",
+            "issued_utc": "2026-09-04T00:00:00Z",
+            "lease_candidate_sha256": "30d016220cd4539f8a94e2b97bf8aacecae8e3f3766f22dcf22abeb5f341316a",
+            "lease_generation": 1,
+            "lease_id": "DIGEST-VECTOR",
+            "markdown_sha256": "589e2ec9466c01f072f38b5730b0068fce7a98694adba10aa75c6d2fe57f9a77",
+            "previous_decision_ref": null,
+            "rationale": "No Owner authentication or operational protection.",
+            "run_id": "OTHER-RUN",
+            "schema_version": "coord.decision.v2",
+            "scope": [
+              "example/clh",
+              "example/clh:refs/heads/agent/vector",
+              "example/program",
+              "v:/src/_worktrees/vector/coordination-loop-harness",
+              "v:/src/coordination-loop-harness"
+            ],
+            "sequence": 1,
+            "status": "ACCEPTED"
+          },
+          "path": "decisions/DIGEST-VECTOR/DEC-1.json"
+        },
+        {
+          "content_utf8": "# Synthetic protected-custody Decision 1\n",
+          "path": "decisions/DIGEST-VECTOR/DEC-1.md"
+        },
+        {
+          "json_document": {
+            "authorized_actions": [
+              "lease:expand"
+            ],
+            "conditions": [],
+            "decision": "Authorize synthetic conformance candidate.",
+            "decision_id": "DEC-2",
+            "decision_type": "SCOPE_CHANGE",
+            "issued_by": "synthetic-operator",
+            "issued_utc": "2026-09-04T00:00:00Z",
+            "lease_candidate_sha256": "be7905e6fc503afcccf9b9f1f373277e4a21ede068870016ce11966bb9445444",
+            "lease_generation": 2,
+            "lease_id": "DIGEST-VECTOR",
+            "markdown_sha256": "5e3bb16aec65a2114b8a6006e3b9eabda18b42c80ad2a2716e67d16c04f3f4d7",
+            "previous_decision_ref": "decisions/DIGEST-VECTOR/DEC-1.json",
+            "rationale": "No Owner authentication or operational protection.",
+            "run_id": "DIGEST-VECTOR",
+            "schema_version": "coord.decision.v2",
+            "scope": [
+              "example/clh",
+              "example/clh:refs/heads/agent/vector",
+              "example/program",
+              "v:/src/_worktrees/vector/coordination-loop-harness",
+              "v:/src/coordination-loop-harness"
+            ],
+            "sequence": 2,
+            "status": "ACCEPTED"
+          },
+          "path": "decisions/DIGEST-VECTOR/DEC-2.json"
+        },
+        {
+          "content_utf8": "# Synthetic protected-custody Decision 2\n",
+          "path": "decisions/DIGEST-VECTOR/DEC-2.md"
+        },
+        {
+          "json_document": {
+            "issuer_uid": 0,
+            "policy": "OPERATOR_FIXED_CLH_ONLY_ISSUANCE",
+            "product_owner": "CLH",
+            "schema_version": "clh-protected-issuance-root.v1"
+          },
+          "path": "CLH-ISSUANCE-ROOT.json"
+        }
+      ],
+      "supplied_candidate": {
+        "active_writer_repository": "example/clh",
+        "coordination_repository": "example/program",
+        "created_utc": "2026-09-04T00:00:00Z",
+        "decision_ref": "decisions/DIGEST-VECTOR/DEC-2.json",
+        "expires_utc": "2099-01-01T00:00:00Z",
+        "generation": 2,
+        "heartbeat_utc": "2026-09-04T00:00:00Z",
+        "infrastructure_scopes": [],
+        "lease_id": "DIGEST-VECTOR",
+        "local_scopes": [],
+        "outcome_ref": null,
+        "outcome_sha256": null,
+        "owner": "implementer-vector",
+        "release_authority": null,
+        "release_decision_ref": null,
+        "released_utc": null,
+        "repositories": [
+          {
+            "branch_ref": "refs/heads/agent/vector",
+            "canonical_path": "V:/src/coordination-loop-harness",
+            "exact_sha": "1111111111111111111111111111111111111111",
+            "mode": "WRITE",
+            "repository": "example/clh",
+            "worktree_root": "V:/src/_worktrees/vector/coordination-loop-harness"
+          }
+        ],
+        "run_id": "DIGEST-VECTOR",
+        "schema_version": "coord.repo-set-lease.v2",
+        "state": "ACTIVE"
+      }
     }
   ],
   "operational_positive": "HOLD_ROOT_PROTECTION_UNPROVEN",

@@ -477,6 +477,108 @@ class LeaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "HOLD_ROOT_PROTECTION_UNPROVEN"):
                     leases_module.ProtectedCustodyVerifier._protected_tree(root)
 
+    def test_c1_new_archive_read_is_bound_to_publication_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate = {"lease_id": "ARCHIVE", "generation": 1, "payload": "exact"}
+            real_state = leases_module._archive_entry_state
+            calls = 0
+
+            def mutate_record(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                value = real_state(*args, **kwargs)
+                if calls == 3:
+                    last = list(value[-1])
+                    last[2] += 1
+                    value = (*value[:-1], tuple(last))
+                return value
+
+            with mock.patch.object(
+                leases_module, "_archive_entry_state", side_effect=mutate_record
+            ):
+                with self.assertRaisesRegex(ValueError, "publication changed"):
+                    leases_module._preserve_previous_candidate(root, candidate)
+            self.assertEqual(3, calls)
+
+    def test_c1_successor_fsync_and_publication_faults_preserve_custody_and_cleanup(self):
+        for phase in ("fsync", "publish"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                repository = self.repository_worktree(base, "product", repository="local/fixture")
+                self.git(repository[0], "remote", "remove", "origin")
+                current = self.lease_v2("ARCHIVE", "local/fixture", *repository)
+                current["expires_utc"] = "2099-01-01T00:00:00Z"
+                self.authorize(base, current, "lease:acquire")
+                source = base / "candidate.json"
+                self.write(source, current)
+                locks = base / "locks"
+                acquire(source, locks, repo_root=base)
+                previous = canonical_json_bytes(current)
+                successor = dict(current, generation=2)
+                self.authorize(
+                    base, successor, "lease:expand", previous_decision_ref=current["decision_ref"]
+                )
+                self.write(source, successor)
+                real_fsync = os.fsync
+                real_replace = os.replace
+                real_move = util_module._move_file_windows
+                failures = []
+
+                def fsync(fd, phase=phase, locks=locks, failures=failures, real_fsync=real_fsync):
+                    metadata = os.fstat(fd)
+                    is_successor = any(
+                        (item.stat().st_dev, item.stat().st_ino)
+                        == (metadata.st_dev, metadata.st_ino)
+                        for item in locks.glob(".ARCHIVE.lease.json.*.tmp")
+                    )
+                    result = real_fsync(fd)
+                    if phase == "fsync" and is_successor:
+                        failures.append(phase)
+                        raise OSError("synthetic successor fsync failure")
+                    return result
+
+                def publish(
+                    operation,
+                    source_path,
+                    target_path,
+                    *args,
+                    phase=phase,
+                    locks=locks,
+                    failures=failures,
+                    **kwargs,
+                ):
+                    if phase == "publish" and Path(target_path) == locks / "ARCHIVE.lease.json":
+                        failures.append(phase)
+                        raise OSError("synthetic successor publication failure")
+                    return operation(source_path, target_path, *args, **kwargs)
+
+                with (
+                    mock.patch.object(util_module.os, "fsync", side_effect=fsync),
+                    mock.patch.object(
+                        util_module.os,
+                        "replace",
+                        side_effect=lambda *args, operation=real_replace, route=publish, **kwargs: (
+                            route(operation, *args, **kwargs)
+                        ),
+                    ),
+                    mock.patch.object(
+                        util_module,
+                        "_move_file_windows",
+                        side_effect=lambda *args, operation=real_move, route=publish, **kwargs: (
+                            route(operation, *args, **kwargs)
+                        ),
+                    ),
+                ):
+                    with self.assertRaisesRegex(OSError, "synthetic successor"):
+                        replace(source, locks, expected_generation=1, repo_root=base)
+                self.assertEqual([phase], failures)
+                self.assertEqual(previous, (locks / "ARCHIVE.lease.json").read_bytes())
+                self.assertEqual(previous, (locks / "lease-history/ARCHIVE/1.json").read_bytes())
+                self.assertFalse((locks / ".repo-set-admission.mutex").exists())
+                self.assertFalse(list(locks.rglob("*.tmp")))
+                self.assertFalse(list((repository[0] / ".git").rglob("*.lock")))
+
     def test_c1_caller_owned_root_never_confers_custody(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
