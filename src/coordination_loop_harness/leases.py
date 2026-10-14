@@ -1503,6 +1503,64 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
     return lease_path
 
 
+def _archive_entry_state(root: Path, target: Path) -> tuple:
+    """Check the original lexical archive entry before any resolving operation."""
+    relative = target.relative_to(root)
+    current = root
+    records = []
+    for index, name in enumerate(relative.parts):
+        current = current / name
+        try:
+            entry = current.lstat()
+        except FileNotFoundError:
+            return tuple(records)
+        reparse = getattr(entry, "st_file_attributes", 0) & 0x400
+        final = index == len(relative.parts) - 1
+        if (
+            stat.S_ISLNK(entry.st_mode)
+            or reparse
+            or (final and (not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1))
+            or (not final and not stat.S_ISDIR(entry.st_mode))
+        ):
+            raise ValueError("Previous lease candidate archive or ancestry is aliased")
+        records.append(
+            (
+                str(current),
+                entry.st_dev,
+                entry.st_ino,
+                entry.st_mode,
+                entry.st_size,
+                entry.st_mtime_ns,
+                entry.st_ctime_ns,
+                entry.st_nlink,
+            )
+        )
+    return tuple(records)
+
+
+def _preserve_previous_candidate(lock_root: Path, current: dict[str, Any]) -> None:
+    archive = lock_root / "lease-history" / current["lease_id"] / f"{current['generation']}.json"
+    before = _archive_entry_state(lock_root, archive)
+    ensure_within(archive, lock_root, label="immutable previous lease candidate")
+    expected = canonical_json_bytes(current)
+    if archive.exists():
+        descriptor = os.open(archive, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as handle:
+            metadata = os.fstat(handle.fileno())
+            if (metadata.st_dev, metadata.st_ino) != before[-1][1:3]:
+                raise ValueError("Previous lease candidate archive identity changed before reading")
+            stored = handle.read()
+        if stored != expected:
+            raise ValueError("Previous lease candidate archive does not match current custody")
+        if _archive_entry_state(lock_root, archive) != before:
+            raise ValueError("Previous lease candidate archive identity changed during reading")
+    else:
+        write_json_atomic(archive, current, trusted_root=lock_root, canonical=True, create_new=True)
+        _archive_entry_state(lock_root, archive)
+        if archive.read_bytes() != expected:
+            raise ValueError("Previous lease candidate archive publication changed")
+
+
 def replace(
     candidate_path: Path,
     lock_root: Path,
@@ -1609,25 +1667,7 @@ def replace(
                 label="replacement lease file",
             )
             if current.get("schema_version") == _V2_SCHEMA:
-                archive = ensure_within(
-                    lock_root
-                    / "lease-history"
-                    / current["lease_id"]
-                    / f"{current['generation']}.json",
-                    lock_root,
-                    label="immutable previous lease candidate",
-                )
-                if archive.exists():
-                    if archive.is_symlink() or archive.stat().st_nlink != 1:
-                        raise ValueError("Previous lease candidate archive is aliased")
-                    if archive.read_bytes() != canonical_json_bytes(current):
-                        raise ValueError(
-                            "Previous lease candidate archive does not match current custody"
-                        )
-                else:
-                    write_json_atomic(
-                        archive, current, trusted_root=lock_root, canonical=True, create_new=True
-                    )
+                _preserve_previous_candidate(lock_root, current)
                 _assert_lease_entry_unchanged(
                     lock_root, lease_path, entry_identity, label="archived replacement lease file"
                 )
@@ -1942,7 +1982,7 @@ class ProtectedCustodyVerifier:
 
     @staticmethod
     def _protected_tree(root: Path) -> dict[str, tuple]:
-        if os.name != "posix" or os.geteuid() == 0:
+        if os.name != "posix" or not callable(getattr(os, "listxattr", None)) or os.geteuid() == 0:
             raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: privileged or unsupported observer")
         entries = [*reversed(root.parents), root]
         identities = {}
@@ -1976,22 +2016,39 @@ class ProtectedCustodyVerifier:
                 entry.st_ctime_ns,
                 entry.st_nlink,
             )
+            return entry
 
         for entry in entries:
             check(entry)
         if not root.is_dir():
             raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: authority root is not a directory")
 
-        def traversal_error(error: OSError) -> None:
-            raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: authority traversal failed") from error
-
-        for parent, directories, files in os.walk(root, followlinks=False, onerror=traversal_error):
-            for name in [*directories, *files]:
-                check(Path(parent) / name)
-                if len(identities) > 4096:
-                    raise ValueError(
-                        "HOLD_ROOT_PROTECTION_UNPROVEN: authority inventory exceeds bound"
-                    )
+        pending = [root]
+        while pending:
+            parent = pending.pop()
+            try:
+                with os.scandir(parent) as contents:
+                    for discovered in contents:
+                        classified = discovered.stat(follow_symlinks=False)
+                        path = parent / discovered.name
+                        observed = check(path)
+                        if (classified.st_dev, classified.st_ino) != (
+                            observed.st_dev,
+                            observed.st_ino,
+                        ):
+                            raise ValueError(
+                                "HOLD_ROOT_PROTECTION_UNPROVEN: entry identity changed"
+                            )
+                        if stat.S_ISDIR(observed.st_mode):
+                            pending.append(path)
+                        if len(identities) > 4096:
+                            raise ValueError(
+                                "HOLD_ROOT_PROTECTION_UNPROVEN: authority inventory exceeds bound"
+                            )
+            except OSError as exc:
+                raise ValueError(
+                    "HOLD_ROOT_PROTECTION_UNPROVEN: authority traversal failed"
+                ) from exc
         return identities
 
     def verify(self, lease_id: str, expected_generation: int, serialized: bytes) -> dict[str, Any]:
@@ -2006,7 +2063,7 @@ class ProtectedCustodyVerifier:
         # issuance. An unprotected string/filename is explicitly insufficient.
         issuer_path = self._repo_root / "CLH-ISSUANCE-ROOT.json"
         issuer = load_json(issuer_path)
-        if issuer != {
+        if type(issuer.get("issuer_uid")) is not int or issuer != {
             "schema_version": "clh-protected-issuance-root.v1",
             "product_owner": "CLH",
             "issuer_uid": 0,
@@ -2049,6 +2106,7 @@ class ProtectedCustodyVerifier:
             sequence_label="Protected current",
         )
         next_decision_ref = current["decision_ref"]
+        next_candidate = current
         for generation in range(expected_generation - 1, 0, -1):
             next_decision = load_json(self._repo_root / next_decision_ref)
             archive = ensure_within(
@@ -2066,6 +2124,17 @@ class ProtectedCustodyVerifier:
                 or next_decision.get("previous_decision_ref") != previous.get("decision_ref")
             ):
                 raise ValueError("Protected historical candidate does not match Decision ancestry")
+            for field in (
+                "schema_version",
+                "run_id",
+                "owner",
+                "created_utc",
+                "coordination_repository",
+            ):
+                if previous.get(field) != next_candidate.get(field):
+                    raise ValueError(
+                        f"Protected lineage changes replacement identity field: {field}"
+                    )
             _validate_lease(previous, self._repo_root, allow_coordination_self_write=True)
             previous_path = ensure_within(
                 self._repo_root / previous["decision_ref"],
@@ -2082,6 +2151,7 @@ class ProtectedCustodyVerifier:
                 sequence_label="Protected historical",
             )
             next_decision_ref = previous["decision_ref"]
+            next_candidate = previous
         _assert_lease_entry_unchanged(
             self._lock_root, path, identity, label="protected current lease"
         )

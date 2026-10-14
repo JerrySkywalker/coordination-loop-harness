@@ -267,7 +267,10 @@ class LeaseTests(unittest.TestCase):
                                 case["lease_id"], case["expected_generation"], serialized
                             )
 
-    @unittest.skipUnless(os.name == "posix", "POSIX prototype protection fault test")
+    @unittest.skipUnless(
+        os.name == "posix" and callable(getattr(os, "listxattr", None)),
+        "protection backend unavailable; runtime remains HOLD",
+    )
     def test_c1_protection_inventory_refuses_alias_hardlink_acl_and_traversal_errors(self):
         from types import SimpleNamespace
 
@@ -317,11 +320,10 @@ class LeaseTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "ACL"):
                         leases_module.ProtectedCustodyVerifier._protected_tree(root)
 
-                def failed_walk(*args, **kwargs):
-                    kwargs["onerror"](PermissionError("synthetic denied inventory"))
-                    return iter(())
+                def failed_scan(*args, **kwargs):
+                    raise PermissionError("synthetic denied inventory")
 
-                with mock.patch.object(leases_module.os, "walk", side_effect=failed_walk):
+                with mock.patch.object(leases_module.os, "scandir", side_effect=failed_scan):
                     with self.assertRaisesRegex(ValueError, "traversal failed"):
                         leases_module.ProtectedCustodyVerifier._protected_tree(root)
 
@@ -337,6 +339,26 @@ class LeaseTests(unittest.TestCase):
             self.write(source, current)
             locks = base / "locks"
             acquire(source, locks, repo_root=base)
+            original_bytes = canonical_json_bytes(current)
+            interrupted = dict(current, generation=2)
+            self.authorize(
+                base, interrupted, "lease:expand", previous_decision_ref=current["decision_ref"]
+            )
+            self.write(source, interrupted)
+            real_write = leases_module.write_json_atomic
+
+            def interrupt_current(path, *args, **kwargs):
+                if path.name == "ARCHIVE.lease.json":
+                    raise OSError("synthetic successor publication interruption")
+                return real_write(path, *args, **kwargs)
+
+            with mock.patch.object(
+                leases_module, "write_json_atomic", side_effect=interrupt_current
+            ):
+                with self.assertRaisesRegex(OSError, "interruption"):
+                    replace(source, locks, expected_generation=1, repo_root=base)
+            self.assertEqual(original_bytes, (locks / "ARCHIVE.lease.json").read_bytes())
+            self.assertEqual(original_bytes, (locks / "lease-history/ARCHIVE/1.json").read_bytes())
             originals = []
             for generation in (2, 3):
                 originals.append(canonical_json_bytes(current))
@@ -377,6 +399,83 @@ class LeaseTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, "changed during"):
                     verifier.verify(case["lease_id"], 1, serialized)
+
+    def test_c1_archive_conflicts_and_aliases_are_never_adopted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate = {"lease_id": "ARCHIVE", "generation": 1, "payload": "exact"}
+            archive = root / "lease-history/ARCHIVE/1.json"
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b"{}\n")
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                leases_module._preserve_previous_candidate(root, candidate)
+            self.assertEqual(b"{}\n", archive.read_bytes())
+            archive.unlink()
+            target = root / "ARCHIVE.lease.json"
+            target.write_bytes(canonical_json_bytes(candidate))
+            try:
+                archive.symlink_to(target)
+            except OSError as exc:
+                self.skipTest(f"archive symlink qualification unavailable: {exc}")
+            with self.assertRaisesRegex(ValueError, "aliased"):
+                leases_module._preserve_previous_candidate(root, candidate)
+            self.assertTrue(archive.is_symlink())
+            self.assertEqual(canonical_json_bytes(candidate), target.read_bytes())
+
+    @unittest.skipUnless(
+        os.name == "posix" and callable(getattr(os, "listxattr", None)),
+        "protection backend unavailable; runtime remains HOLD",
+    )
+    def test_c1_entry_classification_failure_cannot_omit_descendants(self):
+        from types import SimpleNamespace
+
+        real_lstat = Path.lstat
+
+        def protected_metadata(path, *args, **kwargs):
+            entry = real_lstat(path, *args, **kwargs)
+            fields = {
+                name: getattr(entry, name)
+                for name in (
+                    "st_dev",
+                    "st_ino",
+                    "st_mode",
+                    "st_uid",
+                    "st_gid",
+                    "st_size",
+                    "st_mtime_ns",
+                    "st_ctime_ns",
+                    "st_nlink",
+                )
+            }
+            fields.update(st_uid=0, st_gid=0, st_mode=entry.st_mode & ~0o022)
+            return SimpleNamespace(**fields)
+
+        class DeniedEntry:
+            name = "hidden"
+
+            def stat(self, **kwargs):
+                raise PermissionError("synthetic classification refusal")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "hidden").mkdir()
+            scanner = mock.MagicMock()
+            scanner.__enter__.return_value = iter([DeniedEntry()])
+            with (
+                mock.patch.object(Path, "lstat", autospec=True, side_effect=protected_metadata),
+                mock.patch.object(leases_module.os, "listxattr", return_value=[]),
+                mock.patch.object(leases_module.os, "geteuid", return_value=1000),
+                mock.patch.object(leases_module.os, "scandir", return_value=scanner),
+            ):
+                with self.assertRaisesRegex(ValueError, "traversal failed"):
+                    leases_module.ProtectedCustodyVerifier._protected_tree(root)
+
+    def test_c1_unavailable_protection_backend_is_hold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(leases_module.os, "listxattr", None, create=True):
+                with self.assertRaisesRegex(ValueError, "HOLD_ROOT_PROTECTION_UNPROVEN"):
+                    leases_module.ProtectedCustodyVerifier._protected_tree(root)
 
     def test_c1_caller_owned_root_never_confers_custody(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -300,3 +300,10 @@ Decision digest and resource scope against its own candidate. Missing historical
 candidates remain HOLD; this does not backfill or rewrite historical runtime state.
 The verifier also compares exact raw current bytes, rejects traversal omissions,
 and retains original operator path spelling for alias/ancestry protection checks.
+
+
+The protected-root backend requires POSIX ownership plus an available xattr/ACL
+inspection API. Missing inspection support returns HOLD_ROOT_PROTECTION_UNPROVEN
+before any traversal. Platform-specific fault tests retain SKIP where that backend
+is absent; the platform-independent missing-backend refusal test is mandatory.
+Neither those skips nor green source CI qualify a platform or grant an exception.
