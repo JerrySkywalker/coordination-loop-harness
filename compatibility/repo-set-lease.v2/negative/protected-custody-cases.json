@@ -1,0 +1,18 @@
+{
+  "cases": [
+    "caller-owned-root",
+    "caller-supplied-root",
+    "aliased-root",
+    "unqualified-ACL",
+    "fabricated-issuer",
+    "fabricated-Decision-digest",
+    "wrong-current-generation",
+    "replaced-current-bytes",
+    "RELEASED-state",
+    "full-precision-expiry",
+    "incomplete-predecessor-chain"
+  ],
+  "operational_positive": "UNPROVEN_HOLD_ROOT_PROTECTION",
+  "positive_scope": "OS-root protection may be mocked ONLY for semantic unit tests; snapshot never confers effective permissions",
+  "schema_version": "repo-set-lease-v2-protected-custody-cases.v1"
+}

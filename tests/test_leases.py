@@ -7,9 +7,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
+import coordination_loop_harness.leases as leases_module
+import coordination_loop_harness.util as util_module
 from coordination_loop_harness.decisions import verify_decision
 from coordination_loop_harness.leases import (
     acquire,
@@ -66,6 +70,246 @@ def lease(
 
 
 class LeaseTests(unittest.TestCase):
+    def setUp(self):
+        class HistoricalAcquisitionClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
+
+        clock = mock.patch.object(leases_module, "datetime", HistoricalAcquisitionClock)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def _a1_acquire_clock_case(self, *, now: str, expires: str, crossing: str | None = None):
+        """Exercise real admission in a new, retained Goal-local Git fixture.
+
+        The reviewed predicate is a full-precision sample after temporary-file
+        fsync, before publication. These vectors do not guarantee validity at
+        the later POSIX link/Windows move if time advances after that sample.
+        Synthetic accepted Decision data is not an Owner signature.
+        """
+        base = Path(tempfile.mkdtemp(prefix="T03-A1-"))
+        print(f"A1 fixture: {base}", flush=True)
+        canonical, writer = base / "product-canonical", base / "product-writer"
+        self.git(base, "clone", "--no-hardlinks", "--no-checkout", str(ROOT), str(canonical))
+        self.git(canonical, "remote", "remove", "origin")
+        self.git(canonical, "worktree", "add", "-b", "agent/a1", str(writer), "HEAD")
+        candidate = self.lease_v2(
+            "A1-LOCAL",
+            "local/fixture",
+            canonical,
+            writer,
+            "agent/a1",
+            self.git(writer, "rev-parse", "HEAD"),
+            coordination_repository="local/program",
+        )
+        candidate["expires_utc"] = expires
+        self.authorize(base, candidate, "lease:acquire")
+        candidate_path = base / "candidate.json"
+        self.write(candidate_path, candidate)
+        locks = base / "locks"
+        target = locks / "A1-LOCAL.lease.json"
+        clock = {"now": datetime.fromisoformat(now.replace("Z", "+00:00"))}
+        expiry = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+        calls = {"decision": 0, "temporary_fsync": 0, "clock": 0}
+        phase = {"guarded": False, "crossed": False}
+        owned_git_guards = []
+        publications = []
+
+        class FixtureDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                self.assertEqual(UTC, tz)
+                calls["clock"] += 1
+                return clock["now"]
+
+        real_decision = leases_module._verify_bound_lease_decision
+        real_guard = leases_module._writer_git_admission_guard
+        real_fsync = os.fsync
+        real_link = os.link
+        real_move = util_module._move_file_windows
+
+        @contextmanager
+        def writer_guard(*args, **kwargs):
+            with real_guard(*args, **kwargs) as guards:
+                owned_git_guards.extend(guards)
+                phase["guarded"] = True
+                try:
+                    yield guards
+                finally:
+                    phase["guarded"] = False
+
+        def decision(*args, **kwargs):
+            result = real_decision(*args, **kwargs)
+            calls["decision"] += 1
+            if crossing == "decision" and phase["guarded"] and not phase["crossed"]:
+                self.assertLessEqual(clock["now"], expiry)
+                clock["now"] = expiry.replace(microsecond=900000)
+                phase["crossed"] = True
+            return result
+
+        def link(source, destination, *args, **kwargs):
+            if Path(destination) == target:
+                publications.append("POSIX link")
+            return real_link(source, destination, *args, **kwargs)
+
+        def move(source, destination, *args, **kwargs):
+            if Path(destination) == target:
+                publications.append("Windows move")
+            return real_move(source, destination, *args, **kwargs)
+
+        def fsync(fd):
+            # Identify only the actual atomic writer's same-directory temp fd.
+            identity = os.fstat(fd)
+            temporary = any(
+                (item.stat().st_dev, item.stat().st_ino) == (identity.st_dev, identity.st_ino)
+                for item in locks.glob(".A1-LOCAL.lease.json.*.tmp")
+            )
+            result = real_fsync(fd)
+            if temporary:
+                calls["temporary_fsync"] += 1
+                if crossing == "fsync":
+                    self.assertLessEqual(clock["now"], expiry)
+                    clock["now"] = expiry.replace(microsecond=900000)
+            return result
+
+        refused = None
+        with (
+            mock.patch.object(leases_module, "datetime", FixtureDatetime),
+            mock.patch.object(util_module, "datetime", FixtureDatetime),
+            mock.patch.object(leases_module, "_verify_bound_lease_decision", side_effect=decision),
+            mock.patch.object(
+                leases_module, "_writer_git_admission_guard", side_effect=writer_guard
+            ),
+            mock.patch.object(util_module.os, "fsync", side_effect=fsync),
+            mock.patch.object(util_module.os, "link", side_effect=link),
+            mock.patch.object(util_module, "_move_file_windows", side_effect=move),
+        ):
+            try:
+                acquire(candidate_path, locks, repo_root=base)
+            except ValueError as exc:
+                refused = exc
+        print(
+            f"A1 observations: {calls}; refused={refused}; published={target.exists()}; "
+            f"publication_attempts={publications}",
+            flush=True,
+        )
+        self.assertFalse((locks / ".repo-set-admission.mutex").exists())
+        self.assertEqual([], list(locks.glob(".A1-LOCAL.lease.json.*.tmp")))
+        self.assertTrue(all(not path.exists() for path in owned_git_guards))
+        self.assertEqual([], list((canonical / ".git").rglob("*.lock")))
+        if crossing == "decision":
+            self.assertTrue(phase["crossed"], "guarded real Decision phase must execute")
+        if crossing == "fsync":
+            self.assertGreaterEqual(calls["temporary_fsync"], 1)
+        if clock["now"] > expiry:
+            self.assertEqual([], publications, "RED: expired candidate was newly published ACTIVE")
+            self.assertIsNotNone(refused, "RED: expired candidate was newly published ACTIVE")
+            self.assertRegex(str(refused), r"(?i)expir")
+            self.assertFalse(target.exists(), "expired admission must leave no custody record")
+        else:
+            self.assertGreater(calls["decision"], 0, "real Decision validation must execute")
+            self.assertTrue(owned_git_guards, "real writer guard must execute")
+            self.assertIsNone(refused)
+            self.assertEqual(canonical_json_bytes(candidate), target.read_bytes())
+
+    def test_c1_caller_owned_root_never_confers_custody(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            locks = root / "locks"
+            locks.mkdir()
+            verifier = leases_module.ProtectedCustodyVerifier(locks, root)
+            for generation in (1, 2, 3):
+                with (
+                    self.subTest(generation=generation),
+                    self.assertRaisesRegex(ValueError, "HOLD_ROOT_PROTECTION_UNPROVEN"),
+                ):
+                    verifier.verify("FORGED", generation, b"{}\n")
+
+    def test_c1_serialized_generation_state_digest_and_chain_are_rechecked(self):
+        # Only the OS protection obligation is mocked here; this is a synthetic
+        # semantic positive, never proof of an actual protected deployment.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            repository = self.repository_worktree(base, "product", repository="local/fixture")
+            candidate = self.lease_v2("C1-LOCAL", "local/fixture", *repository)
+            candidate["expires_utc"] = "2099-01-01T00:00:00Z"
+            self.authorize(base, candidate, "lease:acquire")
+            path = locks / "C1-LOCAL.lease.json"
+            path.write_bytes(canonical_json_bytes(candidate))
+            self.write(
+                base / "CLH-ISSUANCE-ROOT.json",
+                {
+                    "schema_version": "clh-protected-issuance-root.v1",
+                    "product_owner": "CLH",
+                    "issuer_uid": 0,
+                    "policy": "OPERATOR_FIXED_CLH_ONLY_ISSUANCE",
+                },
+            )
+            verifier = leases_module.ProtectedCustodyVerifier(locks, base)
+            with mock.patch.object(verifier, "_protected_tree", return_value={}):
+                data = verifier.verify("C1-LOCAL", 1, path.read_bytes())
+                self.assertFalse(data["custody_resolved"])
+                with self.assertRaisesRegex(ValueError, "generation"):
+                    verifier.verify("C1-LOCAL", 2, path.read_bytes())
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    verifier.verify("C1-LOCAL", 1, b"{}\n")
+                candidate["state"] = "RELEASED"
+                path.write_bytes(canonical_json_bytes(candidate))
+                with self.assertRaisesRegex(ValueError, "ACTIVE"):
+                    verifier.verify("C1-LOCAL", 1, path.read_bytes())
+                candidate["state"] = "ACTIVE"
+                candidate["expires_utc"] = "2026-01-01T00:00:00.100000Z"
+                self.authorize(base, candidate, "lease:acquire")
+                path.write_bytes(canonical_json_bytes(candidate))
+                with self.assertRaisesRegex(ValueError, "expired"):
+                    verifier.verify("C1-LOCAL", 1, path.read_bytes())
+                candidate["expires_utc"] = "2099-01-01T00:00:00Z"
+                self.authorize(base, candidate, "lease:acquire")
+                path.write_bytes(canonical_json_bytes(candidate))
+                decision_path = base / candidate["decision_ref"]
+                decision = json.loads(decision_path.read_text())
+                decision["lease_candidate_sha256"] = "0" * 64
+                self.write(decision_path, decision)
+                with self.assertRaisesRegex(ValueError, "digest|SHA-256"):
+                    verifier.verify("C1-LOCAL", 1, path.read_bytes())
+
+    def test_a1_expired_before_acquire_is_refused(self):
+        self._a1_acquire_clock_case(
+            now="2026-01-01T00:10:01Z", expires="2026-01-01T00:10:00.100000Z"
+        )
+
+    def test_a1_expiry_during_guarded_decision_validation_is_refused(self):
+        self._a1_acquire_clock_case(
+            now="2026-01-01T00:10:00Z",
+            expires="2026-01-01T00:10:00.100000Z",
+            crossing="decision",
+        )
+
+    def test_a1_fractional_same_second_expiry_is_refused(self):
+        self._a1_acquire_clock_case(
+            now="2026-01-01T00:10:00.900000Z", expires="2026-01-01T00:10:00.100000Z"
+        )
+
+    def test_a1_temporary_fsync_crossing_expiry_is_refused(self):
+        self._a1_acquire_clock_case(
+            now="2026-01-01T00:10:00Z",
+            expires="2026-01-01T00:10:00.100000Z",
+            crossing="fsync",
+        )
+
+    def test_a1_expiry_equality_is_inclusive(self):
+        self._a1_acquire_clock_case(
+            now="2026-01-01T00:10:00.100000Z", expires="2026-01-01T00:10:00.100000Z"
+        )
+
+    def test_a1_future_expiry_is_admitted(self):
+        self._a1_acquire_clock_case(
+            now="2026-01-01T00:10:00.100000Z", expires="2026-01-01T00:10:00.900000Z"
+        )
+
     def test_v2_custody_bytes_are_canonical_through_acquire_expand_release(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -1784,6 +2028,7 @@ class LeaseTests(unittest.TestCase):
             for name, repository in (("A", "example/a"), ("B", "example/b")):
                 repo = self.repository_worktree(base, name.lower(), repository=repository)
                 candidate = self.lease_v2(f"RUN-{name}", repository, *repo)
+                candidate["expires_utc"] = "2099-01-01T00:00:00Z"
                 candidate["local_scopes"] = [shared_scope]
                 self.authorize(base, candidate, "lease:acquire")
                 path = base / f"candidate-{name}.json"

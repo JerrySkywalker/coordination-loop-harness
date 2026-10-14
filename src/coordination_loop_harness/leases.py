@@ -1434,6 +1434,12 @@ def _validate_lease(
             raise ValueError("A RELEASED lease must not have an active writer")
 
 
+def _require_unexpired_acquisition(candidate: dict[str, Any]) -> None:
+    if candidate.get("schema_version") == _V2_SCHEMA:
+        if datetime.now(UTC) > _timestamp(candidate["expires_utc"], label="expires_utc"):
+            raise ValueError("Lease candidate has expired before acquisition publication")
+
+
 def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = None) -> Path:
     candidate = load_json(candidate_path)
     if candidate.get("schema_version") == _V2_SCHEMA and repo_root is None:
@@ -1441,6 +1447,7 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
     repo_root = repository_root(repo_root)
     lock_root = canonical_path(lock_root)
     _validate_lease(candidate, repo_root, require_native_paths=True)
+    _require_unexpired_acquisition(candidate)
     if candidate["state"] != "ACTIVE" or candidate["generation"] != 1:
         raise ValueError("A new lease must have state=ACTIVE and generation=1")
     decision_path = ensure_within(
@@ -1491,6 +1498,7 @@ def acquire(candidate_path: Path, lock_root: Path, *, repo_root: Path | None = N
                 create_new=True,
                 trusted_root=lock_root,
                 canonical=candidate.get("schema_version") == _V2_SCHEMA,
+                before_publish=lambda: _require_unexpired_acquisition(candidate),
             )
     return lease_path
 
@@ -1895,3 +1903,157 @@ def list_leases(lock_root: Path) -> list[dict[str, Any]]:
             label="listed lease file",
         )
     return leases
+
+
+class ProtectedCustodyVerifier:
+    """Operator-configured read-only verification, never a caller authority token.
+
+    This conservative POSIX preparation requires a privileged CLH-only issuance
+    store and an unprivileged observer. Windows/ACL and same-principal writable
+    stores remain unqualified. The returned snapshot confers no effective grant.
+    """
+
+    def __init__(self, lock_root: Path, repo_root: Path) -> None:
+        self._lock_root = Path(lock_root).absolute()
+        self._repo_root = Path(repo_root).absolute()
+
+    @staticmethod
+    def _protected_tree(root: Path) -> dict[str, tuple]:
+        if os.name != "posix" or os.geteuid() == 0:
+            raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: privileged or unsupported observer")
+        entries = [*reversed(root.parents), root]
+        identities = {}
+
+        def check(path: Path) -> None:
+            entry = path.lstat()
+            if (
+                stat.S_ISLNK(entry.st_mode)
+                or entry.st_uid != 0
+                or entry.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                or not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode))
+                or (stat.S_ISREG(entry.st_mode) and entry.st_nlink != 1)
+            ):
+                raise ValueError(
+                    "HOLD_ROOT_PROTECTION_UNPROVEN: mutable or aliased authority entry"
+                )
+            try:
+                attributes = os.listxattr(path, follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: ACL evidence unavailable") from exc
+            if any("acl" in name.casefold() for name in attributes):
+                raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: ACL qualification unavailable")
+            identities[str(path)] = (
+                entry.st_dev,
+                entry.st_ino,
+                entry.st_mode,
+                entry.st_uid,
+                entry.st_gid,
+                entry.st_size,
+                entry.st_mtime_ns,
+                entry.st_ctime_ns,
+                entry.st_nlink,
+            )
+
+        for entry in entries:
+            check(entry)
+        if not root.is_dir():
+            raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: authority root is not a directory")
+        for parent, directories, files in os.walk(root, followlinks=False):
+            for name in [*directories, *files]:
+                check(Path(parent) / name)
+                if len(identities) > 4096:
+                    raise ValueError(
+                        "HOLD_ROOT_PROTECTION_UNPROVEN: authority inventory exceeds bound"
+                    )
+        return identities
+
+    def verify(self, lease_id: str, expected_generation: int, serialized: bytes) -> dict[str, Any]:
+        lease_id = require_safe_id(lease_id, "lease_id")
+        if not is_safe_json_integer(expected_generation) or expected_generation < 1:
+            raise ValueError("Expected lease generation must be a positive safe integer")
+        if type(serialized) is not bytes or not serialized:
+            raise ValueError("Exact serialized custody bytes are required")
+        before_locks = self._protected_tree(self._lock_root)
+        before_repo = self._protected_tree(self._repo_root)
+        # This protected Operator declaration assigns this store to trusted CLH
+        # issuance. An unprotected string/filename is explicitly insufficient.
+        issuer_path = self._repo_root / "CLH-ISSUANCE-ROOT.json"
+        issuer = load_json(issuer_path)
+        if issuer != {
+            "schema_version": "clh-protected-issuance-root.v1",
+            "product_owner": "CLH",
+            "issuer_uid": 0,
+            "policy": "OPERATOR_FIXED_CLH_ONLY_ISSUANCE",
+        }:
+            raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: trusted CLH issuance not established")
+        if (self._lock_root / ".repo-set-admission.mutex").exists():
+            raise ValueError("Authority mutation is in progress; custody is unresolved")
+        observed = _lease_directory_entry(
+            self._lock_root, label="protected current lease", expected_name=f"{lease_id}.lease.json"
+        )
+        if observed is None:
+            raise ValueError("Current protected lease is absent")
+        path, identity = observed
+        current = load_json(path, expected_identity=identity[:2])
+        if canonical_json_bytes(current) != serialized:
+            raise ValueError("Serialized custody differs from current protected generation/state")
+        if current.get("lease_id") != lease_id or current.get("generation") != expected_generation:
+            raise ValueError("Current lease identity/generation does not match expected custody")
+        if current.get("schema_version") != _V2_SCHEMA or current.get("state") != "ACTIVE":
+            raise ValueError("Current custody is not an ACTIVE v2 lease")
+        _validate_lease(current, self._repo_root, allow_coordination_self_write=True)
+        decision_path = ensure_within(
+            self._repo_root / current["decision_ref"],
+            self._repo_root,
+            label="protected issuance Decision",
+            must_exist=True,
+        )
+        _verify_bound_lease_decision(
+            current,
+            self._repo_root,
+            decision_path,
+            action="lease:acquire" if expected_generation == 1 else "lease:expand",
+            error_label="Protected current lease Decision",
+            sequence_label="Protected current",
+        )
+        # The generic verifier checks contiguous predecessors and Markdown hashes.
+        # Also bind each predecessor to this lease/action/generation, not merely run.
+        for generation in range(expected_generation, 0, -1):
+            decision = load_json(decision_path)
+            verified = verify_decision(
+                self._repo_root,
+                decision_path,
+                run_id=current["run_id"],
+                action="lease:acquire" if generation == 1 else "lease:expand",
+                lease_id=lease_id,
+                lease_generation=generation,
+                require_candidate_digest=True,
+            )
+            if not verified["ok"] or decision.get("sequence") != generation:
+                raise ValueError(
+                    "Protected issuance predecessor is not bound to current lease lineage"
+                )
+            if generation > 1:
+                decision_path = ensure_within(
+                    self._repo_root / decision["previous_decision_ref"],
+                    self._repo_root,
+                    label="protected predecessor",
+                    must_exist=True,
+                )
+        _assert_lease_entry_unchanged(
+            self._lock_root, path, identity, label="protected current lease"
+        )
+        if self._protected_tree(self._lock_root) != before_locks:
+            raise ValueError("Protected custody changed during verification")
+        if self._protected_tree(self._repo_root) != before_repo:
+            raise ValueError("Protected Decision/issuance roots changed during verification")
+        _require_unexpired_acquisition(current)
+        return {
+            "lease_id": lease_id,
+            "generation": expected_generation,
+            "state": "ACTIVE",
+            "lease_sha256": sha256_bytes(serialized),
+            "verification": "PROTECTED_CLH_SNAPSHOT_ONLY",
+            "custody_resolved": False,
+            "runtime_gate": "AUTHENTICATED_CONSUMER_BOUNDARY_UNQUALIFIED",
+        }

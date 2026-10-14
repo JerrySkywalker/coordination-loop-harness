@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "expected": "REFUSE_NO_PUBLICATION",
+      "expires_utc": "2026-01-01T00:10:00.100000Z",
+      "id": "expired-before-acquire",
+      "now_utc": "2026-01-01T00:10:01Z"
+    },
+    {
+      "expected": "REFUSE_NO_PUBLICATION",
+      "expires_utc": "2026-01-01T00:10:00.100000Z",
+      "final_now_utc": "2026-01-01T00:10:00.900000Z",
+      "id": "guarded-decision-crosses-expiry",
+      "initial_now_utc": "2026-01-01T00:10:00Z"
+    },
+    {
+      "expected": "REFUSE_NO_PUBLICATION",
+      "expires_utc": "2026-01-01T00:10:00.100000Z",
+      "id": "fractional-same-second-expiry",
+      "now_utc": "2026-01-01T00:10:00.900000Z"
+    },
+    {
+      "expected": "REFUSE_NO_PUBLICATION",
+      "expires_utc": "2026-01-01T00:10:00.100000Z",
+      "final_now_utc": "2026-01-01T00:10:00.900000Z",
+      "id": "temporary-fsync-crosses-expiry",
+      "initial_now_utc": "2026-01-01T00:10:00Z"
+    },
+    {
+      "expected": "ADMIT",
+      "expires_utc": "2026-01-01T00:10:00.100000Z",
+      "id": "inclusive-equality",
+      "now_utc": "2026-01-01T00:10:00.100000Z"
+    },
+    {
+      "expected": "ADMIT",
+      "expires_utc": "2026-01-01T00:10:00.900000Z",
+      "id": "future-expiry",
+      "now_utc": "2026-01-01T00:10:00.100000Z"
+    }
+  ],
+  "schema_version": "repo-set-lease-v2-acquire-expiry-cases.v1",
+  "scope": "full-precision sampled acquisition clock, not elapsed time after sample"
+}

@@ -10,7 +10,7 @@ from typing import Any
 
 from mcp.server import MCPServer
 
-from .leases import acquire, lease_candidate_sha256, observe, release
+from .leases import ProtectedCustodyVerifier, acquire, lease_candidate_sha256, observe, release
 from .util import canonical_json_bytes, load_json
 
 
@@ -36,6 +36,7 @@ def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
     """Create a transport adapter; lease validation and state stay owned by CLH."""
     lock_root = lock_root.resolve()
     repo_root = repo_root.resolve()
+    custody_verifier = ProtectedCustodyVerifier(lock_root, repo_root)
     server = MCPServer("coordination-loop-clh", version="1", title="CLH MCP facade")
 
     @server.tool(name="inspect_authority", structured_output=True)
@@ -53,6 +54,20 @@ def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
         except (OSError, TypeError, ValueError) as exc:
             return _refusal(identity={"lease_id": lease_id}, reason=str(exc))
         return _result(identity={"lease_id": lease_id}, disposition="OK", custody=custody)
+
+    @server.tool(name="verify_custody", structured_output=True)
+    def verify_custody(
+        lease_id: str, expected_generation: int, serialized_authority: str
+    ) -> dict[str, Any]:
+        try:
+            custody = custody_verifier.verify(
+                lease_id, expected_generation, serialized_authority.encode("utf-8")
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return _refusal(identity={"lease_id": lease_id}, reason=str(exc))
+        return _result(
+            identity={"lease_id": lease_id}, disposition="PROTECTED_SNAPSHOT_ONLY", custody=custody
+        )
 
     @server.tool(name="admit_writer", structured_output=True)
     def admit_writer(candidate_path: str) -> dict[str, Any]:

@@ -21,30 +21,36 @@ from coordination_loop_harness.validation import validate_document
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_ROOT = ROOT / "compatibility" / "repo-set-lease.v2"
-EXPECTED_ARTIFACT_PATHS = [
-    "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
-    "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
-    "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
-    "compatibility/repo-set-lease.v2/positive/shared-program-disjoint-writers.json",
-    "compatibility/repo-set-lease.v2/positive/terminal-release.json",
-    "docs/REPOSITORY_OWNERSHIP_V2.md",
-    "docs/command-reference.md",
-    "docs/leases.md",
-    "schemas/decision.v2.schema.json",
-    "schemas/repo-set-lease.v2.schema.json",
-    "src/coordination_loop_harness/cli.py",
-    "src/coordination_loop_harness/decisions.py",
-    "src/coordination_loop_harness/leases.py",
-    "src/coordination_loop_harness/repository.py",
-    "src/coordination_loop_harness/util.py",
-    "src/coordination_loop_harness/validation.py",
-    "templates/decision.example.json",
-    "tests/test_cli.py",
-    "tests/test_leases.py",
-    "tests/test_repo_set_lease_v2_artifact.py",
-    "tests/test_repository.py",
-    "tests/test_util.py",
-]
+EXPECTED_ARTIFACT_PATHS = sorted(
+    [
+        "compatibility/repo-set-lease.v2/negative/protected-custody-cases.json",
+        "src/coordination_loop_harness/mcp_server.py",
+        "tests/test_mcp_server.py",
+        "compatibility/repo-set-lease.v2/negative/acquire-expiry-cases.json",
+        "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
+        "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
+        "compatibility/repo-set-lease.v2/positive/candidate-digest.json",
+        "compatibility/repo-set-lease.v2/positive/shared-program-disjoint-writers.json",
+        "compatibility/repo-set-lease.v2/positive/terminal-release.json",
+        "docs/REPOSITORY_OWNERSHIP_V2.md",
+        "docs/command-reference.md",
+        "docs/leases.md",
+        "schemas/decision.v2.schema.json",
+        "schemas/repo-set-lease.v2.schema.json",
+        "src/coordination_loop_harness/cli.py",
+        "src/coordination_loop_harness/decisions.py",
+        "src/coordination_loop_harness/leases.py",
+        "src/coordination_loop_harness/repository.py",
+        "src/coordination_loop_harness/util.py",
+        "src/coordination_loop_harness/validation.py",
+        "templates/decision.example.json",
+        "tests/test_cli.py",
+        "tests/test_leases.py",
+        "tests/test_repo_set_lease_v2_artifact.py",
+        "tests/test_repository.py",
+        "tests/test_util.py",
+    ]
+)
 
 
 def load(path: Path) -> dict:

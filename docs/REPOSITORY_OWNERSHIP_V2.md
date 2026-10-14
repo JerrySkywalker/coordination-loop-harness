@@ -256,3 +256,35 @@ release.
 - CLH owns validation and ownership semantics; CLT may pin and validate the
   serialized contract but does not copy CLH runtime implementation.
 - DGF RepoHealth Writer Lease is not part of this execution path.
+
+
+## Bounded acquisition expiry correction
+
+V2 acquire samples trusted UTC with full datetime precision initially and after
+temporary payload flush/fsync, immediately before atomic publication. Equality
+is inclusive; a sampled time later than expires_utc refuses publication. The
+sample is not an OS guarantee that time cannot advance before link/Windows move.
+Atomic create-if-absent, writer guards and cleanup remain mandatory. Original
+artifact identities remain readable at their exact historical commits.
+
+## C1 protected custody verification preparation
+
+Canonical caller-supplied ACTIVE bytes and matching files do not establish trusted
+issuance. Operational protection and authenticated CLH verification remain HOLD
+until an Operator-fixed root/ancestry and trusted CLH-only issuance source are
+qualified. Current Lease generation/state, complete bound Decision ancestry,
+candidate digest/scope/action, Markdown/schema protection, release and full UTC
+expiry require fresh checks at every consumer admission/execution/recovery edge.
+No caller root, trust flag, callback or caller timestamp may supply that authority.
+This A1 producer repair does not qualify that C1 operational boundary.
+
+
+`verify_custody` is a source-prepared read-only snapshot verifier. Its roots are
+fixed at CLH MCP startup; requests supply only lease identity/generation and exact
+serialized bytes. It rejects caller-owned/mutable/aliased/ACL-unqualified roots.
+The conservative POSIX prototype requires root-owned ancestry/store and an
+unprivileged observer, plus a protected Operator CLH-only issuance declaration
+`CLH-ISSUANCE-ROOT.json`. No such root is provisioned by this change. Windows and
+actual deployment remain HOLD. A protected snapshot still has custody_resolved=false:
+an authenticated consumer boundary and revalidation at execution/recovery remain
+unqualified; the snapshot is never a reusable authority bearer token.

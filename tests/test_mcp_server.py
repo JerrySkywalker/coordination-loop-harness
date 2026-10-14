@@ -116,7 +116,7 @@ class McpServerTests(unittest.TestCase):
                 async with Client(server) as client:
                     tools = await client.list_tools()
                     self.assertEqual(
-                        {"inspect_authority", "admit_writer", "inspect_custody", "release_writer"},
+                        {"inspect_authority", "admit_writer", "inspect_custody", "release_writer", "verify_custody"},
                         {tool.name for tool in tools.tools},
                     )
                     candidate = await client.call_tool(

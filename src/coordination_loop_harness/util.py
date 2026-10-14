@@ -6,7 +6,7 @@ import os
 import posixpath
 import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -82,6 +82,7 @@ def write_json_atomic(
     create_new: bool = False,
     trusted_root: Path | None = None,
     canonical: bool = False,
+    before_publish: Callable[[], None] | None = None,
 ) -> None:
     if trusted_root is not None:
         trusted_root = canonical_path(trusted_root)
@@ -105,6 +106,8 @@ def write_json_atomic(
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        if before_publish is not None:
+            before_publish()
         if create_new:
             # A direct ``open('x')`` exposes a partially written final record if
             # the process dies between creation and the last write.  Linking a

@@ -61,14 +61,22 @@
   "automatic_stale_reclaim": false,
   "successor_custody_policy": "matching-writer-identity-native-process-absence-and-ttl-expiry-are-not-release-evidence; unresolved-active-predecessor-denies-overlapping-successor-until-clh-validated-terminal-release",
   "compatibility_window": {
-    "producer": "CLH exact repo-set-lease.v2 artifact identity",
     "consumer": "CLT validates a pinned serialized schema and conformance set without importing CLH source",
-    "legacy": "Existing v1 lease documents retain conservative all-overlap semantics"
+    "legacy": "Existing v1 lease documents retain conservative all-overlap semantics",
+    "producer": "CLH exact repo-set-lease.v2 artifact identity"
   },
   "artifacts": [
     {
+      "path": "compatibility/repo-set-lease.v2/negative/acquire-expiry-cases.json",
+      "sha256": "9be4aa6c7b2902565489009be3edf48a230a30df89b7ac77422f757330542bce"
+    },
+    {
       "path": "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
       "sha256": "8fc99cf0db7ff3dad6eafa1508624224b7638d4068fab94a8644300477ae34ae"
+    },
+    {
+      "path": "compatibility/repo-set-lease.v2/negative/protected-custody-cases.json",
+      "sha256": "952543678a8a6a24b85069551f873733bd1e5eb0d37605f6d743c9a18dd06474"
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
@@ -88,7 +96,7 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "d342499cccd456021768da19e373f85118d07f41679f6e97208b40d7fc68f218"
+      "sha256": "66ce3bb3c83ed5ffa773b1ad0ff3ff8d845a0bfe7c2bf73c6f34e3bf424abf5b"
     },
     {
       "path": "docs/command-reference.md",
@@ -116,7 +124,11 @@
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "709578d1d20a22b059581dec30b8afb0343c4e5bfb7d8eed02cdf89b77ec9205"
+      "sha256": "6bdae968e86724ff9bf453ae07faa395a1523645b1ef874747f456ba1313c60f"
+    },
+    {
+      "path": "src/coordination_loop_harness/mcp_server.py",
+      "sha256": "f9b22c389340748627d819b4f0d28918fb00489aa8b0e423933af6b182fe255d"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -124,7 +136,7 @@
     },
     {
       "path": "src/coordination_loop_harness/util.py",
-      "sha256": "6b72fee12a158c550823c15cdf467872ad083403038bee1ff6ac0626d05b6ac0"
+      "sha256": "a56ce449a853ef36230122e25086076168502216ef2dec39524f3829949ce0fa"
     },
     {
       "path": "src/coordination_loop_harness/validation.py",
@@ -140,11 +152,15 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "9efdc80f9d92af7743841afbb2c8167061e26352a4d9ce4a1d6f20ceb12a3187"
+      "sha256": "98d82691ebc45558ef1d2f6033e37cc51f1eb29b25887ed6936e3fb9ae9e69ec"
+    },
+    {
+      "path": "tests/test_mcp_server.py",
+      "sha256": "a137b8ce4f4a7be09c91d57d7a22b29a197571f65fb9b90261fbfeb95ea99ad0"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
-      "sha256": "0dce293f853fe8e733f8b49c1d2e1b43d9f9fbc9dbef7e2afcecebf99f5302cd"
+      "sha256": "9b60a1c7e6fba4d3a74d08ca26777ab7eb23bf5bfc80c8f53bdc3174f418211f"
     },
     {
       "path": "tests/test_repository.py",
@@ -161,23 +177,60 @@
     "terminal-release"
   ],
   "negative_expected_categories": {
-    "same-lease-id": ["lease_id"],
-    "case-only-lease-id": ["lease_id"],
-    "same-repository": ["repository"],
-    "same-worktree": ["path"],
-    "same-branch": ["repository", "branch"],
-    "overlapping-local-resource": ["path"],
-    "root-local-resource": ["path", "path", "path"],
-    "same-infrastructure-resource": ["infrastructure"],
-    "writer-versus-reader": ["repository", "branch", "path", "path"],
-    "reader-versus-writer": ["repository", "branch", "path", "path"],
+    "case-only-lease-id": [
+      "lease_id"
+    ],
+    "invalid-v2-relative-canonical-path": [
+      "repository"
+    ],
+    "invalid-v2-relative-local-scope": [
+      "repository"
+    ],
+    "invalid-v2-relative-worktree-root": [
+      "repository"
+    ],
+    "overlapping-local-resource": [
+      "path"
+    ],
     "reader-versus-reader": [],
-    "invalid-v2-relative-canonical-path": ["repository"],
-    "invalid-v2-relative-worktree-root": ["repository"],
-    "invalid-v2-relative-local-scope": ["repository"]
+    "reader-versus-writer": [
+      "repository",
+      "branch",
+      "path",
+      "path"
+    ],
+    "root-local-resource": [
+      "path",
+      "path",
+      "path"
+    ],
+    "same-branch": [
+      "repository",
+      "branch"
+    ],
+    "same-infrastructure-resource": [
+      "infrastructure"
+    ],
+    "same-lease-id": [
+      "lease_id"
+    ],
+    "same-repository": [
+      "repository"
+    ],
+    "same-worktree": [
+      "path"
+    ],
+    "writer-versus-reader": [
+      "repository",
+      "branch",
+      "path",
+      "path"
+    ]
   },
   "terminal_overlap_expected_categories": {
-    "valid-terminal-casefold-id-refusal": ["lease_id"],
+    "valid-terminal-casefold-id-refusal": [
+      "lease_id"
+    ],
     "valid-terminal-resource-release": []
   },
   "negative_schema_and_authority_cases": [
@@ -249,6 +302,8 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:7e8bdf2b0e1586390dc78f80866e6c23b6e31f0b338278ffff22d35a6a51b5ad",
-  "artifact_set_sha256": "7e8bdf2b0e1586390dc78f80866e6c23b6e31f0b338278ffff22d35a6a51b5ad"
+  "producer_artifact_id": "repo-set-lease.v2+sha256:d110774c7f352a027d2cc54e3303cea0e72e222e44a44f20370dd8794db8ea30",
+  "artifact_set_sha256": "d110774c7f352a027d2cc54e3303cea0e72e222e44a44f20370dd8794db8ea30",
+  "acquire_expiry_policy": "trusted-full-precision-initial-and-post-fsync-prepublication-sample; now-equals-expiry-admits; sample-is-not-atomic-with-publication",
+  "protected_custody_policy": "operator-fixed-protected-CLH-only-issuance; full-current-Decision-chain-generation-state-digest-UTC; snapshot-confers-no-effective-grant; unsupported-protection-HOLD"
 }
