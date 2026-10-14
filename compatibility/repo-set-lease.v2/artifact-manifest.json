@@ -68,7 +68,7 @@
   "artifacts": [
     {
       "path": "compatibility/repo-set-lease.v2/negative/acquire-expiry-cases.json",
-      "sha256": "9be4aa6c7b2902565489009be3edf48a230a30df89b7ac77422f757330542bce"
+      "sha256": "5a8772e6c8f17405e542bd6611b07fe0cea531ffa386ebc06b85f4b7f869e4ad"
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
@@ -76,7 +76,7 @@
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/protected-custody-cases.json",
-      "sha256": "952543678a8a6a24b85069551f873733bd1e5eb0d37605f6d743c9a18dd06474"
+      "sha256": "5c5bf5a70d4522859e16b4f192c048ae4b85f3796074b6a507868165ad693784"
     },
     {
       "path": "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",
@@ -96,7 +96,7 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "66ce3bb3c83ed5ffa773b1ad0ff3ff8d845a0bfe7c2bf73c6f34e3bf424abf5b"
+      "sha256": "5360f124d871f6dda282e5831a4e60a4132e743371c99542fa0beab29e99bbcf"
     },
     {
       "path": "docs/command-reference.md",
@@ -124,11 +124,11 @@
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "6bdae968e86724ff9bf453ae07faa395a1523645b1ef874747f456ba1313c60f"
+      "sha256": "d877ae88cb0ab03b3531ede8129c1b0693206e51342a4430c8c6996174141d56"
     },
     {
       "path": "src/coordination_loop_harness/mcp_server.py",
-      "sha256": "f9b22c389340748627d819b4f0d28918fb00489aa8b0e423933af6b182fe255d"
+      "sha256": "80575415177c31b2a071f6143088529cd9c31579f364a43cf70755ae5adaaa7c"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -152,11 +152,11 @@
     },
     {
       "path": "tests/test_leases.py",
-      "sha256": "98d82691ebc45558ef1d2f6033e37cc51f1eb29b25887ed6936e3fb9ae9e69ec"
+      "sha256": "9817b14fcc2946cd55fa25e73bf347eaee55183ce9874524d13d298e656966c7"
     },
     {
       "path": "tests/test_mcp_server.py",
-      "sha256": "a137b8ce4f4a7be09c91d57d7a22b29a197571f65fb9b90261fbfeb95ea99ad0"
+      "sha256": "2737aa236671223d21164d58cbf1aaf35f918b349afc8631992dcb81e9b09c29"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
@@ -302,8 +302,8 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:d110774c7f352a027d2cc54e3303cea0e72e222e44a44f20370dd8794db8ea30",
-  "artifact_set_sha256": "d110774c7f352a027d2cc54e3303cea0e72e222e44a44f20370dd8794db8ea30",
+  "producer_artifact_id": "repo-set-lease.v2+sha256:50e2439eb502b109336654225dfba57d3bef16baa6aa228d879261ed6e2b8479",
+  "artifact_set_sha256": "50e2439eb502b109336654225dfba57d3bef16baa6aa228d879261ed6e2b8479",
   "acquire_expiry_policy": "trusted-full-precision-initial-and-post-fsync-prepublication-sample; now-equals-expiry-admits; sample-is-not-atomic-with-publication",
   "protected_custody_policy": "operator-fixed-protected-CLH-only-issuance; full-current-Decision-chain-generation-state-digest-UTC; snapshot-confers-no-effective-grant; unsupported-protection-HOLD"
 }

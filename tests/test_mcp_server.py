@@ -105,6 +105,44 @@ def v2_candidates(root: Path, *lease_ids: str) -> tuple[object, dict[str, dict],
 
 
 class McpServerTests(unittest.TestCase):
+    def test_verifier_preserves_original_operator_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            locks = root / "locks"
+            locks.mkdir()
+            original = locks / ".." / "locks"
+            with mock.patch.object(
+                mcp_server, "ProtectedCustodyVerifier", wraps=mcp_server.ProtectedCustodyVerifier
+            ) as factory:
+                create_server(original, root)
+                self.assertEqual(original, factory.call_args.args[0])
+
+    def test_verify_custody_refuses_unprotected_caller_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            locks = root / "locks"
+            locks.mkdir()
+            server = create_server(locks, root)
+
+            async def exercise() -> None:
+                async with Client(server) as client:
+                    response = await client.call_tool(
+                        "verify_custody",
+                        {
+                            "lease_id": "FORGED",
+                            "expected_generation": 1,
+                            "serialized_authority": "{}\n",
+                        },
+                    )
+                    self.assertEqual("REFUSED", response.structured_content["disposition"])
+                    self.assertIn(
+                        "HOLD_ROOT_PROTECTION_UNPROVEN",
+                        response.structured_content["refusal_reason"],
+                    )
+                    self.assertFalse(list(locks.iterdir()))
+
+            asyncio.run(exercise())
+
     def test_discovers_tools_and_refuses_v1_before_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -116,7 +154,13 @@ class McpServerTests(unittest.TestCase):
                 async with Client(server) as client:
                     tools = await client.list_tools()
                     self.assertEqual(
-                        {"inspect_authority", "admit_writer", "inspect_custody", "release_writer", "verify_custody"},
+                        {
+                            "inspect_authority",
+                            "admit_writer",
+                            "inspect_custody",
+                            "release_writer",
+                            "verify_custody",
+                        },
                         {tool.name for tool in tools.tools},
                     )
                     candidate = await client.call_tool(

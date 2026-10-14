@@ -288,3 +288,15 @@ unprivileged observer, plus a protected Operator CLH-only issuance declaration
 actual deployment remain HOLD. A protected snapshot still has custody_resolved=false:
 an authenticated consumer boundary and revalidation at execution/recovery remain
 unqualified; the snapshot is never a reusable authority bearer token.
+
+
+V2 replacement preserves the previous canonical candidate under the local custody
+root `lease-history/<lease_id>/<generation>.json` before publishing its successor.
+Archive publication alone conveys no current custody; interrupted replacement may
+leave a valid prior archive while the old current record remains active. Conflicting
+archives refuse replacement and are never overwritten. Protected verification of
+generation >1 requires these exact prior candidates and validates every predecessor
+Decision digest and resource scope against its own candidate. Missing historical
+candidates remain HOLD; this does not backfill or rewrite historical runtime state.
+The verifier also compares exact raw current bytes, rejects traversal omissions,
+and retains original operator path spelling for alias/ancestry protection checks.

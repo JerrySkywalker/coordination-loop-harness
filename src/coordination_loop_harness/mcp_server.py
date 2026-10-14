@@ -34,9 +34,9 @@ def _repository_file(path_text: str, repo_root: Path) -> Path:
 
 def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
     """Create a transport adapter; lease validation and state stay owned by CLH."""
+    custody_verifier = ProtectedCustodyVerifier(lock_root, repo_root)
     lock_root = lock_root.resolve()
     repo_root = repo_root.resolve()
-    custody_verifier = ProtectedCustodyVerifier(lock_root, repo_root)
     server = MCPServer("coordination-loop-clh", version="1", title="CLH MCP facade")
 
     @server.tool(name="inspect_authority", structured_output=True)

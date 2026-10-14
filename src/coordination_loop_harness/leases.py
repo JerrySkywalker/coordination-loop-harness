@@ -1608,6 +1608,29 @@ def replace(
                 entry_identity,
                 label="replacement lease file",
             )
+            if current.get("schema_version") == _V2_SCHEMA:
+                archive = ensure_within(
+                    lock_root
+                    / "lease-history"
+                    / current["lease_id"]
+                    / f"{current['generation']}.json",
+                    lock_root,
+                    label="immutable previous lease candidate",
+                )
+                if archive.exists():
+                    if archive.is_symlink() or archive.stat().st_nlink != 1:
+                        raise ValueError("Previous lease candidate archive is aliased")
+                    if archive.read_bytes() != canonical_json_bytes(current):
+                        raise ValueError(
+                            "Previous lease candidate archive does not match current custody"
+                        )
+                else:
+                    write_json_atomic(
+                        archive, current, trusted_root=lock_root, canonical=True, create_new=True
+                    )
+                _assert_lease_entry_unchanged(
+                    lock_root, lease_path, entry_identity, label="archived replacement lease file"
+                )
             write_json_atomic(
                 lease_path,
                 candidate,
@@ -1958,7 +1981,11 @@ class ProtectedCustodyVerifier:
             check(entry)
         if not root.is_dir():
             raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: authority root is not a directory")
-        for parent, directories, files in os.walk(root, followlinks=False):
+
+        def traversal_error(error: OSError) -> None:
+            raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: authority traversal failed") from error
+
+        for parent, directories, files in os.walk(root, followlinks=False, onerror=traversal_error):
             for name in [*directories, *files]:
                 check(Path(parent) / name)
                 if len(identities) > 4096:
@@ -1994,8 +2021,13 @@ class ProtectedCustodyVerifier:
         if observed is None:
             raise ValueError("Current protected lease is absent")
         path, identity = observed
+        with path.open("rb") as handle:
+            metadata = os.fstat(handle.fileno())
+            if (metadata.st_dev, metadata.st_ino) != identity[:2]:
+                raise ValueError("Protected current lease identity changed before raw reading")
+            raw_current = handle.read()
         current = load_json(path, expected_identity=identity[:2])
-        if canonical_json_bytes(current) != serialized:
+        if raw_current != serialized or canonical_json_bytes(current) != serialized:
             raise ValueError("Serialized custody differs from current protected generation/state")
         if current.get("lease_id") != lease_id or current.get("generation") != expected_generation:
             raise ValueError("Current lease identity/generation does not match expected custody")
@@ -2016,30 +2048,40 @@ class ProtectedCustodyVerifier:
             error_label="Protected current lease Decision",
             sequence_label="Protected current",
         )
-        # The generic verifier checks contiguous predecessors and Markdown hashes.
-        # Also bind each predecessor to this lease/action/generation, not merely run.
-        for generation in range(expected_generation, 0, -1):
-            decision = load_json(decision_path)
-            verified = verify_decision(
-                self._repo_root,
-                decision_path,
-                run_id=current["run_id"],
-                action="lease:acquire" if generation == 1 else "lease:expand",
-                lease_id=lease_id,
-                lease_generation=generation,
-                require_candidate_digest=True,
+        next_decision_ref = current["decision_ref"]
+        for generation in range(expected_generation - 1, 0, -1):
+            next_decision = load_json(self._repo_root / next_decision_ref)
+            archive = ensure_within(
+                self._lock_root / "lease-history" / lease_id / f"{generation}.json",
+                self._lock_root,
+                label="protected historical candidate",
+                must_exist=True,
             )
-            if not verified["ok"] or decision.get("sequence") != generation:
-                raise ValueError(
-                    "Protected issuance predecessor is not bound to current lease lineage"
-                )
-            if generation > 1:
-                decision_path = ensure_within(
-                    self._repo_root / decision["previous_decision_ref"],
-                    self._repo_root,
-                    label="protected predecessor",
-                    must_exist=True,
-                )
+            previous = load_json(archive)
+            if (
+                previous.get("lease_id") != lease_id
+                or previous.get("generation") != generation
+                or previous.get("state") != "ACTIVE"
+                or previous.get("schema_version") != _V2_SCHEMA
+                or next_decision.get("previous_decision_ref") != previous.get("decision_ref")
+            ):
+                raise ValueError("Protected historical candidate does not match Decision ancestry")
+            _validate_lease(previous, self._repo_root, allow_coordination_self_write=True)
+            previous_path = ensure_within(
+                self._repo_root / previous["decision_ref"],
+                self._repo_root,
+                label="protected historical Decision",
+                must_exist=True,
+            )
+            _verify_bound_lease_decision(
+                previous,
+                self._repo_root,
+                previous_path,
+                action="lease:acquire" if generation == 1 else "lease:expand",
+                error_label="Protected historical candidate Decision",
+                sequence_label="Protected historical",
+            )
+            next_decision_ref = previous["decision_ref"]
         _assert_lease_entry_unchanged(
             self._lock_root, path, identity, label="protected current lease"
         )

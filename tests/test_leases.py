@@ -213,6 +213,171 @@ class LeaseTests(unittest.TestCase):
             self.assertIsNone(refused)
             self.assertEqual(canonical_json_bytes(candidate), target.read_bytes())
 
+    def test_c1_complete_protected_custody_vectors(self):
+        class ConformanceClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 4, 0, 0, 1, tzinfo=UTC)
+
+        vector = json.loads(
+            (
+                ROOT / "compatibility/repo-set-lease.v2/negative/protected-custody-cases.json"
+            ).read_text(encoding="utf-8")
+        )
+        for case in vector["cases"]:
+            with self.subTest(case=case["id"]), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                locks = base / "locks"
+                locks.mkdir()
+                shutil.copytree(ROOT / "schemas", base / "schemas")
+                (base / "TEMPLATE_VERSION").write_text("test\n", encoding="utf-8")
+                for entry in case["repository_root_files"]:
+                    target = base / entry["path"]
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if "json_document" in entry:
+                        self.write(target, entry["json_document"])
+                    else:
+                        target.write_text(entry["content_utf8"], encoding="utf-8", newline="")
+                for entry in case["lock_root_files"]:
+                    target = locks / entry["path"]
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(canonical_json_bytes(entry["json_document"]))
+                current_path = locks / f"{case['lease_id']}.lease.json"
+                current_path.write_bytes(canonical_json_bytes(case["current_candidate"]))
+                serialized = canonical_json_bytes(case["supplied_candidate"])
+                if case.get("noncanonical_stored_bytes"):
+                    current_path.write_text(
+                        json.dumps(case["current_candidate"], indent=2), encoding="utf-8"
+                    )
+                verifier = leases_module.ProtectedCustodyVerifier(locks, base)
+                # These are lineage/state semantics; actual OS protection is a
+                # separate negative obligation, never a synthetic runtime PASS.
+                with (
+                    mock.patch.object(verifier, "_protected_tree", return_value={}),
+                    mock.patch.object(leases_module, "datetime", ConformanceClock),
+                ):
+                    if case["expected"] == "SNAPSHOT_ONLY":
+                        result = verifier.verify(
+                            case["lease_id"], case["expected_generation"], serialized
+                        )
+                        self.assertFalse(result["custody_resolved"])
+                    else:
+                        with self.assertRaises((ValueError, OSError)):
+                            verifier.verify(
+                                case["lease_id"], case["expected_generation"], serialized
+                            )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX prototype protection fault test")
+    def test_c1_protection_inventory_refuses_alias_hardlink_acl_and_traversal_errors(self):
+        from types import SimpleNamespace
+
+        real_lstat = Path.lstat
+
+        def protected_metadata(path, *args, **kwargs):
+            entry = real_lstat(path, *args, **kwargs)
+            fields = {
+                name: getattr(entry, name)
+                for name in (
+                    "st_dev",
+                    "st_ino",
+                    "st_mode",
+                    "st_uid",
+                    "st_gid",
+                    "st_size",
+                    "st_mtime_ns",
+                    "st_ctime_ns",
+                    "st_nlink",
+                )
+            }
+            fields.update(st_uid=0, st_gid=0, st_mode=entry.st_mode & ~0o022)
+            return SimpleNamespace(**fields)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "record.json"
+            target.write_text("{}", encoding="utf-8")
+            alias = root.parent / (root.name + "-alias")
+            alias.symlink_to(root, target_is_directory=True)
+            self.addCleanup(alias.unlink)
+            with (
+                mock.patch.object(Path, "lstat", autospec=True, side_effect=protected_metadata),
+                mock.patch.object(leases_module.os, "listxattr", return_value=[]),
+                mock.patch.object(leases_module.os, "geteuid", return_value=1000),
+            ):
+                with self.assertRaisesRegex(ValueError, "aliased"):
+                    leases_module.ProtectedCustodyVerifier._protected_tree(alias)
+                link = root / "hardlink.json"
+                os.link(target, link)
+                with self.assertRaisesRegex(ValueError, "aliased"):
+                    leases_module.ProtectedCustodyVerifier._protected_tree(root)
+                link.unlink()
+                with mock.patch.object(
+                    leases_module.os, "listxattr", return_value=["system.posix_acl_access"]
+                ):
+                    with self.assertRaisesRegex(ValueError, "ACL"):
+                        leases_module.ProtectedCustodyVerifier._protected_tree(root)
+
+                def failed_walk(*args, **kwargs):
+                    kwargs["onerror"](PermissionError("synthetic denied inventory"))
+                    return iter(())
+
+                with mock.patch.object(leases_module.os, "walk", side_effect=failed_walk):
+                    with self.assertRaisesRegex(ValueError, "traversal failed"):
+                        leases_module.ProtectedCustodyVerifier._protected_tree(root)
+
+    def test_c1_replacement_preserves_complete_prior_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repository = self.repository_worktree(base, "product", repository="local/fixture")
+            self.git(repository[0], "remote", "remove", "origin")
+            current = self.lease_v2("ARCHIVE", "local/fixture", *repository)
+            current["expires_utc"] = "2099-01-01T00:00:00Z"
+            self.authorize(base, current, "lease:acquire")
+            source = base / "candidate.json"
+            self.write(source, current)
+            locks = base / "locks"
+            acquire(source, locks, repo_root=base)
+            originals = []
+            for generation in (2, 3):
+                originals.append(canonical_json_bytes(current))
+                previous_ref = current["decision_ref"]
+                current = dict(current, generation=generation)
+                self.authorize(base, current, "lease:expand", previous_decision_ref=previous_ref)
+                self.write(source, current)
+                replace(source, locks, expected_generation=generation - 1, repo_root=base)
+                archive = locks / "lease-history" / "ARCHIVE" / f"{generation - 1}.json"
+                self.assertEqual(originals[-1], archive.read_bytes())
+            self.assertEqual(originals[0], (locks / "lease-history/ARCHIVE/1.json").read_bytes())
+
+    def test_c1_snapshot_refuses_inventory_mutation_during_validation(self):
+        vector = json.loads(
+            (
+                ROOT / "compatibility/repo-set-lease.v2/negative/protected-custody-cases.json"
+            ).read_text(encoding="utf-8")
+        )
+        case = vector["cases"][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locks = base / "locks"
+            locks.mkdir()
+            shutil.copytree(ROOT / "schemas", base / "schemas")
+            (base / "TEMPLATE_VERSION").write_text("test\n", encoding="utf-8")
+            for entry in case["repository_root_files"]:
+                target = base / entry["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if "json_document" in entry:
+                    self.write(target, entry["json_document"])
+                else:
+                    target.write_text(entry["content_utf8"], encoding="utf-8", newline="")
+            serialized = canonical_json_bytes(case["current_candidate"])
+            (locks / f"{case['lease_id']}.lease.json").write_bytes(serialized)
+            verifier = leases_module.ProtectedCustodyVerifier(locks, base)
+            with mock.patch.object(
+                verifier, "_protected_tree", side_effect=[{}, {}, {"replaced": ()}]
+            ):
+                with self.assertRaisesRegex(ValueError, "changed during"):
+                    verifier.verify(case["lease_id"], 1, serialized)
+
     def test_c1_caller_owned_root_never_confers_custody(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -276,39 +441,36 @@ class LeaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "digest|SHA-256"):
                     verifier.verify("C1-LOCAL", 1, path.read_bytes())
 
-    def test_a1_expired_before_acquire_is_refused(self):
-        self._a1_acquire_clock_case(
-            now="2026-01-01T00:10:01Z", expires="2026-01-01T00:10:00.100000Z"
+    def _a1_vector_case(self, case_id):
+        vector = json.loads(
+            (ROOT / "compatibility/repo-set-lease.v2/negative/acquire-expiry-cases.json").read_text(
+                encoding="utf-8"
+            )
         )
+        case = next(case for case in vector["cases"] if case["id"] == case_id)
+        self._a1_acquire_clock_case(
+            now=case.get("initial_now_utc", case.get("now_utc")),
+            expires=case["expires_utc"],
+            crossing=case.get("crossing_phase"),
+        )
+
+    def test_a1_expired_before_acquire_is_refused(self):
+        self._a1_vector_case("expired-before-acquire")
 
     def test_a1_expiry_during_guarded_decision_validation_is_refused(self):
-        self._a1_acquire_clock_case(
-            now="2026-01-01T00:10:00Z",
-            expires="2026-01-01T00:10:00.100000Z",
-            crossing="decision",
-        )
+        self._a1_vector_case("guarded-decision-crosses-expiry")
 
     def test_a1_fractional_same_second_expiry_is_refused(self):
-        self._a1_acquire_clock_case(
-            now="2026-01-01T00:10:00.900000Z", expires="2026-01-01T00:10:00.100000Z"
-        )
+        self._a1_vector_case("fractional-same-second-expiry")
 
     def test_a1_temporary_fsync_crossing_expiry_is_refused(self):
-        self._a1_acquire_clock_case(
-            now="2026-01-01T00:10:00Z",
-            expires="2026-01-01T00:10:00.100000Z",
-            crossing="fsync",
-        )
+        self._a1_vector_case("temporary-fsync-crosses-expiry")
 
     def test_a1_expiry_equality_is_inclusive(self):
-        self._a1_acquire_clock_case(
-            now="2026-01-01T00:10:00.100000Z", expires="2026-01-01T00:10:00.100000Z"
-        )
+        self._a1_vector_case("inclusive-equality")
 
     def test_a1_future_expiry_is_admitted(self):
-        self._a1_acquire_clock_case(
-            now="2026-01-01T00:10:00.100000Z", expires="2026-01-01T00:10:00.900000Z"
-        )
+        self._a1_vector_case("future-expiry")
 
     def test_v2_custody_bytes_are_canonical_through_acquire_expand_release(self):
         with tempfile.TemporaryDirectory() as tmp:
