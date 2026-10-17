@@ -12,7 +12,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from .leases import ProtectedCustodyVerifier, acquire, lease_candidate_sha256, observe, release
-from .util import canonical_json_bytes, load_json, require_safe_id
+from .util import _fsync_directory, canonical_json_bytes, load_json, require_safe_id
 
 
 def _result(*, identity: dict[str, Any], disposition: str, **payload: Any) -> dict[str, Any]:
@@ -64,10 +64,14 @@ def create_server(
         directory = None
         snapshot = None
         metadata = pending / "operation.json"
+        preserve_fence = False
         try:
+            _fsync_directory(lock_root)
             if any(staging.glob(prefix + "*")):
+                preserve_fence = True
                 raise _ReconciliationRequired("MCP candidate staging requires reconciliation")
             directory = Path(tempfile.mkdtemp(prefix=prefix, dir=staging))
+            _fsync_directory(staging)
             snapshot = directory / "candidate.json"
             with metadata.open("xb") as handle:
                 handle.write(
@@ -81,23 +85,28 @@ def create_server(
                 )
                 handle.flush()
                 os.fsync(handle.fileno())
+            _fsync_directory(pending)
             with snapshot.open("xb") as handle:
                 handle.write(canonical_json_bytes(document))
                 handle.flush()
                 os.fsync(handle.fileno())
+            _fsync_directory(directory)
             yield snapshot
         finally:
-            try:
-                if snapshot is not None:
-                    snapshot.unlink(missing_ok=True)
-                if directory is not None:
-                    directory.rmdir()
-                metadata.unlink(missing_ok=True)
-                pending.rmdir()
-            except OSError as exc:
-                raise _ReconciliationRequired(
-                    "MCP candidate cleanup requires reconciliation"
-                ) from exc
+            if not preserve_fence:
+                try:
+                    if snapshot is not None:
+                        snapshot.unlink(missing_ok=True)
+                    if directory is not None:
+                        directory.rmdir()
+                        _fsync_directory(staging)
+                    metadata.unlink(missing_ok=True)
+                    pending.rmdir()
+                    _fsync_directory(lock_root)
+                except OSError as exc:
+                    raise _ReconciliationRequired(
+                        "MCP candidate cleanup requires reconciliation"
+                    ) from exc
 
     def state(lease_id: str) -> dict[str, Any]:
         target = lock_root / f"{lease_id}.lease.json"
@@ -135,7 +144,11 @@ def create_server(
             authority = observe(lease_id, lock_root, repo_root=repo_root)
             if authority["ownership_status"] == "UNKNOWN_FAIL_CLOSED":
                 return uncertain({"lease_id": lease_id}, "Custody is unknown", authority)
-        except (OSError, TypeError, ValueError) as exc:
+        except OSError as exc:
+            return uncertain(
+                {"lease_id": lease_id}, str(exc), {"ownership_status": "UNKNOWN_FAIL_CLOSED"}
+            )
+        except (TypeError, ValueError) as exc:
             return _refusal(identity={"lease_id": lease_id}, reason=str(exc))
         return _result(identity={"lease_id": lease_id}, disposition="OK", authority=authority)
 
@@ -145,7 +158,11 @@ def create_server(
             custody = observe(lease_id, lock_root, repo_root=repo_root)
             if custody["ownership_status"] == "UNKNOWN_FAIL_CLOSED":
                 return uncertain({"lease_id": lease_id}, "Custody is unknown", custody)
-        except (OSError, TypeError, ValueError) as exc:
+        except OSError as exc:
+            return uncertain(
+                {"lease_id": lease_id}, str(exc), {"ownership_status": "UNKNOWN_FAIL_CLOSED"}
+            )
+        except (TypeError, ValueError) as exc:
             return _refusal(identity={"lease_id": lease_id}, reason=str(exc))
         return _result(identity={"lease_id": lease_id}, disposition="OK", custody=custody)
 

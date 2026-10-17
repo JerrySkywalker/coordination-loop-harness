@@ -155,6 +155,19 @@ class RecoveryRegressionTests(unittest.TestCase):
                     self.assertTrue(orphan.is_dir())
                     self.assertFalse((locks / "MCP-ORPHAN.lease.json").exists())
                     self.assertEqual([orphan], list(staging.iterdir()))
+                    self.assertTrue((locks / ".mcp-operation.pending").is_dir())
+                with tempfile.TemporaryDirectory() as other:
+                    second = mcp_server.create_server(locks, root, staging_root=Path(other))
+                    async with Client(second) as client:
+                        with mock.patch.object(mcp_server, "acquire") as acquire:
+                            result = await client.call_tool(
+                                "admit_writer", {"candidate_path": str(paths["MCP-ORPHAN"])}
+                            )
+                            acquire.assert_not_called()
+                        self.assertEqual("UNCERTAIN", result.structured_content["disposition"])
+                        self.assertFalse(result.structured_content["automatic_retry"])
+                        self.assertTrue(orphan.is_dir())
+                        self.assertTrue((locks / ".mcp-operation.pending").is_dir())
 
             asyncio.run(exercise())
 
@@ -298,3 +311,25 @@ asyncio.run(exercise())"""
                 if child.poll() is None:
                     child.terminate()
                     child.wait(timeout=10)
+
+    def test_inspection_io_failure_is_uncertain_without_retry_permission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            async def exercise():
+                async with Client(mcp_server.create_server(root / "locks", root)) as client:
+                    with mock.patch.object(
+                        mcp_server,
+                        "observe",
+                        side_effect=PermissionError("fixture root unavailable"),
+                    ):
+                        for tool in ("inspect_authority", "inspect_custody"):
+                            result = await client.call_tool(tool, {"lease_id": "UNAVAILABLE"})
+                            self.assertEqual("UNCERTAIN", result.structured_content["disposition"])
+                            self.assertFalse(result.structured_content["automatic_retry"])
+                            self.assertEqual(
+                                "UNKNOWN_FAIL_CLOSED",
+                                result.structured_content["custody"]["ownership_status"],
+                            )
+
+            asyncio.run(exercise())

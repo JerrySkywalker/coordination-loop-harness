@@ -328,3 +328,12 @@ process temp directory does not bypass a pending operation. Existing fences or
 orphan snapshots require explicit quiescence and custody reconciliation; the
 facade never deletes an existing operation fence automatically. This is a
 cooperating local-process contract, not a qualified protected Root or UTC witness.
+
+Detecting a legacy staging orphan preserves the fixed-root reconciliation fence,
+including before any core lease mutation. A later process selecting another
+staging root must still refuse automatic continuation. Inspection I/O failures
+are unknown custody, not definite refusal. POSIX directory metadata is synced
+before entering the core mutation and after normal cleanup. The local MCP fence
+provides cooperating process exclusion and process-interruption evidence only;
+Windows directory-entry power-loss durability remains UNPROVEN. This source
+adapter does not satisfy protected-root/crash-durability operational admission.
