@@ -283,7 +283,7 @@ class AtomicJsonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target = root / "record.json"
-            first = {"z": "h茅llo", "a": 1}
+            first = {"z": "héllo", "a": 1}
             second = {"a": 2, "z": "world"}
             write_json_atomic(target, first, create_new=True, trusted_root=root, canonical=True)
             self.assertEqual(canonical_json_bytes(first), target.read_bytes())
