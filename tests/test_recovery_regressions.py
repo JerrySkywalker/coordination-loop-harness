@@ -333,3 +333,52 @@ asyncio.run(exercise())"""
                             )
 
             asyncio.run(exercise())
+
+    def _custody_io_case(self, after_publication):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, paths = v2_candidates(root, "MCP-UNREADABLE")
+            locks = root / "locks"
+            target = locks / "MCP-UNREADABLE.lease.json"
+            exists = Path.exists
+            acquire = mcp_server.acquire
+            inaccessible = not after_publication
+
+            def fixture_exists(path):
+                if inaccessible and path == target:
+                    raise PermissionError("fixture custody became unreadable")
+                return exists(path)
+
+            def publish_then_lose_observation(*args, **kwargs):
+                nonlocal inaccessible
+                result = acquire(*args, **kwargs)
+                inaccessible = True
+                return result
+
+            async def exercise():
+                async with Client(mcp_server.create_server(locks, root)) as client:
+                    with (
+                        mock.patch.object(Path, "exists", fixture_exists),
+                        mock.patch.object(
+                            mcp_server, "acquire", side_effect=publish_then_lose_observation
+                        ) as entered,
+                    ):
+                        result = await client.call_tool(
+                            "admit_writer",
+                            {"candidate_path": str(paths["MCP-UNREADABLE"])},
+                        )
+                    payload = result.structured_content
+                    self.assertEqual("UNCERTAIN", payload["disposition"])
+                    self.assertFalse(payload["automatic_retry"])
+                    self.assertEqual(
+                        "UNKNOWN_FAIL_CLOSED", payload["custody"]["ownership_status"]
+                    )
+                    self.assertEqual(int(after_publication), entered.call_count)
+                    self.assertEqual(after_publication, target.is_file())
+
+            asyncio.run(exercise())
+
+    def test_custody_io_uncertainty_before_and_after_publication(self):
+        for after_publication in (False, True):
+            with self.subTest(after_publication=after_publication):
+                self._custody_io_case(after_publication)

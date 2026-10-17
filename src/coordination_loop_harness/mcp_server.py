@@ -110,9 +110,9 @@ def create_server(
 
     def state(lease_id: str) -> dict[str, Any]:
         target = lock_root / f"{lease_id}.lease.json"
-        if not target.exists() and not target.is_symlink():
-            return {"ownership_status": "ABSENT"}
         try:
+            if not target.exists() and not target.is_symlink():
+                return {"ownership_status": "ABSENT"}
             result = observe(lease_id, lock_root, repo_root=repo_root)
             if result["ownership_status"] == "UNKNOWN_FAIL_CLOSED":
                 return result

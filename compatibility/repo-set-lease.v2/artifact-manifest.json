@@ -128,7 +128,7 @@
     },
     {
       "path": "src/coordination_loop_harness/mcp_server.py",
-      "sha256": "e0ecfac0107f4402a19d828f4aba099ad8b767b0d5cab4b1aefd2c3637fd855e"
+      "sha256": "890ea636c8847317dbd4c8fdf6654ede465e910e07940dc23fee9c05bbec5dbd"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -160,7 +160,7 @@
     },
     {
       "path": "tests/test_recovery_regressions.py",
-      "sha256": "0abd99463be8d022de7b3e3cb85e729601e16c6f46cb37f2c4966f1a1d0c5ca9"
+      "sha256": "72f7a7ed87c8f9d58a2ffbd4291affe587af60202d03c63f2bafb1c6cbab4fa8"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
@@ -306,8 +306,8 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:90f3ebd8625b4030cb35c6db34aff2fbe438ef0ea0c63be87e9208cb46b4ffaa",
-  "artifact_set_sha256": "90f3ebd8625b4030cb35c6db34aff2fbe438ef0ea0c63be87e9208cb46b4ffaa",
+  "producer_artifact_id": "repo-set-lease.v2+sha256:dbd803d7a54ba5af0217125ba22105b09eb22c905659eddf362d3a781e81b0f2",
+  "artifact_set_sha256": "dbd803d7a54ba5af0217125ba22105b09eb22c905659eddf362d3a781e81b0f2",
   "acquire_expiry_policy": "trusted-full-precision-initial-and-post-fsync-prepublication-sample; now-equals-expiry-admits; sample-is-not-atomic-with-publication",
   "protected_custody_policy": "operator-fixed-protected-CLH-only-issuance; full-current-Decision-chain-generation-state-digest-UTC; snapshot-confers-no-effective-grant; unsupported-protection-HOLD",
   "release_expiry_policy": "full-precision-fresh-samples-initial-under-Git-guard-and-post-fsync-prepublication; strict-greater-than-expiry-requires-stale-recovery; publication-is-not-atomic-with-clock-sample",
