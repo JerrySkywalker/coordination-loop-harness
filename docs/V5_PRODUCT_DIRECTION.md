@@ -39,6 +39,11 @@ Provider-specific positioning or historical usage examples do not define the v5 
 6. Reduce active scaffold/distribution ownership in CLH as CLT becomes the unambiguous bootstrap/distribution product.
 7. Remove current-facing ChatGPT-Web/Codex-only product positioning while retaining historical documentation where needed for provenance.
 
+Minimum-V1 E1 fixes the active boundary in `docs/CLH_CLT_BOUNDARY.md`: CLH keeps
+only the coordination kernel as current ownership, while the v0.2/v0.3 local
+renderer is a frozen compatibility window and the active bootstrap workflow is
+removed. CLT is the sole active starter/distribution owner.
+
 ## CLH / CLT boundary
 
 CLH owns coordination contracts and validation. CLT owns the starter/distribution experience.

@@ -1,5 +1,58 @@
 # Changelog
 
+## Unreleased
+
+- Added the versioned `coord.repo-set-lease.v2` shared-read/exclusive-write
+  contract with exact writer admission and fail-closed stale ownership
+  observation while preserving v1 semantics.
+- Bound v2 decisions to canonical lease candidates; added exact duplicate-id
+  refusal, Git-native admission guards, stable repository snapshots,
+  crash-safe create-new publication, and independently authorized terminal
+  candidates with hashed outcomes and distinct stale-recovery authority. The
+  canonical JSON boundary now rejects duplicate keys, every floating-point
+  value, and integers outside the interoperable safe range.
+- Closed Goal 07 ownership aliases with suffix-free v2 repository identities,
+  bounded portable path syntax plus native mutation admission, strict canonical
+  decision scopes, exact filename/declared-id handling, explicit terminal
+  repository roots, and default-deny unknown or malformed lease schemas.
+- Bound repository-set lease scanning, observation, listing, replacement, release,
+  and mutation to exact case-sensitive ordinary single-link directory entries;
+  symlink, reparse, hardlink, identity-swap, Windows case aliases, and mixed-case
+  lease suffixes fail closed while safely readable exact resource claims remain
+  reserved.
+- Made CLH admission reserve lease-id filenames by portable casefold across
+  active and terminal records, prevented invalid v2 and unknown-schema relative
+  scopes from inheriting ambient cwd, and sealed explicit READ/READ plus bidirectional
+  READ/WRITE conformance vectors. The portable overlap corpus now carries
+  complete stored and candidate documents, including executable terminal
+  identity/resource-release and invalid-relative-path cases, plus the exact
+  repository-root file map needed to reproduce terminal validation. The
+  terminal-release vector proves local and infrastructure claim release too,
+  while historical v1 repository-name canonicalization remains unchanged.
+- Moved replacement writer-binding and release authority/lineage/outcome checks
+  ahead of Git-guard creation while retaining guarded final revalidation. The
+  schema/authority corpus now embeds every complete candidate and Decision plus
+  its explicit repository-root file map, and portable v2 safe-integer checks no
+  longer narrow the generic Decision schema's historical v1 integer range.
+- Required explicit repository roots for every v2 mutation, exact serialized
+  active-writer matching, nonblank infrastructure identities, portable
+  repository-relative references, v2-aware origin normalization, and executable
+  old-or-complete-new replacement recovery coverage.
+- Made v2 observation run the full repository-identity validator, denied
+  ambiguous absolute resource and decision-lineage path spellings including
+  cross-host-invalid path-component characters, and revalidated decision
+  evidence immediately before atomic lease publication.
+  Branch-shaped substrings in opaque infrastructure identities no longer make
+  otherwise valid resources impossible to authorize.
+- Bound writer admission to one Git common directory and stable filesystem
+  identities while guarding common/per-worktree configuration, worktree admin,
+  packed refs, HEAD, index, and the active branch through publication. Legacy
+  v1 coordination self-write behavior remains compatible under the same live
+  writer checks.
+- Removed the active CLH derived-repository workflow and froze the legacy local
+  renderer as a compatibility-only surface; CLT now owns active bootstrap and
+  distribution behavior.
+
 ## 0.3.0
 
 - Added generic Harness Model and Profile Pack validation contracts while
