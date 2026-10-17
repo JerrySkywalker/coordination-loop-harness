@@ -1,0 +1,100 @@
+name: source-admission
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact candidate or prospective merge commit
+        required: true
+        type: string
+      base_sha:
+        description: Exact admitted boundary base
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  source-admission:
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUTF8: "1"
+      TARGET_SHA: ${{ github.event.pull_request.head.sha || inputs.target_sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+      WORKFLOW_REF: ${{ github.ref }}
+      EVENT_NAME: ${{ github.event_name }}
+      ACTOR: ${{ github.actor }}
+      EXPECTED_OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate exact identities and dispatch trust
+        shell: python
+        run: |
+          import os, re
+          for key in ("TARGET_SHA", "BASE_SHA", "WORKFLOW_SHA"):
+              if re.fullmatch("[0-9a-f]{40}", os.environ[key]) is None:
+                  raise SystemExit("INVALID_" + key)
+          if os.environ["EVENT_NAME"] == "workflow_dispatch" and os.environ["WORKFLOW_REF"] != "refs/heads/main":
+              raise SystemExit("UNTRUSTED_DISPATCH_WORKFLOW_REF")
+          if os.environ["EVENT_NAME"] == "workflow_dispatch" and os.environ["ACTOR"].casefold() != os.environ["EXPECTED_OWNER"].casefold():
+              raise SystemExit("UNTRUSTED_DISPATCH_ACTOR")
+          print("SOURCE_ADMISSION_WORKFLOW_SHA=" + os.environ["WORKFLOW_SHA"])
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact checkout and boundary ancestry
+        shell: python
+        run: |
+          import os, subprocess
+          actual = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if actual != os.environ["TARGET_SHA"]:
+              raise SystemExit("CHECKOUT_IDENTITY_MISMATCH")
+          subprocess.run(["git", "merge-base", "--is-ancestor", os.environ["BASE_SHA"], actual], check=True)
+          if subprocess.check_output(["git", "status", "--porcelain"]):
+              raise SystemExit("CHECKOUT_NOT_CLEAN")
+          print("SOURCE_ADMISSION_INITIAL_SHA=" + actual)
+          print("SOURCE_ADMISSION_BASE_SHA=" + os.environ["BASE_SHA"])
+      - name: Install isolated source validation dependencies
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess, sys
+          subprocess.run([sys.executable, "-m", "pip", "install", "ruff==0.12.11", "pytest>=8,<9", "build", "jsonschema>=4.25,<5"], check=True)
+          if Path("pyproject.toml").is_file():
+              subprocess.run([sys.executable, "-m", "pip", "install", "."], check=True)
+      - name: Lint and complete test collection
+        shell: python
+        run: |
+          from pathlib import Path
+          import os, subprocess, sys
+          paths = [str(Path.cwd()), str(Path.cwd() / "src")]
+          os.environ["PYTHONPATH"] = os.pathsep.join(paths)
+          roots = ["src", "tests"] if Path("src").is_dir() else ["scripts", "tests"]
+          subprocess.run([sys.executable, "-m", "ruff", "check", *roots], check=True)
+          subprocess.run([sys.executable, "-m", "pytest", "-q"], check=True)
+      - name: Build and settle exact source identity
+        shell: python
+        run: |
+          from pathlib import Path
+          import os, subprocess, sys
+          if Path("pyproject.toml").is_file():
+              output = str(Path(os.environ["RUNNER_TEMP"]) / "source-admission-dist")
+              subprocess.run([sys.executable, "-m", "build", "--outdir", output], check=True)
+          actual = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if actual != os.environ["TARGET_SHA"] or subprocess.check_output(["git", "status", "--porcelain"]):
+              raise SystemExit("FINAL_SOURCE_IDENTITY_OR_CLEANLINESS_DRIFT")
+          print("SOURCE_ADMISSION_TESTED_SHA=" + actual)
+          print("SOURCE_ADMISSION_RESULT=PASS")
