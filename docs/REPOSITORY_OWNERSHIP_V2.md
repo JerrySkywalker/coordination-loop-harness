@@ -307,3 +307,16 @@ inspection API. Missing inspection support returns HOLD_ROOT_PROTECTION_UNPROVEN
 before any traversal. Platform-specific fault tests retain SKIP where that backend
 is absent; the platform-independent missing-backend refusal test is mandatory.
 Neither those skips nor green source CI qualify a platform or grant an exception.
+
+## Candidate recovery corrections
+
+Release samples retain UTC fractions and are refreshed under the Git guard and
+after temporary-file fsync immediately before publication. An expired sample
+requires stale recovery authority. The sample and publication are not atomic;
+clock resolution does not establish trusted UTC or protected runtime admission.
+
+MCP mutations reconcile exact before/after custody observations. A changed or
+unknown error outcome is `UNCERTAIN`, never automatic retry permission. Candidate
+snapshots use private staging outside the repository; unresolved operation
+snapshots block another mutation until explicit reconciliation. Orphans are not
+automatically deleted or treated as authority.

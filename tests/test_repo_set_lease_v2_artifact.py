@@ -26,6 +26,7 @@ EXPECTED_ARTIFACT_PATHS = sorted(
         "compatibility/repo-set-lease.v2/negative/protected-custody-cases.json",
         "src/coordination_loop_harness/mcp_server.py",
         "tests/test_mcp_server.py",
+        "tests/test_recovery_regressions.py",
         "compatibility/repo-set-lease.v2/negative/acquire-expiry-cases.json",
         "compatibility/repo-set-lease.v2/negative/overlap-cases.json",
         "compatibility/repo-set-lease.v2/negative/schema-and-authority-cases.json",

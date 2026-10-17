@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
-from contextlib import suppress
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from mcp.server import MCPServer
 
 from .leases import ProtectedCustodyVerifier, acquire, lease_candidate_sha256, observe, release
-from .util import canonical_json_bytes, load_json
+from .util import canonical_json_bytes, load_json, require_safe_id
 
 
 def _result(*, identity: dict[str, Any], disposition: str, **payload: Any) -> dict[str, Any]:
@@ -32,12 +33,76 @@ def _repository_file(path_text: str, repo_root: Path) -> Path:
     return path
 
 
-def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
+class _ReconciliationRequired(RuntimeError):
+    pass
+
+
+def create_server(
+    lock_root: Path, repo_root: Path, *, staging_root: Path | None = None
+) -> MCPServer:
     """Create a transport adapter; lease validation and state stay owned by CLH."""
     custody_verifier = ProtectedCustodyVerifier(lock_root, repo_root)
     lock_root = lock_root.resolve()
     repo_root = repo_root.resolve()
     server = MCPServer("coordination-loop-clh", version="1", title="CLH MCP facade")
+    staging = (staging_root or Path(tempfile.gettempdir())).resolve()
+    if staging == repo_root or repo_root in staging.parents:
+        raise ValueError("MCP candidate staging must be outside the repository")
+    domain = hashlib.sha256((str(lock_root) + "\0" + str(repo_root)).encode()).hexdigest()[:24]
+    prefix = f"clh-mcp-{domain}-"
+
+    @contextmanager
+    def candidate_snapshot(document: dict[str, Any]):
+        # Existing operation snapshots may be active or crash orphans. Neither
+        # is permission to reclaim or start another mutation automatically.
+        if any(staging.glob(prefix + "*")):
+            raise _ReconciliationRequired("MCP candidate staging requires reconciliation")
+        directory = Path(tempfile.mkdtemp(prefix=prefix, dir=staging))
+        snapshot = directory / "candidate.json"
+        try:
+            with snapshot.open("xb") as handle:
+                handle.write(canonical_json_bytes(document))
+                handle.flush()
+                os.fsync(handle.fileno())
+            yield snapshot
+        finally:
+            try:
+                snapshot.unlink(missing_ok=True)
+                directory.rmdir()
+            except OSError as exc:
+                raise _ReconciliationRequired(
+                    "MCP candidate cleanup requires reconciliation"
+                ) from exc
+
+    def state(lease_id: str) -> dict[str, Any]:
+        target = lock_root / f"{lease_id}.lease.json"
+        if not target.exists() and not target.is_symlink():
+            return {"ownership_status": "ABSENT"}
+        try:
+            result = observe(lease_id, lock_root, repo_root=repo_root)
+            if result["ownership_status"] == "UNKNOWN_FAIL_CLOSED":
+                return result
+            # Observation validates entry identity; bytes bind before/after
+            # reconciliation without manufacturing an effective custody grant.
+            result["document_sha256"] = lease_candidate_sha256(load_json(target))
+            return result
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {"ownership_status": "UNKNOWN_FAIL_CLOSED", "findings": [str(exc)]}
+
+    def uncertain(identity: dict[str, Any], reason: str, custody: dict[str, Any]):
+        return _result(
+            identity=identity,
+            disposition="UNCERTAIN",
+            refusal_reason=reason,
+            custody=custody,
+            automatic_retry=False,
+        )
+
+    def mutation_failure(identity, reason, lease_id, before, *, orphan=False):
+        after = state(lease_id)
+        if not orphan and after == before and after["ownership_status"] != "UNKNOWN_FAIL_CLOSED":
+            return _refusal(identity=identity, reason=reason)
+        return uncertain(identity, reason, after)
 
     @server.tool(name="inspect_authority", structured_output=True)
     def inspect_authority(lease_id: str) -> dict[str, Any]:
@@ -72,37 +137,37 @@ def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
     @server.tool(name="admit_writer", structured_output=True)
     def admit_writer(candidate_path: str) -> dict[str, Any]:
         identity = {"candidate_path": candidate_path}
+        lease_id = None
+        before = None
+        entered = False
         try:
             candidate = _repository_file(candidate_path, repo_root)
             expected = load_json(candidate)
             if expected.get("schema_version") != "coord.repo-set-lease.v2":
                 raise ValueError("MCP writer admission requires a v2 lease candidate")
+            lease_id = require_safe_id(expected["lease_id"], "lease_id")
             expected_digest = lease_candidate_sha256(expected)
-            # The core opens its candidate path independently. Give it a private
-            # snapshot so a caller cannot swap the public path between reads.
-            descriptor, snapshot_name = tempfile.mkstemp(
-                prefix=".clh-mcp-candidate-", suffix=".json", dir=repo_root
-            )
-            snapshot = Path(snapshot_name)
-            try:
-                with os.fdopen(descriptor, "wb") as handle:
-                    handle.write(canonical_json_bytes(expected))
-                    handle.flush()
-                    os.fsync(handle.fileno())
+            before = state(lease_id)
+            if before["ownership_status"] == "UNKNOWN_FAIL_CLOSED":
+                return uncertain(identity, "Existing custody requires reconciliation", before)
+            with candidate_snapshot(expected) as snapshot:
+                entered = True
                 lease_path = acquire(snapshot, lock_root, repo_root=repo_root)
-            finally:
-                # A failed cleanup must not hide a lease that was already created.
-                with suppress(OSError):
-                    snapshot.unlink(missing_ok=True)
-            lease_id = lease_path.name.removesuffix(".lease.json")
             admitted = load_json(lease_path)
-            if admitted.get("lease_id") != lease_id:
-                raise ValueError("Acquired lease record identity does not match its path")
-            if lease_candidate_sha256(admitted) != expected_digest:
-                raise ValueError("Acquired lease record does not match the admitted candidate")
-            authority = observe(lease_id, lock_root, repo_root=repo_root)
+            if (
+                admitted.get("lease_id") != lease_id
+                or lease_candidate_sha256(admitted) != expected_digest
+            ):
+                return uncertain(identity, "Published candidate identity mismatch", state(lease_id))
+            authority = state(lease_id)
+            if authority["ownership_status"] != "ACTIVE":
+                return uncertain(identity, "Published custody is not settled ACTIVE", authority)
             serialized_authority = canonical_json_bytes(admitted).decode("utf-8")
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        except _ReconciliationRequired as exc:
+            return mutation_failure(identity, str(exc), lease_id, before, orphan=True)
+        except (OSError, RuntimeError, KeyError, TypeError, ValueError) as exc:
+            if entered:
+                return mutation_failure(identity, str(exc), lease_id, before)
             return _refusal(identity=identity, reason=str(exc))
         return _result(
             identity={"lease_id": lease_id},
@@ -117,23 +182,37 @@ def create_server(lock_root: Path, repo_root: Path) -> MCPServer:
         lease_id: str, expected_generation: int, terminal_candidate_path: str
     ) -> dict[str, Any]:
         identity = {"lease_id": lease_id, "expected_generation": expected_generation}
+        entered = False
+        before = None
         try:
+            require_safe_id(lease_id, "lease_id")
             terminal_candidate = _repository_file(terminal_candidate_path, repo_root)
-            lease_path = release(
-                lease_id,
-                lock_root,
-                expected_generation=expected_generation,
-                candidate_path=terminal_candidate,
-                repo_root=repo_root,
-            )
-            custody = observe(lease_id, lock_root, repo_root=repo_root)
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            expected = load_json(terminal_candidate)
+            if expected.get("lease_id") != lease_id:
+                raise ValueError("Terminal candidate lease identity mismatch")
+            before = state(lease_id)
+            if before["ownership_status"] == "UNKNOWN_FAIL_CLOSED":
+                return uncertain(identity, "Existing custody requires reconciliation", before)
+            with candidate_snapshot(expected) as snapshot:
+                entered = True
+                lease_path = release(
+                    lease_id,
+                    lock_root,
+                    expected_generation=expected_generation,
+                    candidate_path=snapshot,
+                    repo_root=repo_root,
+                )
+            custody = state(lease_id)
+            if custody["ownership_status"] != "TERMINAL_RELEASED":
+                return uncertain(identity, "Published release requires reconciliation", custody)
+        except _ReconciliationRequired as exc:
+            return mutation_failure(identity, str(exc), lease_id, before, orphan=True)
+        except (OSError, RuntimeError, KeyError, TypeError, ValueError) as exc:
+            if entered:
+                return mutation_failure(identity, str(exc), lease_id, before)
             return _refusal(identity=identity, reason=str(exc))
         return _result(
-            identity=identity,
-            disposition="OK",
-            lease_path=str(lease_path),
-            custody=custody,
+            identity=identity, disposition="OK", lease_path=str(lease_path), custody=custody
         )
 
     return server

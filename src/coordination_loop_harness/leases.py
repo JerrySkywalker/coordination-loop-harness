@@ -1796,7 +1796,7 @@ def release(
                     candidate,
                     current,
                     repo_root,
-                    observed_now=now,
+                    observed_now=_timestamp(utc_now(), label="current_utc"),
                 )
                 _assert_lease_entry_unchanged(
                     lock_root,
@@ -1804,7 +1804,18 @@ def release(
                     entry_identity,
                     label="released lease file",
                 )
-                write_json_atomic(lease_path, candidate, trusted_root=lock_root, canonical=True)
+                write_json_atomic(
+                    lease_path,
+                    candidate,
+                    trusted_root=lock_root,
+                    canonical=True,
+                    before_publish=lambda: _validate_release_authority(
+                        candidate,
+                        current,
+                        repo_root,
+                        observed_now=_timestamp(utc_now(), label="current_utc"),
+                    ),
+                )
         elif current_schema == _V1_SCHEMA:
             if not isinstance(outcome_ref, str) or not outcome_ref:
                 raise ValueError("A legacy release requires outcome_ref")

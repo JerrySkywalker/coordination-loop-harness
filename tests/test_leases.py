@@ -1239,7 +1239,7 @@ class LeaseTests(unittest.TestCase):
                     candidate_path=terminal_path,
                     repo_root=base,
                 )
-            self.assertEqual(2, clock.call_count)
+            self.assertEqual(4, clock.call_count)
             self.assertEqual(
                 "TERMINAL_RELEASED",
                 observe("RUN-A", locks, repo_root=base)["ownership_status"],
