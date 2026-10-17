@@ -160,7 +160,7 @@
     },
     {
       "path": "tests/test_recovery_regressions.py",
-      "sha256": "72f7a7ed87c8f9d58a2ffbd4291affe587af60202d03c63f2bafb1c6cbab4fa8"
+      "sha256": "748b01b9ae34fc654509ab3da95c8b5ffc0fe25e411347c7a2665fcb1b1c8344"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
@@ -306,8 +306,8 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:6b886969411d50b2bc8b709848fee11307260bb76fd5765b2cd91ce9aa4d26af",
-  "artifact_set_sha256": "6b886969411d50b2bc8b709848fee11307260bb76fd5765b2cd91ce9aa4d26af",
+  "producer_artifact_id": "repo-set-lease.v2+sha256:58c5b13e04df465ae490e881f95a89c5eb1b8fff90324159f940dc8685ac60c1",
+  "artifact_set_sha256": "58c5b13e04df465ae490e881f95a89c5eb1b8fff90324159f940dc8685ac60c1",
   "acquire_expiry_policy": "trusted-full-precision-initial-and-post-fsync-prepublication-sample; now-equals-expiry-admits; sample-is-not-atomic-with-publication",
   "protected_custody_policy": "operator-fixed-protected-CLH-only-issuance; full-current-Decision-chain-generation-state-digest-UTC; snapshot-confers-no-effective-grant; unsupported-protection-HOLD",
   "release_expiry_policy": "full-precision-fresh-samples-initial-under-Git-guard-and-post-fsync-prepublication; strict-greater-than-expiry-requires-stale-recovery; publication-is-not-atomic-with-clock-sample",

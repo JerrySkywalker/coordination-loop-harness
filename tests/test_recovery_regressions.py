@@ -42,7 +42,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_fractional_expiry_cannot_use_normal_release(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             locks, terminal = self._release_fixture(root)
             with (
                 mock.patch.object(leases, "utc_now", return_value="2099-01-01T00:00:00.200Z"),
@@ -61,7 +61,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_release_rechecks_expiry_after_temporary_file_fsync(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             locks, terminal = self._release_fixture(root)
             samples = ["2099-01-01T00:00:00.000Z"] * 3 + ["2099-01-01T00:00:00.200Z"]
             with (
@@ -83,7 +83,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_postpublication_error_is_uncertain_and_never_retry_permission(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             _, _, paths = v2_candidates(root, "MCP-FAULT")
             locks = root / "locks"
             target = locks / "MCP-FAULT.lease.json"
@@ -113,7 +113,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_unknown_observation_cannot_be_reported_ok(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             _, _, paths = v2_candidates(root, "MCP-UNKNOWN")
             locks = root / "locks"
 
@@ -135,7 +135,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_staging_orphan_blocks_new_mutation_without_automatic_cleanup(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as stage:
-            root, staging = Path(directory), Path(stage)
+            root, staging = Path(directory).resolve(), Path(stage).resolve()
             _, _, paths = v2_candidates(root, "MCP-ORPHAN")
             locks = root / "locks"
             domain = hashlib.sha256(
@@ -173,7 +173,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_candidate_snapshot_is_outside_source_and_cleans_on_success(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as stage:
-            root, staging = Path(directory), Path(stage)
+            root, staging = Path(directory).resolve(), Path(stage).resolve()
             _, _, paths = v2_candidates(root, "MCP-STAGE")
             locks = root / "locks"
             acquire = mcp_server.acquire
@@ -201,7 +201,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_unknown_inspections_are_never_labelled_ok(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
 
             async def exercise():
                 server = mcp_server.create_server(root / "locks", root)
@@ -220,7 +220,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_pending_operation_survives_a_staging_root_change(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             root, stage = base / "repo", base / "different-stage"
             root.mkdir()
             stage.mkdir()
@@ -243,7 +243,7 @@ class RecoveryRegressionTests(unittest.TestCase):
 
     def test_two_mcp_processes_share_one_atomic_operation_fence(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            base = Path(directory).resolve()
             root, stage_a, stage_b = base / "repo", base / "stage-a", base / "stage-b"
             for path in (root, stage_a, stage_b):
                 path.mkdir()
@@ -314,7 +314,7 @@ asyncio.run(exercise())"""
 
     def test_inspection_io_failure_is_uncertain_without_retry_permission(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
 
             async def exercise():
                 async with Client(mcp_server.create_server(root / "locks", root)) as client:
@@ -336,7 +336,7 @@ asyncio.run(exercise())"""
 
     def _custody_io_case(self, after_publication):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             _, _, paths = v2_candidates(root, "MCP-UNREADABLE")
             locks = root / "locks"
             target = locks / "MCP-UNREADABLE.lease.json"
