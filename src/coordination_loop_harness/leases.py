@@ -158,9 +158,9 @@ def _legacy_record_is_valid(data: dict[str, Any]) -> bool:
         or not isinstance(data.get("created_utc"), str)
         or re.match(r"^\d{4}-\d{2}-\d{2}T", data["created_utc"]) is None
         or not _repository_name_is_structural(data.get("coordination_repository"))
-        or not isinstance(data.get("decision_ref"), (str, type(None)))
-        or not isinstance(data.get("released_utc"), (str, type(None)))
-        or not isinstance(data.get("outcome_ref"), (str, type(None)))
+        or not isinstance(data.get("decision_ref"), str | None)
+        or not isinstance(data.get("released_utc"), str | None)
+        or not isinstance(data.get("outcome_ref"), str | None)
     ):
         return False
     repositories = data.get("repositories")

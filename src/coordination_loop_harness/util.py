@@ -183,7 +183,7 @@ def canonical_json_bytes(data: object) -> bytes:
 def _validate_canonical_json_numbers(value: object) -> None:
     """Keep canonical JSON in the portable exact-integer numeric domain."""
 
-    if value is None or isinstance(value, (str, bool)):
+    if value is None or isinstance(value, str | bool):
         return
     if type(value) is int:
         if not is_safe_json_integer(value):
@@ -199,7 +199,7 @@ def _validate_canonical_json_numbers(value: object) -> None:
                 raise ValueError("Canonical JSON object keys must be strings")
             _validate_canonical_json_numbers(item)
         return
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         for item in value:
             _validate_canonical_json_numbers(item)
 

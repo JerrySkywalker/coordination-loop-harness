@@ -124,7 +124,7 @@
     },
     {
       "path": "src/coordination_loop_harness/leases.py",
-      "sha256": "455ac0ffd77d48c7892ebb5def96349786294df6536c9e6ae04f2b319311f0a8"
+      "sha256": "155c77dc35d3f44e05ca7e56cdfd70da170d4f7e8494dc19a523aa2ff0a9c5d5"
     },
     {
       "path": "src/coordination_loop_harness/mcp_server.py",
@@ -136,7 +136,7 @@
     },
     {
       "path": "src/coordination_loop_harness/util.py",
-      "sha256": "a56ce449a853ef36230122e25086076168502216ef2dec39524f3829949ce0fa"
+      "sha256": "ebe9b18d561296a286582b0b078be54278811c2faad30198517159372135386d"
     },
     {
       "path": "src/coordination_loop_harness/validation.py",
@@ -302,8 +302,8 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:8e66fc1e049c324ef3ee8f056a744bd3e56a2bac38fe6b4086e1eac71f80b02e",
-  "artifact_set_sha256": "8e66fc1e049c324ef3ee8f056a744bd3e56a2bac38fe6b4086e1eac71f80b02e",
+  "producer_artifact_id": "repo-set-lease.v2+sha256:d65d1cd366b0cbe14c08dbeab29fef070b7f7e3ade19483f60d49ead76b4b257",
+  "artifact_set_sha256": "d65d1cd366b0cbe14c08dbeab29fef070b7f7e3ade19483f60d49ead76b4b257",
   "acquire_expiry_policy": "trusted-full-precision-initial-and-post-fsync-prepublication-sample; now-equals-expiry-admits; sample-is-not-atomic-with-publication",
   "protected_custody_policy": "operator-fixed-protected-CLH-only-issuance; full-current-Decision-chain-generation-state-digest-UTC; snapshot-confers-no-effective-grant; unsupported-protection-HOLD"
 }
