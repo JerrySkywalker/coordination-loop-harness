@@ -78,7 +78,7 @@ class PathNormalizationTests(unittest.TestCase):
                     ["cmd", "/c", "mklink", "/J", str(link), str(external)],
                     check=False,
                     capture_output=True,
-                    text=True,
+                    text=False,
                 )
                 if created.returncode != 0:
                     self.skipTest("Windows junction creation is unavailable")
@@ -201,7 +201,7 @@ class AtomicJsonTests(unittest.TestCase):
                                 ["cmd", "/c", "mklink", "/J", str(mutex), str(external)],
                                 check=False,
                                 capture_output=True,
-                                text=True,
+                                text=False,
                             )
                             if created.returncode != 0:
                                 stolen.rename(mutex)
@@ -283,7 +283,7 @@ class AtomicJsonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target = root / "record.json"
-            first = {"z": "héllo", "a": 1}
+            first = {"z": "h茅llo", "a": 1}
             second = {"a": 2, "z": "world"}
             write_json_atomic(target, first, create_new=True, trusted_root=root, canonical=True)
             self.assertEqual(canonical_json_bytes(first), target.read_bytes())
