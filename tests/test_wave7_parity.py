@@ -123,10 +123,9 @@ class Wave7ParityTests(unittest.TestCase):
                 ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
                 check=False,
                 capture_output=True,
-                text=True,
             )
             if result.returncode != 0:
-                self.skipTest(f"Windows junction creation unavailable: {result.stderr}")
+                self.skipTest(f"Windows junction creation unavailable: {result.stderr!r}")
         else:
             link.symlink_to(target, target_is_directory=True)
 

@@ -96,7 +96,7 @@
     },
     {
       "path": "docs/REPOSITORY_OWNERSHIP_V2.md",
-      "sha256": "3a89adfa9a96552f531d0d833c343746747f4fd6c8f09729845753060fd206b7"
+      "sha256": "a1639c8dcf66eaf5ba6188bf15ebed09a7a4d16b9ab9343e6460df3854ccf0d3"
     },
     {
       "path": "docs/command-reference.md",
@@ -128,7 +128,7 @@
     },
     {
       "path": "src/coordination_loop_harness/mcp_server.py",
-      "sha256": "b4c594e4e198d1e1050d82ff033a60a2ad339d603f6489d1c2cc388b32356179"
+      "sha256": "d6ec39725ab2bde5fc72753dff2593c510da7a9ecea808a92414b50165b467a2"
     },
     {
       "path": "src/coordination_loop_harness/repository.py",
@@ -160,7 +160,7 @@
     },
     {
       "path": "tests/test_recovery_regressions.py",
-      "sha256": "4ad904a715f66d1a80d375060afb649636b576275777fa2747853030743607e7"
+      "sha256": "e78cec19d0154a405a37ef1ff529b0911003fbcb8878dea747e47724d02bd2c5"
     },
     {
       "path": "tests/test_repo_set_lease_v2_artifact.py",
@@ -306,10 +306,10 @@
     "required-nonrepository-infrastructure-scope-with-slash",
     "branch-marker-shaped-infrastructure-scope"
   ],
-  "producer_artifact_id": "repo-set-lease.v2+sha256:916b58b6a4247c0225705aa77ec46709653f9f72d8e2f4a4d7fe935f998605ba",
-  "artifact_set_sha256": "916b58b6a4247c0225705aa77ec46709653f9f72d8e2f4a4d7fe935f998605ba",
+  "producer_artifact_id": "repo-set-lease.v2+sha256:10e5219ca32685a0b5e22ada7458f5c3dd2a0ae1c7c42446c6e29a80a0a5175e",
+  "artifact_set_sha256": "10e5219ca32685a0b5e22ada7458f5c3dd2a0ae1c7c42446c6e29a80a0a5175e",
   "acquire_expiry_policy": "trusted-full-precision-initial-and-post-fsync-prepublication-sample; now-equals-expiry-admits; sample-is-not-atomic-with-publication",
   "protected_custody_policy": "operator-fixed-protected-CLH-only-issuance; full-current-Decision-chain-generation-state-digest-UTC; snapshot-confers-no-effective-grant; unsupported-protection-HOLD",
   "release_expiry_policy": "full-precision-fresh-samples-initial-under-Git-guard-and-post-fsync-prepublication; strict-greater-than-expiry-requires-stale-recovery; publication-is-not-atomic-with-clock-sample",
-  "mcp_mutation_recovery_policy": "exact-before-after-observation; changed-or-unknown-error-outcome-is-UNCERTAIN-without-auto-retry; private-candidate-staging-outside-repository; orphan-staging-blocks-mutation-pending-explicit-reconciliation"
+  "mcp_mutation_recovery_policy": "atomic-fixed-lease-root-operation-fence-spans-snapshot-and-mutation; changing-staging-root-cannot-bypass-pending-fence; unknown-inspections-and-changed-or-unknown-error-outcomes-UNCERTAIN; no-auto-retry-or-orphan-reclaim; raw-candidates-outside-repository"
 }

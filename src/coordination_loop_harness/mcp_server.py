@@ -53,13 +53,34 @@ def create_server(
 
     @contextmanager
     def candidate_snapshot(document: dict[str, Any]):
-        # Existing operation snapshots may be active or crash orphans. Neither
-        # is permission to reclaim or start another mutation automatically.
-        if any(staging.glob(prefix + "*")):
-            raise _ReconciliationRequired("MCP candidate staging requires reconciliation")
-        directory = Path(tempfile.mkdtemp(prefix=prefix, dir=staging))
-        snapshot = directory / "candidate.json"
+        # The fence is bound to the fixed authority root, so changing a
+        # process temp/staging directory cannot hide an unresolved operation.
+        lock_root.mkdir(parents=True, exist_ok=True)
+        pending = lock_root / ".mcp-operation.pending"
         try:
+            pending.mkdir(mode=0o700)
+        except FileExistsError as exc:
+            raise _ReconciliationRequired("CLH MCP operation requires reconciliation") from exc
+        directory = None
+        snapshot = None
+        metadata = pending / "operation.json"
+        try:
+            if any(staging.glob(prefix + "*")):
+                raise _ReconciliationRequired("MCP candidate staging requires reconciliation")
+            directory = Path(tempfile.mkdtemp(prefix=prefix, dir=staging))
+            snapshot = directory / "candidate.json"
+            with metadata.open("xb") as handle:
+                handle.write(
+                    canonical_json_bytes(
+                        {
+                            "candidate_sha256": lease_candidate_sha256(document),
+                            "snapshot_path": str(snapshot),
+                            "automatic_reclaim": False,
+                        }
+                    )
+                )
+                handle.flush()
+                os.fsync(handle.fileno())
             with snapshot.open("xb") as handle:
                 handle.write(canonical_json_bytes(document))
                 handle.flush()
@@ -67,8 +88,12 @@ def create_server(
             yield snapshot
         finally:
             try:
-                snapshot.unlink(missing_ok=True)
-                directory.rmdir()
+                if snapshot is not None:
+                    snapshot.unlink(missing_ok=True)
+                if directory is not None:
+                    directory.rmdir()
+                metadata.unlink(missing_ok=True)
+                pending.rmdir()
             except OSError as exc:
                 raise _ReconciliationRequired(
                     "MCP candidate cleanup requires reconciliation"
@@ -108,6 +133,8 @@ def create_server(
     def inspect_authority(lease_id: str) -> dict[str, Any]:
         try:
             authority = observe(lease_id, lock_root, repo_root=repo_root)
+            if authority["ownership_status"] == "UNKNOWN_FAIL_CLOSED":
+                return uncertain({"lease_id": lease_id}, "Custody is unknown", authority)
         except (OSError, TypeError, ValueError) as exc:
             return _refusal(identity={"lease_id": lease_id}, reason=str(exc))
         return _result(identity={"lease_id": lease_id}, disposition="OK", authority=authority)
@@ -116,6 +143,8 @@ def create_server(
     def inspect_custody(lease_id: str) -> dict[str, Any]:
         try:
             custody = observe(lease_id, lock_root, repo_root=repo_root)
+            if custody["ownership_status"] == "UNKNOWN_FAIL_CLOSED":
+                return uncertain({"lease_id": lease_id}, "Custody is unknown", custody)
         except (OSError, TypeError, ValueError) as exc:
             return _refusal(identity={"lease_id": lease_id}, reason=str(exc))
         return _result(identity={"lease_id": lease_id}, disposition="OK", custody=custody)

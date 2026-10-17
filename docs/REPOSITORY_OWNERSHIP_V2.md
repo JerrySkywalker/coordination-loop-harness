@@ -320,3 +320,11 @@ unknown error outcome is `UNCERTAIN`, never automatic retry permission. Candidat
 snapshots use private staging outside the repository; unresolved operation
 snapshots block another mutation until explicit reconciliation. Orphans are not
 automatically deleted or treated as authority.
+
+The MCP mutation fence is the exclusive `.mcp-operation.pending` directory in
+the fixed CLH lease root, held across snapshot creation, core mutation and cleanup.
+Its metadata binds the snapshot path and candidate digest. Changing a staging or
+process temp directory does not bypass a pending operation. Existing fences or
+orphan snapshots require explicit quiescence and custody reconciliation; the
+facade never deletes an existing operation fence automatically. This is a
+cooperating local-process contract, not a qualified protected Root or UTC witness.
