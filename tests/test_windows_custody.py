@@ -207,8 +207,16 @@ class WindowsSecurityPolicyTests(unittest.TestCase):
             check_observer(token, token.user, restricted_writer=True)
         with tempfile.TemporaryDirectory() as tmp:
             # Inspect one test-owned directory; never change its ACL.
-            first = reader.file_security(Path(tmp))
-            self.assertEqual(first, reader.file_security(Path(tmp)))
+            requested = Path(tmp)
+            declared = requested.resolve(strict=True)
+            # Hosted Windows TEMP can use an 8.3 account/path spelling. Do not
+            # weaken the backend's refusal: explicitly declare the real path
+            # for the positive, and retain the original alias as a negative.
+            if os.path.normcase(str(requested)) != os.path.normcase(str(declared)):
+                with self.assertRaisesRegex(WindowsBoundaryHold, "PATH_ALIAS"):
+                    reader.file_security(requested)
+            first = reader.file_security(declared)
+            self.assertEqual(first, reader.file_security(declared))
 
 
 class WindowsCustodyChainTests(unittest.TestCase):
