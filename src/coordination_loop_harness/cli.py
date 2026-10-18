@@ -13,11 +13,11 @@ from .bootstrap import bootstrap_repository, sync_plan
 from .bundles import seal_bundle, verify_bundle
 from .decisions import verify_decision
 from .harness_model import validate_harness_model, validate_profile_pack
-from .leases import acquire, find_overlaps, list_leases, release, replace
+from .leases import acquire, find_overlaps, list_leases, observe, release, replace
 from .repository import verify_repository, verify_template_repository_provenance
 from .runs import init_run, render_attach
 from .status import transition_status
-from .util import load_json
+from .util import load_json, require_safe_id
 from .validation import repository_root, validate_json_file
 
 
@@ -61,19 +61,28 @@ def build_parser() -> argparse.ArgumentParser:
         item = lease_sub.add_parser(name)
         item.add_argument("--candidate", type=_path, required=True)
         item.add_argument("--lock-root", type=_path, required=True)
-        item.add_argument("--repo-root", type=_path, default=Path.cwd())
+        item.add_argument("--repo-root", type=_path)
         if name == "replace":
             item.add_argument("--expected-generation", type=int, required=True)
     inspect = lease_sub.add_parser("inspect")
     inspect.add_argument("--candidate", type=_path, required=True)
     inspect.add_argument("--lock-root", type=_path, required=True)
+    inspect.add_argument("--repo-root", type=_path)
     listing = lease_sub.add_parser("list")
     listing.add_argument("--lock-root", type=_path, required=True)
+    observation = lease_sub.add_parser("observe")
+    observation.add_argument("--lease-id", required=True)
+    observation.add_argument("--lock-root", type=_path, required=True)
+    observation.add_argument("--observed-utc")
+    observation.add_argument("--repo-root", type=_path)
     close = lease_sub.add_parser("release")
     close.add_argument("--lease-id", required=True)
     close.add_argument("--lock-root", type=_path, required=True)
     close.add_argument("--expected-generation", type=int, required=True)
-    close.add_argument("--outcome-ref", required=True)
+    release_evidence = close.add_mutually_exclusive_group(required=True)
+    release_evidence.add_argument("--outcome-ref")
+    release_evidence.add_argument("--candidate", type=_path)
+    close.add_argument("--repo-root", type=_path)
 
     attach = sub.add_parser(
         "render-attach",
@@ -136,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     decision_verify.add_argument("--action", required=True)
     decision_verify.add_argument("--lease-id")
     decision_verify.add_argument("--lease-generation", type=int)
+    decision_verify.add_argument(
+        "--require-candidate-digest",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require the v2 portable lease candidate digest",
+    )
 
     status = sub.add_parser("status", help="Apply a legal optimistic status transition")
     status_sub = status.add_subparsers(dest="status_command", required=True)
@@ -188,7 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bootstrap = sub.add_parser(
         "bootstrap-repository",
-        help="Render a derived repository without touching active run data",
+        help="Legacy local renderer; active v5 bootstrap belongs to CLT",
     )
     bootstrap.add_argument("--template-root", type=_path, default=Path.cwd())
     bootstrap.add_argument("--target-root", type=_path, required=True)
@@ -202,7 +217,10 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--dry-run", action="store_true")
     bootstrap.add_argument("--safe-mode", choices=("preserve-active",))
 
-    template = sub.add_parser("template", help="Plan derived-repository template updates")
+    template = sub.add_parser(
+        "template",
+        help="Legacy non-mutating template planning retained for compatibility",
+    )
     template_sub = template.add_subparsers(dest="template_command", required=True)
     sync = template_sub.add_parser("sync-plan")
     sync.add_argument("--template-root", type=_path, default=Path.cwd())
@@ -319,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
                 action=args.action,
                 lease_id=args.lease_id,
                 lease_generation=args.lease_generation,
+                require_candidate_digest=args.require_candidate_digest,
             )
             _print_json(result)
             return 0 if result["ok"] else 1
@@ -417,10 +436,15 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.lease_command == "inspect":
                 candidate = load_json(args.candidate)
+                raw_lease_id = candidate.get("lease_id")
+                if not isinstance(raw_lease_id, str):
+                    raise ValueError("lease_id must be a string")
+                lease_id = require_safe_id(raw_lease_id, "lease_id")
                 overlaps = find_overlaps(
                     candidate,
                     args.lock_root,
-                    excluding=candidate.get("lease_id"),
+                    excluding_path=args.lock_root / f"{lease_id}.lease.json",
+                    repo_root=args.repo_root,
                 )
                 _print_json(
                     {
@@ -432,12 +456,24 @@ def main(argv: list[str] | None = None) -> int:
             if args.lease_command == "list":
                 _print_json({"leases": list_leases(args.lock_root)})
                 return 0
+            if args.lease_command == "observe":
+                _print_json(
+                    observe(
+                        args.lease_id,
+                        args.lock_root,
+                        observed_utc=args.observed_utc,
+                        repo_root=args.repo_root,
+                    )
+                )
+                return 0
             if args.lease_command == "release":
                 path = release(
                     args.lease_id,
                     args.lock_root,
                     expected_generation=args.expected_generation,
                     outcome_ref=args.outcome_ref,
+                    candidate_path=args.candidate,
+                    repo_root=args.repo_root,
                 )
                 _print_json({"lease": str(path), "state": "RELEASED"})
                 return 0
