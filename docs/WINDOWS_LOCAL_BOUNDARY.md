@@ -68,7 +68,13 @@ inspects handle-bound file identity/final path/owner/DACL, and inventories ances
 and descendants before/after validation. Reparse/short-name/path aliases,
 multi-link files, absent or unsupported ACL evidence, unsafe owner/ACE mutation
 rights, unbounded traversal and observed replacement refuse. Root descendants
-need protected DACLs. Ancestors must also deny non-Operator mutation/delete-child.
+need protected DACLs and retain the strict non-Operator mutation refusal.
+Ancestors use a separate existing-directory-chain policy: effective namespace
+deletion, rename and security takeover remain forbidden; inherit-only defaults
+are evaluated on each actual child instead of being mistaken for parent access.
+Only the exact Windows servicing SID may additionally own/mutate ancestors; it
+cannot issue CLH authority, own the protected subtree or be a Writer. See the
+[ancestor policy and its nonempty/reparse invariant](WINDOWS_ANCESTOR_ACL_POLICY.md).
 The observer must differ from the issuer and lack privileged or enableable trusted
 groups and privileges other than traversal notification. This deliberately rejects
 many ordinary user-owned development paths.

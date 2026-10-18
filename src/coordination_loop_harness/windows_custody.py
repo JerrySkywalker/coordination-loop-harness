@@ -7,6 +7,7 @@ ACLs, install a Root, launch a process, or qualify a Worker from a caller boolea
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,9 +39,18 @@ from .windows_security import (
 
 SYSTEM = "S-1-5-18"
 ADMINISTRATORS = "S-1-5-32-544"
+# The one Windows servicing principal, not a service-SID prefix or caller list.
+# It is trusted only on ancestors, never as the CLH issuer or protected-tree owner.
+TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 # File data/append/EA/attributes, directory delete-child, DELETE, WRITE_DAC,
 # WRITE_OWNER, generic all/write and MAXIMUM_ALLOWED (unknown effective rights).
 MUTATION_MASK = 0x116 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000 | 0x2000000
+# Ancestors may create siblings / change non-security metadata. The verified
+# existing directory chain cannot be emptied by an untrusted principal: DELETE,
+# DELETE_CHILD, WRITE_DAC, WRITE_OWNER, GENERIC_ALL and unknown MAXIMUM_ALLOWED
+# remain forbidden on every link. See WINDOWS_ANCESTOR_ACL_POLICY.md, including
+# why the nonempty-chain proof is required for reparse-capable write rights.
+ANCESTOR_NAMESPACE_MASK = MUTATION_MASK & ~(0x116 | 0x40000000)
 MANIFEST = "compatibility/repo-set-lease.v2/artifact-manifest.json"
 
 
@@ -77,14 +87,17 @@ class WindowsIssuerConfig:
 
 
 def check_observer(token: TokenSecurity, issuer_sid: str, *, restricted_writer=False) -> None:
-    trusted = {issuer_sid, SYSTEM, ADMINISTRATORS}
-    if token.user in trusted or trusted.intersection(token.grant_capable_groups):
+    trusted = {issuer_sid, SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER}
+    if (
+        token.user in trusted
+        or trusted.intersection(token.grant_capable_groups)
+        or trusted.intersection(token.restricting_sids)
+    ):
         raise WindowsBoundaryHold("HOLD_SAME_OR_PRIVILEGED_PRINCIPAL")
     if set(token.privileges) - {"SeChangeNotifyPrivilege"}:
         raise WindowsBoundaryHold("HOLD_PRIVILEGED_TOKEN")
     if restricted_writer and (
         not token.restricting_sids
-        or trusted.intersection(token.restricting_sids)
         or token.token_type != 1
     ):
         raise WindowsBoundaryHold("HOLD_RESTRICTED_WRITER_TOKEN_UNPROVEN")
@@ -99,13 +112,37 @@ def check_file_security(
     trusted = {issuer_sid, SYSTEM, ADMINISTRATORS}
     if evidence.owner not in trusted or (require_protected and not evidence.protected_dacl):
         raise WindowsBoundaryHold("HOLD_ROOT_OWNER_OR_PROTECTED_DACL_UNPROVEN")
+    _check_aces(evidence, trusted, MUTATION_MASK, inherit_only=False)
+
+
+def _check_aces(
+    evidence: FileSecurity, trusted: set[str], mutation_mask: int, *, inherit_only: bool
+) -> None:
     if not evidence.aces or not _digest(evidence.descriptor_sha256):
         raise WindowsBoundaryHold("HOLD_DACL_EVIDENCE_MISSING")
     for ace in evidence.aces:
         if ace.kind not in (0, 1) or ace.flags & ~0x1F:
             raise WindowsBoundaryHold("HOLD_UNSUPPORTED_ACE")
-        if ace.kind == 0 and ace.mask & MUTATION_MASK and ace.sid not in trusted:
+        # IO is not effective on this ancestor. Every child is checked on its
+        # own ACL; the authority root and ALL its descendants require DACL_P.
+        if inherit_only and ace.flags & 0x08:
+            continue
+        # Deny ACEs never cancel an unsafe allow here. This is a conservative
+        # all-principal policy, not an imitation of token-specific AccessCheck.
+        if ace.kind == 0 and ace.mask & mutation_mask and ace.sid not in trusted:
             raise WindowsBoundaryHold("HOLD_NON_OPERATOR_MUTATION_ACCESS")
+
+
+def _check_ancestor_security(evidence: FileSecurity, issuer_sid: str) -> None:
+    """ACL part ONLY of the existing-child chain proof in _protected_tree.
+
+    Never use this predicate alone to admit an empty or caller-selected root.
+    Protected objects retain the stricter check_file_security policy.
+    """
+    trusted = {issuer_sid, SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER}
+    if evidence.owner not in trusted:
+        raise WindowsBoundaryHold("HOLD_ANCESTOR_OWNER_UNPROVEN")
+    _check_aces(evidence, trusted, ANCESTOR_NAMESPACE_MASK, inherit_only=True)
 
 
 class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
@@ -133,18 +170,25 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
             if metadata.st_file_attributes & 0x400:
                 raise WindowsBoundaryHold("HOLD_REPARSE_OR_HARDLINK")
             evidence = self._reader.file_security(path)
-            check_file_security(evidence, self._config.issuer_sid, require_protected=inside)
+            if inside:
+                check_file_security(evidence, self._config.issuer_sid, require_protected=True)
+            else:
+                _check_ancestor_security(evidence, self._config.issuer_sid)
             inventory[str(path)] = (evidence, metadata.st_dev, metadata.st_ino)
             if len(inventory) > 4096:
                 raise WindowsBoundaryHold("HOLD_AUTHORITY_INVENTORY_BOUND")
             return metadata
 
         try:
-            for parent in reversed(root.parents):
-                check(parent, False)
-            check(root, True)
-            if not root.is_dir():
+            # Anchor in an EXISTING protected directory before admitting any
+            # ancestor. Each successive parent contains this already checked
+            # directory, which untrusted callers cannot remove or rename.
+            # This nonempty-chain invariant matters for FSCTL_SET_REPARSE_POINT.
+            if not stat.S_ISDIR(check(root, True).st_mode):
                 raise WindowsBoundaryHold("HOLD_AUTHORITY_ROOT_NOT_DIRECTORY")
+            for parent in root.parents:
+                if not stat.S_ISDIR(check(parent, False).st_mode):
+                    raise WindowsBoundaryHold("HOLD_ANCESTOR_NOT_DIRECTORY")
             pending = [root]
             while pending:
                 parent = pending.pop()
