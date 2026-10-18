@@ -53,8 +53,10 @@ class WindowsIssuerConfig:
                 or str(root).startswith("\\")
             ):
                 raise WindowsBoundaryHold("HOLD_FIXED_LOCAL_ROOT_REQUIRED")
-        if not self.issuer_sid.startswith("S-1-5-") or self.issuer_sid == ADMINISTRATORS:
-            raise WindowsBoundaryHold("HOLD_FIXED_ISSUER_SID_REQUIRED")
+        # First candidate supports the actual SYSTEM principal only. A SID's
+        # account-shaped syntax cannot prove it names a user rather than a group.
+        if self.issuer_sid != SYSTEM:
+            raise WindowsBoundaryHold("HOLD_FIXED_SYSTEM_ISSUER_REQUIRED")
         if not _digest(self.producer_manifest_sha256):
             raise WindowsBoundaryHold("HOLD_PRODUCER_DIGEST_REQUIRED")
 
@@ -170,11 +172,18 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
             ):
                 raise WindowsBoundaryHold("HOLD_LOCAL_INTENT_LEASE_BINDING_MISMATCH")
             self._deadline.check("admission", retained_intent=intent)
+            before_locks = self._protected_tree(self._lock_root)
+            before_repo = self._protected_tree(self._repo_root)
             result = super().verify(lease_id, expected_generation, serialized)
             current = json.loads(serialized)
             if len([item for item in current["repositories"] if item["mode"] == "WRITE"]) != 1:
                 raise WindowsBoundaryHold("HOLD_EXACTLY_ONE_WRITER_REQUIRED")
             _validate_writer_binding(current)
+            # Include the additional Windows Git check in the same bracket.
+            if self._protected_tree(self._lock_root) != before_locks:
+                raise WindowsBoundaryHold("HOLD_AUTHORITY_CHANGED_DURING_WRITER_CHECK")
+            if self._protected_tree(self._repo_root) != before_repo:
+                raise WindowsBoundaryHold("HOLD_AUTHORITY_CHANGED_DURING_WRITER_CHECK")
             self._deadline.check("pre_spawn", retained_intent=intent)
             return {
                 **result,

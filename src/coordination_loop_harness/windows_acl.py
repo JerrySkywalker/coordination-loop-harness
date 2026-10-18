@@ -35,6 +35,7 @@ def plan_windows_acls(*, issuer_sid: str, worker_sid: str, scratch_sid: str) -> 
     authority = (
         f"O:{issuer_sid}G:SYD:P(A;OICI;FA;;;{issuer_sid})"
         f"(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FR;;;{worker_sid})"
+        f"(A;OICI;FR;;;{scratch_sid})"
     )
     scratch = (
         f"O:{issuer_sid}G:SYD:P(A;OICI;FA;;;{issuer_sid})"

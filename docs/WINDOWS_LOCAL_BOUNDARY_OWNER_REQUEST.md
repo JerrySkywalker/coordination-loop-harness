@@ -10,7 +10,7 @@ approval of this request. T1 has installed nothing.
    build and accepted source package. Request a separate one-shot elevated
    Operator invocation, not a permanent service or global policy change.
 2. **Proposed fixed authority root:**
-   `C:\ProgramData\CoordinationLoop\LocalPilot\T1-<accepted-head-12>\authority`;
+   `C:\ProgramData\CoordinationLoop\LocalPilot\T1-Windows-20261018\authority`;
    separate `locks`, `scratch` and `receipts` beneath that fixed qualification
    root. Freeze the fully expanded paths and inspect the existing ancestors
    before approval. If unsafe ancestors require modification, request those exact

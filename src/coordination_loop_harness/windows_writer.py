@@ -13,8 +13,14 @@ import os
 from ctypes import wintypes as w
 from dataclasses import dataclass
 
-from .windows_custody import check_observer
-from .windows_security import TokenSecurity, WindowsBoundaryHold, WindowsSecurityReader
+from .local_time import LocalDeadline, LocalIntent
+from .windows_custody import SYSTEM, _digest, check_observer
+from .windows_security import (
+    TokenSecurity,
+    WindowsBoundaryHold,
+    WindowsSecurityReader,
+    is_account_sid,
+)
 
 
 class _BasicLimit(ctypes.Structure):
@@ -71,9 +77,62 @@ class JobSnapshot:
     active_pids: tuple[int, ...]
 
 
-def check_writer_snapshot(token: TokenSecurity, job: JobSnapshot, issuer_sid: str) -> dict:
+@dataclass(frozen=True)
+class WindowsWriterBinding:
+    """Operator-retained identity, fixed before CLF resumes the participant."""
+
+    issuer_sid: str
+    worker_sid: str
+    scratch_sid: str
+    participant_pid: int
+    participant_creation: int
+    intent_id: str
+    generation: int
+    lease_sha256: str
+
+    def __post_init__(self):
+        if (
+            self.issuer_sid != SYSTEM
+            or not is_account_sid(self.worker_sid)
+            or not is_account_sid(self.scratch_sid)
+            or self.worker_sid == self.scratch_sid
+            or type(self.participant_pid) is not int
+            or self.participant_pid < 1
+            or type(self.participant_creation) is not int
+            or self.participant_creation < 1
+            or not isinstance(self.intent_id, str)
+            or not self.intent_id
+            or type(self.generation) is not int
+            or self.generation < 1
+            or not _digest(self.lease_sha256)
+        ):
+            raise WindowsBoundaryHold("HOLD_FIXED_WRITER_BINDING_REQUIRED")
+
+
+def check_writer_snapshot(
+    token: TokenSecurity,
+    job: JobSnapshot,
+    binding: WindowsWriterBinding,
+    intent: LocalIntent,
+) -> dict:
     """Deterministic candidate checks. Never an authority/actual denial proof."""
-    check_observer(token, issuer_sid, restricted_writer=True)
+    check_observer(token, binding.issuer_sid, restricted_writer=True)
+    if (
+        token.user != binding.worker_sid
+        or token.restricting_sids != (binding.scratch_sid,)
+        or (job.participant_pid, job.participant_creation)
+        != (
+            binding.participant_pid,
+            binding.participant_creation,
+        )
+        or (intent.intent_id, intent.generation, intent.lease_sha256)
+        != (
+            binding.intent_id,
+            binding.generation,
+            binding.lease_sha256,
+        )
+    ):
+        raise WindowsBoundaryHold("HOLD_WRITER_OR_LEASE_INTENT_IDENTITY_MISMATCH")
     if (
         not job.participant_in_job
         or job.participant_pid <= 0
@@ -103,10 +162,12 @@ def check_writer_snapshot(token: TokenSecurity, job: JobSnapshot, issuer_sid: st
 class WindowsWriterInspector:
     """Inspect already-owned native handles; no launcher, installer or watchdog."""
 
-    def __init__(self) -> None:
+    def __init__(self, binding: WindowsWriterBinding, deadline: LocalDeadline) -> None:
         if os.name != "nt":
             raise WindowsBoundaryHold("HOLD_WINDOWS_SECURITY_BACKEND_UNAVAILABLE")
         self._reader = WindowsSecurityReader()
+        self._binding = binding
+        self._deadline = deadline
         self._kernel = self._reader.k
         signatures = (
             (
@@ -123,10 +184,22 @@ class WindowsWriterInspector:
             function = getattr(self._kernel, name)
             function.argtypes, function.restype = arguments, result
 
-    def observe(self, *, participant_handle: int, job_handle: int, issuer_sid: str) -> dict:
+    def observe(self, *, participant_handle: int, job_handle: int) -> dict:
         """CLF retains the handles; concurrent changes are conservatively refused."""
         if not participant_handle or not job_handle:
+            self._deadline.invalidate("HOLD_OWNED_PROCESS_OR_JOB_HANDLE_LOST")
             raise WindowsBoundaryHold("HOLD_OWNED_PROCESS_AND_JOB_HANDLES_REQUIRED")
+        intent = self._deadline.intent
+        self._deadline.check("watchdog", retained_intent=intent)
+        try:
+            result = self._observe(participant_handle, job_handle, intent)
+            self._deadline.check("watchdog", retained_intent=intent)
+            return result
+        except Exception:
+            self._deadline.invalidate("HOLD_WRITER_OR_JOB_CONTINUITY_LOST")
+            raise
+
+    def _observe(self, participant_handle: int, job_handle: int, intent: LocalIntent) -> dict:
         require = self._reader._require
         token = self._reader.token_security(participant_handle)
         limits, accounting, members = _ExtendedLimit(), _Accounting(), _ProcessList()
@@ -170,4 +243,4 @@ class WindowsWriterInspector:
             accounting.active,
             tuple(members.pids[: members.count]),
         )
-        return check_writer_snapshot(token, snapshot, issuer_sid)
+        return check_writer_snapshot(token, snapshot, self._binding, intent)

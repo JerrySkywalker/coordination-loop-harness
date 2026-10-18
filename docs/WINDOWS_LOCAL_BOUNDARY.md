@@ -43,7 +43,8 @@ independently authenticated UTC claim is involved.
 ## Fixed issuer and existing durable semantics
 
 `WindowsIssuerConfig` is trusted **Operator startup configuration**, not an RPC
-argument or authority token. Pin the exact accepted producer package/tree, fixed
+argument or authority token. This first verifier permits only the actual SYSTEM
+issuer SID; account-shaped/group SIDs cannot substitute. Pin the exact accepted producer package/tree, fixed
 authority/lock paths, distinct issuer SID and exact v2 producer-manifest bytes.
 `WindowsProtectedCustodyVerifier` is not wired into `create_server` and cannot be
 selected by a caller environment flag or alternate root. A protected local-only
@@ -77,7 +78,8 @@ remain the issuer's durable producer; there is no new schema or alternate ledger
 ## Restricted Writer, ACL and Job bridge
 
 `plan_windows_acls` produces SDDL text only. The authority tree allows the fixed
-issuer/SYSTEM/Administrators to mutate; Worker read access grants no mutation.
+issuer/SYSTEM/Administrators to mutate; Worker and scratch-restricting SID read
+access grants no mutation and satisfies both restricted-token access checks.
 Isolated scratch grants Worker and a unique restricting SID read/write access.
 This plan does not authorize installation or target-repository access. Every
 authority descendant needs an explicitly protected ACL; inherited-only defaults
@@ -93,8 +95,10 @@ must pass; the scratch SID must not grant writes elsewhere. Handles close on bot
 success and refusal. It creates no account, ACL, Job, process, desktop or service.
 
 CLF owns the launcher and may reuse its existing owned-process Job primitive.
-The provider-neutral bridge is owned native process/Job handles plus CLH's fixed
-config/Lease intent; no cross-product source import or caller `custody=true` is
+The provider-neutral bridge is owned native process/Job handles plus an Operator-
+retained `WindowsWriterBinding` (exact Worker/scratch SID, PID/creation and Lease
+intent ID/generation/digest), checked against the retained deadline before and
+after observation. No cross-product source import or caller `custody=true` is
 accepted. `WindowsWriterInspector` reads the actual token, PID/creation identity,
 Job membership, kill-on-close and breakaway flags, active member list and exit.
 Policy tests refuse breakaway, missing identity and unsettled children. Returned

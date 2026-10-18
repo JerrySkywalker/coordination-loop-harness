@@ -13,7 +13,12 @@ from unittest import mock
 
 import test_leases as existing
 
-from coordination_loop_harness.local_time import HostSample, LocalDeadline, LocalTimeHold
+from coordination_loop_harness.local_time import (
+    HostSample,
+    LocalDeadline,
+    LocalIntent,
+    LocalTimeHold,
+)
 from coordination_loop_harness.util import canonical_json_bytes, sha256_bytes, sha256_file
 from coordination_loop_harness.windows_acl import plan_windows_acls
 from coordination_loop_harness.windows_custody import (
@@ -33,7 +38,11 @@ from coordination_loop_harness.windows_security import (
     WindowsSecurityReader,
     restricted_writer_token,
 )
-from coordination_loop_harness.windows_writer import JobSnapshot, check_writer_snapshot
+from coordination_loop_harness.windows_writer import (
+    JobSnapshot,
+    WindowsWriterBinding,
+    check_writer_snapshot,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKER = "S-1-5-21-100-200-300-1001"
@@ -41,6 +50,14 @@ RESTRICTING = "S-1-5-21-100-200-300-1002"
 TOKEN = TokenSecurity(WORKER, (), (RESTRICTING,), ("SeChangeNotifyPrivilege",))
 SECURITY = FileSecurity(SYSTEM, True, (Ace(0, 0, 0x1F01FF, SYSTEM),), (1,), "a" * 64)
 JOB = JobSnapshot(42, 1000, True, 259, 0x2000, 1, (42,))
+INTENT = LocalIntent(
+    "writer-one",
+    1,
+    "a" * 64,
+    HostSample("12345678-1234-1234-1234-123456789abc", "42:1000", 100, 100, 100),
+    6000,
+)
+BINDING = WindowsWriterBinding(SYSTEM, WORKER, RESTRICTING, 42, 1000, "writer-one", 1, "a" * 64)
 
 
 class WindowsSecurityPolicyTests(unittest.TestCase):
@@ -86,26 +103,59 @@ class WindowsSecurityPolicyTests(unittest.TestCase):
             dataclasses.replace(JOB, participant_exit=0),
         ):
             with self.subTest(changed=changed), self.assertRaises(WindowsBoundaryHold):
-                check_writer_snapshot(TOKEN, changed, SYSTEM)
+                check_writer_snapshot(TOKEN, changed, BINDING, INTENT)
 
     def test_positive_job_and_zero_parent_exit_never_mint_runtime_custody(self):
         for snapshot in (
             JOB,
             dataclasses.replace(JOB, participant_exit=0, active_count=0, active_pids=()),
         ):
-            result = check_writer_snapshot(TOKEN, snapshot, SYSTEM)
+            result = check_writer_snapshot(TOKEN, snapshot, BINDING, INTENT)
             self.assertFalse(result["custody_resolved"])
             self.assertIn("DESCENDANT_TERMINALS_UNQUALIFIED", result["runtime_gate"])
 
     def test_acl_plan_is_pure_and_rejects_sid_injection_and_shared_principals(self):
         plan = plan_windows_acls(issuer_sid=SYSTEM, worker_sid=WORKER, scratch_sid=RESTRICTING)
         self.assertIn(f"(A;OICI;FR;;;{WORKER})", plan.authority_sddl)
+        self.assertIn(f"(A;OICI;FR;;;{RESTRICTING})", plan.authority_sddl)
         self.assertNotIn(f"FW;;;{WORKER}", plan.authority_sddl)
         self.assertIn(f"(A;OICI;FRFW;;;{RESTRICTING})", plan.scratch_sddl)
         self.assertIn("UNQUALIFIED", plan.runtime_gate)
         for scratch in (WORKER, SYSTEM, "S-1-5-21)(A;;FA;;;WD)"):
             with self.subTest(scratch=scratch), self.assertRaises(WindowsBoundaryHold):
                 plan_windows_acls(issuer_sid=SYSTEM, worker_sid=WORKER, scratch_sid=scratch)
+
+    def test_fixed_writer_and_lease_binding_rejects_process_or_principal_substitution(self):
+        for token in (
+            dataclasses.replace(TOKEN, user="S-1-5-21-100-200-300-1003"),
+            dataclasses.replace(TOKEN, restricting_sids=("S-1-5-21-100-200-300-1004",)),
+        ):
+            with self.subTest(token=token), self.assertRaisesRegex(WindowsBoundaryHold, "IDENTITY"):
+                check_writer_snapshot(token, JOB, BINDING, INTENT)
+        for changed in (
+            dataclasses.replace(INTENT, intent_id="another-task"),
+            dataclasses.replace(INTENT, generation=2),
+            dataclasses.replace(INTENT, lease_sha256="b" * 64),
+        ):
+            with (
+                self.subTest(intent=changed),
+                self.assertRaisesRegex(WindowsBoundaryHold, "IDENTITY"),
+            ):
+                check_writer_snapshot(TOKEN, JOB, BINDING, changed)
+        for changed in (
+            dataclasses.replace(JOB, participant_pid=43),
+            dataclasses.replace(JOB, participant_creation=1001),
+        ):
+            with self.subTest(job=changed), self.assertRaisesRegex(WindowsBoundaryHold, "IDENTITY"):
+                check_writer_snapshot(TOKEN, changed, BINDING, INTENT)
+
+    def test_verifier_config_refuses_all_group_and_non_system_issuer_sids(self):
+        for sid in ("S-1-5-32-545", ADMINISTRATORS, "S-1-5-11", WORKER):
+            with (
+                self.subTest(sid=sid),
+                self.assertRaisesRegex(WindowsBoundaryHold, "SYSTEM_ISSUER"),
+            ):
+                WindowsIssuerConfig(Path.cwd(), Path.cwd() / "locks", sid, "a" * 64)
 
     def test_restricted_token_factory_inspects_result_and_always_closes_handles(self):
         def sid_conversion(text, output):
@@ -257,12 +307,36 @@ class WindowsCustodyChainTests(unittest.TestCase):
 
     def test_root_mutation_and_source_manifest_mismatch_rejected(self):
         verifier = self.verifier()
-        with mock.patch.object(verifier, "_protected_tree", side_effect=[{}, {}, {"changed": ()}]):
+        with mock.patch.object(
+            verifier, "_protected_tree", side_effect=[{}, {}, {}, {}, {"changed": ()}]
+        ):
             with self.assertRaisesRegex(ValueError, "changed during"):
                 verifier.verify("LOCAL-T1", 1, self.serialized)
         (self.root / MANIFEST).write_bytes(b"forged")
         with self.assertRaisesRegex(WindowsBoundaryHold, "ISSUER_OR_PRODUCER"):
             self.check()
+
+    def test_authority_replacement_during_extra_windows_git_check_is_refused(self):
+        verifier = self.verifier()
+        mutated = False
+
+        def replace_during_git(candidate):
+            nonlocal mutated
+            mutated = True
+
+        with (
+            mock.patch.object(
+                verifier,
+                "_protected_tree",
+                side_effect=lambda root: {"changed": ()} if mutated else {},
+            ),
+            mock.patch(
+                "coordination_loop_harness.windows_custody._validate_writer_binding",
+                side_effect=replace_during_git,
+            ),
+        ):
+            with self.assertRaisesRegex(WindowsBoundaryHold, "DURING_WRITER_CHECK"):
+                verifier.verify("LOCAL-T1", 1, self.serialized)
 
     def test_unsupported_backend_and_caller_root_are_hold(self):
         verifier = self.verifier()
