@@ -88,13 +88,16 @@ class WindowsIssuerConfig:
 
 def check_observer(token: TokenSecurity, issuer_sid: str, *, restricted_writer=False) -> None:
     trusted = {issuer_sid, SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER}
-    if token.user in trusted or trusted.intersection(token.grant_capable_groups):
+    if (
+        token.user in trusted
+        or trusted.intersection(token.grant_capable_groups)
+        or trusted.intersection(token.restricting_sids)
+    ):
         raise WindowsBoundaryHold("HOLD_SAME_OR_PRIVILEGED_PRINCIPAL")
     if set(token.privileges) - {"SeChangeNotifyPrivilege"}:
         raise WindowsBoundaryHold("HOLD_PRIVILEGED_TOKEN")
     if restricted_writer and (
         not token.restricting_sids
-        or trusted.intersection(token.restricting_sids)
         or token.token_type != 1
     ):
         raise WindowsBoundaryHold("HOLD_RESTRICTED_WRITER_TOKEN_UNPROVEN")

@@ -9,6 +9,7 @@ from unittest import mock
 
 from coordination_loop_harness.local_time import HostSample, LocalDeadline
 from coordination_loop_harness.windows_custody import (
+    ADMINISTRATORS,
     SYSTEM,
     TRUSTED_INSTALLER,
     WindowsIssuerConfig,
@@ -111,14 +112,30 @@ class AncestorAclPolicyTests(unittest.TestCase):
             dataclasses.replace(TOKEN, grant_capable_groups=(TRUSTED_INSTALLER,)),
             dataclasses.replace(TOKEN, restricting_sids=(TRUSTED_INSTALLER,)),
         ):
-            with self.subTest(token=token), self.assertRaises(WindowsBoundaryHold):
-                check_observer(token, SYSTEM, restricted_writer=True)
+            for writer in (False, True):
+                with (
+                    self.subTest(token=token, writer=writer),
+                    self.assertRaises(WindowsBoundaryHold),
+                ):
+                    check_observer(token, SYSTEM, restricted_writer=writer)
         with self.assertRaisesRegex(WindowsBoundaryHold, "NON_OPERATOR"):
             check_file_security(
                 with_aces(Ace(0, 0, 0x1F01FF, TRUSTED_INSTALLER)), SYSTEM, require_protected=True
             )
         with self.assertRaises(WindowsBoundaryHold):
             WindowsIssuerConfig(Path.cwd(), Path.cwd() / "locks", TRUSTED_INSTALLER, "a" * 64)
+
+    def test_trusted_restricting_sid_is_refused_for_observer_and_writer(self):
+        for sid in (SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER):
+            for writer in (False, True):
+                with (
+                    self.subTest(sid=sid, writer=writer),
+                    self.assertRaisesRegex(WindowsBoundaryHold, "SAME_OR_PRIVILEGED"),
+                ):
+                    check_observer(
+                        dataclasses.replace(TOKEN, restricting_sids=(sid,)),
+                        SYSTEM, restricted_writer=writer,
+                    )
 
 
 class ExistingDirectoryChainTests(unittest.TestCase):
