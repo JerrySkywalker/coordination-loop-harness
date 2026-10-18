@@ -105,6 +105,17 @@ class LocalTimeTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalTimeHold, "ROOT_OR_WATCHDOG_LOST"):
             guard.check("dag_ack", retained_intent=guard.intent)
 
+    def test_empty_or_invalid_invalidation_reason_still_permanently_holds(self):
+        for reason in ("", " ", None, False, 0):
+            with self.subTest(reason=reason):
+                guard = self.guard()
+                guard.invalidate(reason)
+                with self.assertRaisesRegex(LocalTimeHold, "ROOT_OR_WATCHDOG_LOST"):
+                    guard.check("receipt", retained_intent=guard.intent)
+                guard.invalidate("later reason cannot clear hold")
+                with self.assertRaisesRegex(LocalTimeHold, "ROOT_OR_WATCHDOG_LOST"):
+                    guard.check("admission", retained_intent=guard.intent)
+
     def test_sampling_uncertainty_and_unknown_checkpoint_refused(self):
         guard = self.guard()
         self.current = sample(interrupt_after=BASE + TICKS_PER_SECOND)

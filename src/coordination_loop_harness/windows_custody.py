@@ -6,14 +6,29 @@ ACLs, install a Root, launch a process, or qualify a Worker from a caller boolea
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .leases import ProtectedCustodyVerifier, _validate_writer_binding
+from .leases import (
+    ProtectedCustodyVerifier,
+    _assert_lease_entry_unchanged,
+    _lease_directory_entry,
+    _require_unexpired_acquisition,
+    _validate_lease,
+    _validate_writer_binding,
+    _verify_bound_lease_decision,
+)
 from .local_time import LocalDeadline
-from .util import load_json, sha256_bytes, sha256_file
+from .util import (
+    canonical_json_bytes,
+    ensure_within,
+    is_safe_json_integer,
+    load_json,
+    require_safe_id,
+    sha256_bytes,
+    sha256_file,
+)
 from .windows_security import (
     FileSecurity,
     TokenSecurity,
@@ -166,6 +181,11 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
     def verify(self, lease_id: str, expected_generation: int, serialized: bytes) -> dict:
         intent = self._deadline.intent
         try:
+            lease_id = require_safe_id(lease_id, "lease_id")
+            if not is_safe_json_integer(expected_generation) or expected_generation < 1:
+                raise WindowsBoundaryHold("HOLD_POSITIVE_SAFE_GENERATION_REQUIRED")
+            if type(serialized) is not bytes or not serialized:
+                raise WindowsBoundaryHold("HOLD_EXACT_SERIALIZED_CUSTODY_REQUIRED")
             if (
                 expected_generation != intent.generation
                 or sha256_bytes(serialized) != intent.lease_sha256
@@ -174,19 +194,55 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
             self._deadline.check("admission", retained_intent=intent)
             before_locks = self._protected_tree(self._lock_root)
             before_repo = self._protected_tree(self._repo_root)
-            result = super().verify(lease_id, expected_generation, serialized)
-            current = json.loads(serialized)
+            self._verify_issuer()
+            if (self._lock_root / ".repo-set-admission.mutex").exists():
+                raise WindowsBoundaryHold("HOLD_AUTHORITY_MUTATION_IN_PROGRESS")
+            observed = _lease_directory_entry(
+                self._lock_root,
+                label="protected current lease",
+                expected_name=f"{lease_id}.lease.json",
+            )
+            if observed is None:
+                raise WindowsBoundaryHold("HOLD_CURRENT_PROTECTED_LEASE_ABSENT")
+            path, identity = observed
+            with path.open("rb") as handle:
+                metadata = os.fstat(handle.fileno())
+                if (metadata.st_dev, metadata.st_ino) != identity[:2]:
+                    raise WindowsBoundaryHold("HOLD_CURRENT_LEASE_IDENTITY_CHANGED")
+                raw_current = handle.read()
+            current = load_json(path, expected_identity=identity[:2])
+            if raw_current != serialized or canonical_json_bytes(current) != serialized:
+                raise WindowsBoundaryHold("Serialized custody differs from current protected state")
+            if (
+                current.get("lease_id") != lease_id
+                or current.get("generation") != expected_generation
+            ):
+                raise WindowsBoundaryHold("HOLD_CURRENT_LEASE_ID_OR_GENERATION_MISMATCH")
+            if (
+                current.get("schema_version") != "coord.repo-set-lease.v2"
+                or current.get("state") != "ACTIVE"
+            ):
+                raise WindowsBoundaryHold("HOLD_ACTIVE_V2_LEASE_REQUIRED")
+            self._verify_lineage(current)
             if len([item for item in current["repositories"] if item["mode"] == "WRITE"]) != 1:
                 raise WindowsBoundaryHold("HOLD_EXACTLY_ONE_WRITER_REQUIRED")
             _validate_writer_binding(current)
+            _assert_lease_entry_unchanged(
+                self._lock_root, path, identity, label="protected current lease"
+            )
             # Include the additional Windows Git check in the same bracket.
             if self._protected_tree(self._lock_root) != before_locks:
                 raise WindowsBoundaryHold("HOLD_AUTHORITY_CHANGED_DURING_WRITER_CHECK")
             if self._protected_tree(self._repo_root) != before_repo:
                 raise WindowsBoundaryHold("HOLD_AUTHORITY_CHANGED_DURING_WRITER_CHECK")
+            _require_unexpired_acquisition(current)
             self._deadline.check("pre_spawn", retained_intent=intent)
             return {
-                **result,
+                "lease_id": lease_id,
+                "generation": expected_generation,
+                "state": "ACTIVE",
+                "lease_sha256": sha256_bytes(serialized),
+                "custody_resolved": False,
                 "verification": "WINDOWS_CLH_SOURCE_SNAPSHOT_ONLY",
                 "time_assurance": "LOCAL_BOOT_BOUND",
                 "authenticated_utc": False,
@@ -195,3 +251,62 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
         except Exception:
             self._deadline.invalidate("HOLD_CUSTODY_CONTINUITY_LOST")
             raise
+
+    def _verify_lineage(self, current: dict) -> None:
+        """Reuse published validators; retain the same archived-candidate invariants.
+
+        leases.py is itself hash-bound by the accepted producer artifact manifest.
+        This Windows adapter cannot change those immutable published bytes merely
+        to add an OS-specific issuer hook. No schema/manifest change is required.
+        """
+        next_candidate = current
+        for generation in range(current["generation"], 0, -1):
+            if generation == current["generation"]:
+                candidate = current
+            else:
+                archive = ensure_within(
+                    self._lock_root / "lease-history" / current["lease_id"] / f"{generation}.json",
+                    self._lock_root,
+                    label="protected historical candidate",
+                    must_exist=True,
+                )
+                candidate = load_json(archive)
+                next_decision = load_json(self._repo_root / next_candidate["decision_ref"])
+                if (
+                    candidate.get("lease_id") != current["lease_id"]
+                    or candidate.get("generation") != generation
+                    or candidate.get("state") != "ACTIVE"
+                    or candidate.get("schema_version") != "coord.repo-set-lease.v2"
+                    or next_decision.get("previous_decision_ref") != candidate.get("decision_ref")
+                ):
+                    raise WindowsBoundaryHold("HOLD_HISTORICAL_CANDIDATE_ANCESTRY_MISMATCH")
+                for field in (
+                    "schema_version",
+                    "run_id",
+                    "owner",
+                    "created_utc",
+                    "coordination_repository",
+                ):
+                    if candidate.get(field) != next_candidate.get(field):
+                        raise WindowsBoundaryHold("HOLD_HISTORICAL_REPLACEMENT_IDENTITY_CHANGED")
+            _validate_lease(
+                candidate,
+                self._repo_root,
+                allow_coordination_self_write=True,
+                require_native_paths=True,
+            )
+            decision_path = ensure_within(
+                self._repo_root / candidate["decision_ref"],
+                self._repo_root,
+                label="protected issuance Decision",
+                must_exist=True,
+            )
+            _verify_bound_lease_decision(
+                candidate,
+                self._repo_root,
+                decision_path,
+                action="lease:acquire" if generation == 1 else "lease:expand",
+                error_label="Protected candidate Decision",
+                sequence_label="Protected candidate",
+            )
+            next_candidate = candidate

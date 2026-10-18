@@ -52,9 +52,12 @@ selected by a caller environment flag or alternate root. A protected local-only
 producer-manifest SHA. The manifest pin is not a substitute for deployment package
 integrity or authenticated IPC.
 
-The Windows subclass reuses `ProtectedCustodyVerifier` for current canonical
-Lease bytes, active generation/state, complete accepted Decision ancestry,
-Markdown/candidate digest bindings and legacy UTC **refusal** checks. Those UTC
+The Windows backend reuses the existing CLH Lease/Decision/Git validation functions
+for current canonical Lease bytes, active generation/state, complete accepted Decision ancestry,
+Markdown/candidate digest bindings and legacy UTC **refusal** checks. The narrow
+Windows orchestration also retains every archived-candidate/immutable-lineage
+check. The manifest-bound published `leases.py` and producer manifest remain byte
+unchanged; no OS issuer hook is inserted into that artifact. Those UTC
 checks add a conservative rejection; they supply no authenticated UTC evidence.
 It additionally binds the immutable L1 intent, requires exactly one Writer and
 uses the existing Git verifier for actual repository/common-dir/worktree/branch,

@@ -156,6 +156,8 @@ class WindowsSecurityPolicyTests(unittest.TestCase):
                 self.assertRaisesRegex(WindowsBoundaryHold, "SYSTEM_ISSUER"),
             ):
                 WindowsIssuerConfig(Path.cwd(), Path.cwd() / "locks", sid, "a" * 64)
+            with self.subTest(acl_issuer=sid), self.assertRaises(WindowsBoundaryHold):
+                plan_windows_acls(issuer_sid=sid, worker_sid=WORKER, scratch_sid=RESTRICTING)
 
     def test_restricted_token_factory_inspects_result_and_always_closes_handles(self):
         def sid_conversion(text, output):
@@ -281,6 +283,29 @@ class WindowsCustodyChainTests(unittest.TestCase):
         with self.assertRaisesRegex(WindowsBoundaryHold, "ISSUER_OR_PRODUCER"):
             self.check()
 
+    def test_replacement_reuses_complete_archived_lease_and_decision_chain(self):
+        previous = dict(self.candidate)
+        archive = self.locks / "lease-history/LOCAL-T1/1.json"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(canonical_json_bytes(previous))
+        self.candidate = dict(previous, generation=2)
+        existing.LeaseTests().authorize(
+            self.root,
+            self.candidate,
+            "lease:expand",
+            previous_decision_ref=previous["decision_ref"],
+        )
+        self.write_candidate()
+        self.assertFalse(self.check(generation=2)["custody_resolved"])
+        for change, reason in (
+            ({"owner": "forged-owner"}, "REPLACEMENT_IDENTITY"),
+            ({"state": "RELEASED"}, "ANCESTRY"),
+            ({"repositories": []}, "Lease validation|SHA-256|writer|WRITE"),
+        ):
+            archive.write_bytes(canonical_json_bytes(dict(previous, **change)))
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, reason):
+                self.check(generation=2)
+
     def test_current_candidate_mismatch_and_decision_digest_forgery_rejected(self):
         verifier = self.verifier()
         (self.locks / "LOCAL-T1.lease.json").write_bytes(b"{}\n")
@@ -307,10 +332,8 @@ class WindowsCustodyChainTests(unittest.TestCase):
 
     def test_root_mutation_and_source_manifest_mismatch_rejected(self):
         verifier = self.verifier()
-        with mock.patch.object(
-            verifier, "_protected_tree", side_effect=[{}, {}, {}, {}, {"changed": ()}]
-        ):
-            with self.assertRaisesRegex(ValueError, "changed during"):
+        with mock.patch.object(verifier, "_protected_tree", side_effect=[{}, {}, {"changed": ()}]):
+            with self.assertRaisesRegex(ValueError, "DURING_WRITER_CHECK"):
                 verifier.verify("LOCAL-T1", 1, self.serialized)
         (self.root / MANIFEST).write_bytes(b"forged")
         with self.assertRaisesRegex(WindowsBoundaryHold, "ISSUER_OR_PRODUCER"):

@@ -204,11 +204,16 @@ class LocalDeadline:
 
     def invalidate(self, reason: str = "HOLD_ROOT_OR_WATCHDOG_LOST") -> None:
         with self._lock:
-            self._hold = self._hold or reason
+            if self._hold is None:
+                self._hold = (
+                    reason
+                    if isinstance(reason, str) and reason.strip()
+                    else "HOLD_ROOT_OR_WATCHDOG_LOST"
+                )
 
     def check(self, checkpoint: str, *, retained_intent: LocalIntent) -> HostSample:
         with self._lock:
-            if self._hold:
+            if self._hold is not None:
                 raise LocalTimeHold(self._hold)
             try:
                 if checkpoint not in CHECKPOINTS or retained_intent != self._intent:
@@ -242,5 +247,9 @@ class LocalDeadline:
                 self._last = now
                 return now
             except Exception as exc:
-                self._hold = str(exc) if isinstance(exc, LocalTimeHold) else "HOLD_TIME_READ_FAILED"
+                self._hold = (
+                    str(exc)
+                    if isinstance(exc, LocalTimeHold) and str(exc)
+                    else "HOLD_TIME_READ_FAILED"
+                )
                 raise LocalTimeHold(self._hold) from exc

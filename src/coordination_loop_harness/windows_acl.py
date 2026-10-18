@@ -23,7 +23,7 @@ def plan_windows_acls(*, issuer_sid: str, worker_sid: str, scratch_sid: str) -> 
     """
     sids = (issuer_sid, worker_sid, scratch_sid)
     if (
-        (issuer_sid != SYSTEM and not is_account_sid(issuer_sid))
+        issuer_sid != SYSTEM
         or not is_account_sid(worker_sid)
         or not is_account_sid(scratch_sid)
         or len(set(sids)) != 3

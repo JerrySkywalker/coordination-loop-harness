@@ -2077,16 +2077,6 @@ class ProtectedCustodyVerifier:
                 ) from exc
         return identities
 
-    def _verify_issuer(self) -> None:
-        issuer = load_json(self._repo_root / "CLH-ISSUANCE-ROOT.json")
-        if type(issuer.get("issuer_uid")) is not int or issuer != {
-            "schema_version": "clh-protected-issuance-root.v1",
-            "product_owner": "CLH",
-            "issuer_uid": 0,
-            "policy": "OPERATOR_FIXED_CLH_ONLY_ISSUANCE",
-        }:
-            raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: trusted CLH issuance not established")
-
     def verify(self, lease_id: str, expected_generation: int, serialized: bytes) -> dict[str, Any]:
         lease_id = require_safe_id(lease_id, "lease_id")
         if not is_safe_json_integer(expected_generation) or expected_generation < 1:
@@ -2097,7 +2087,15 @@ class ProtectedCustodyVerifier:
         before_repo = self._protected_tree(self._repo_root)
         # This protected Operator declaration assigns this store to trusted CLH
         # issuance. An unprotected string/filename is explicitly insufficient.
-        self._verify_issuer()
+        issuer_path = self._repo_root / "CLH-ISSUANCE-ROOT.json"
+        issuer = load_json(issuer_path)
+        if type(issuer.get("issuer_uid")) is not int or issuer != {
+            "schema_version": "clh-protected-issuance-root.v1",
+            "product_owner": "CLH",
+            "issuer_uid": 0,
+            "policy": "OPERATOR_FIXED_CLH_ONLY_ISSUANCE",
+        }:
+            raise ValueError("HOLD_ROOT_PROTECTION_UNPROVEN: trusted CLH issuance not established")
         if (self._lock_root / ".repo-set-admission.mutex").exists():
             raise ValueError("Authority mutation is in progress; custody is unresolved")
         observed = _lease_directory_entry(
