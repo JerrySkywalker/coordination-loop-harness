@@ -165,10 +165,9 @@ def evaluate_successor_admission(
     """Deny successor authority from unauthenticated caller observations. The accepted Lease/Decision verification and public runtime Gate remain authoritative and unchanged. Matching state strings and in-memory records are insufficient; all outcomes remain permitted=False and CUSTODY_UNCERTAIN. Existing mismatch diagnostics are retained for preparation only."""
     findings: list[str] = []
 
-    # A RELEASED lease's own CAS increment is treated as in-band positive
-    # evidence (the release() function in leases.py performs the CAS and
-    # sets state=RELEASED atomically).  Still require an evidence record
-    # if one was explicitly registered.
+    # The caller-supplied RELEASED string is an unauthenticated observation.
+    # This helper verifies no protected lease, Decision, or generation CAS;
+    # even a structurally matching process-local record cannot grant authority.
     if lease_state == "RELEASED":
         key = (resource_id, lease_id, current_generation)
         ev = _EVIDENCE_STORE.get(key)

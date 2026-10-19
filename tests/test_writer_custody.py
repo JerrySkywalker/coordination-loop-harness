@@ -74,14 +74,11 @@ class TestCustodyUncertainDeniesSuccessor(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_process_death_justification_alone_is_not_sufficient(self) -> None:
-        """A release_justification mentioning only process death must still be accepted
-        structurally (non-empty string), but the absence of evidence for an ACTIVE
-        lease is what denies the successor — not the text content of the justification.
+        """Process-death explanations and caller records do not authenticate custody.
 
-        This test verifies that the evidence store is consulted, and that even if
-        an operator inserts evidence claiming 'process died', the *absence* of evidence
-        for an ACTIVE lease is what denies admission (evidence must be explicitly
-        recorded by CLH).
+        This case has no stored observation. Matching caller-supplied records
+        are also denied by TestUntrustedReleaseClaims; neither path proves
+        actual CLH issuance, a protected release, or prior-writer settlement.
         """
         # No evidence recorded → ACTIVE lease → denied
         decision = evaluate_successor_admission(
