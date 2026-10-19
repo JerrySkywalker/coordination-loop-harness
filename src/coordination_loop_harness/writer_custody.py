@@ -46,7 +46,10 @@ from typing import Any
 
 
 class CustodyStatus(StrEnum):
-    """Custody vocabulary for source preparation. The public evaluator returns only CUSTODY_UNCERTAIN until authenticated integration is separately admitted. No enum value itself grants authority."""
+    """Custody vocabulary for source preparation. The public evaluator returns only
+    CUSTODY_UNCERTAIN until authenticated integration is separately admitted. No enum value
+    itself grants authority.
+    """
 
     #: The generation is ACTIVE; no positive release evidence has been
     #: recorded.  Normal in-progress state.
@@ -69,7 +72,10 @@ class CustodyStatus(StrEnum):
 
 @dataclass(frozen=True)
 class ReleaseEvidence:
-    """Caller-supplied observation metadata, not authenticated release proof. Identity and string checks are structural only; neither this record nor its process-local storage establishes an issuer or settles actual prior-writer custody."""
+    """Caller-supplied observation metadata, not authenticated release proof. Identity and string
+    checks are structural only; neither this record nor its process-local storage establishes an
+    issuer or settles actual prior-writer custody.
+    """
 
     #: Stable identifier for the coordination resource (maps to CLH
     #: ``coordination_repository`` / lock-root namespace).
@@ -110,7 +116,10 @@ _EVIDENCE_STORE: dict[tuple[str, str, int], ReleaseEvidence] = {}
 
 
 def record_release_evidence(evidence: ReleaseEvidence) -> None:
-    """Record structurally valid caller observations in this process. This function does not authenticate an issuer, read a live protected Lease/Decision, or grant release or successor authority. Invalid fields raise ValueError."""
+    """Record structurally valid caller observations in this process. This function does not
+    authenticate an issuer, read a live protected Lease/Decision, or grant release or successor
+    authority. Invalid fields raise ValueError.
+    """
     _validate_evidence(evidence)
     key = (evidence.resource_id, evidence.lease_id, evidence.generation)
     _EVIDENCE_STORE[key] = evidence
@@ -162,7 +171,12 @@ def evaluate_successor_admission(
     current_writer_id: str,
     lease_state: str,
 ) -> AdmissionDecision:
-    """Deny successor authority from unauthenticated caller observations. The accepted Lease/Decision verification and public runtime Gate remain authoritative and unchanged. Matching state strings and in-memory records are insufficient; all outcomes remain permitted=False and CUSTODY_UNCERTAIN. Existing mismatch diagnostics are retained for preparation only."""
+    """Deny successor authority from unauthenticated caller observations. The accepted
+    Lease/Decision verification and public runtime Gate remain authoritative and unchanged.
+    Matching state strings and in-memory records are insufficient; all outcomes remain
+    permitted=False and CUSTODY_UNCERTAIN. Existing mismatch diagnostics are retained for
+    preparation only.
+    """
     findings: list[str] = []
 
     # The caller-supplied RELEASED string is an unauthenticated observation.
@@ -186,7 +200,10 @@ def evaluate_successor_admission(
         return AdmissionDecision(
             permitted=False,
             custody_status=CustodyStatus.CUSTODY_UNCERTAIN,
-            findings=["AUTHENTICATED_CUSTODY_UNPROVEN: caller state and in-process evidence cannot authorize successor admission"],
+            findings=[
+                "AUTHENTICATED_CUSTODY_UNPROVEN: caller state and in-process evidence "
+                "cannot authorize successor admission"
+            ],
         )
 
     # ACTIVE lease: require explicit evidence.
@@ -257,10 +274,13 @@ def evaluate_successor_admission(
         )
 
     return AdmissionDecision(
-            permitted=False,
-            custody_status=CustodyStatus.CUSTODY_UNCERTAIN,
-            findings=["AUTHENTICATED_CUSTODY_UNPROVEN: caller state and in-process evidence cannot authorize successor admission"],
-        )
+        permitted=False,
+        custody_status=CustodyStatus.CUSTODY_UNCERTAIN,
+        findings=[
+            "AUTHENTICATED_CUSTODY_UNPROVEN: caller state and in-process evidence "
+            "cannot authorize successor admission"
+        ],
+    )
 
 
 def get_custody_status(

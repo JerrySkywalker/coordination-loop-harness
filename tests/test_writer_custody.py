@@ -375,7 +375,9 @@ class TestUnqualifiedAdmissionBoundary(unittest.TestCase):
             with self.subTest(state=state):
                 clear_evidence_store()
                 record_release_evidence(_evidence())
-                result = evaluate_successor_admission("example/coordination", "RUN-A", 1, "example/product", state)
+                result = evaluate_successor_admission(
+                    "example/coordination", "RUN-A", 1, "example/product", state
+                )
                 self.assertFalse(result.permitted)
                 self.assertEqual(CustodyStatus.CUSTODY_UNCERTAIN, result.custody_status)
 
