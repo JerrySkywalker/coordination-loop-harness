@@ -9,7 +9,10 @@
 7. Implement one repository at a time.
 8. Run exact-head validation and open a pull request.
 9. Use a separate Auditor after the Implementer stops.
-10. Merge, update durable status, and release or expand the lease.
+10. Merge and update durable status.
+11. For v2, prepare the hashed outcome and exact terminal candidate, record the
+    directly chained normal or stale-recovery release decision, then release
+    the lease. V1 retains its legacy generation/outcome-reference form.
 
 An issue comment or chat message is not an execution authorization unless it is materialized into
 the coordination repository according to the project's owner-gate policy.

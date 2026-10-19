@@ -1,6 +1,8 @@
 # Writer Custody Contract (I0-A, LEAF-04)
 
-_CLH logical writer-authority trust boundary_
+_Source preparation only; authenticated successor authority remains HOLD_
+
+This older proposal is integrated with the accepted main without changing published `leases.py`, its protocol binding, or the public MCP Gate. The process-local observations below cannot authenticate a Lease/Decision. `evaluate_successor_admission()` always denies authority, including for caller-supplied `RELEASED` state and structurally matching evidence. Runtime integration requires separately admitted authenticated custody and preserves the existing Gate.
 
 ## Purpose
 
@@ -52,21 +54,7 @@ in the lock root — never by OS-level access control.
 
 ## Positive release evidence
 
-A successor writer may be admitted only when one of the following holds:
-
-1. **Explicit RELEASED lease transition**: `release()` in `leases.py` has
-   been called with the correct `expected_generation`, atomically setting
-   `state=RELEASED` and `active_writer_repository=None`.  This is the
-   primary release path.
-
-2. **Owner-attested release package**: A `ReleaseEvidence` record has been
-   registered via `writer_custody.record_release_evidence()`, bound to:
-   - `resource_id` (coordination resource)
-   - `lease_id`
-   - `generation` (exact match; stale generation evidence fails closed)
-   - `writer_id` (must equal `active_writer_repository`)
-
-Absent or contradictory evidence → `CUSTODY_UNCERTAIN` → deny successor.
+Actual successor admission requires the accepted Lease/Decision verification and positive settlement of prior writer custody. A caller-provided state string or an in-process `ReleaseEvidence` record is not that proof. Structural checks on resource, lease, generation and writer identities only reject inconsistent observations; they confer no authority. Missing authentication remains `CUSTODY_UNCERTAIN` and admission is denied.
 
 ### Evidence that is NOT sufficient alone
 
@@ -85,7 +73,7 @@ Absent or contradictory evidence → `CUSTODY_UNCERTAIN` → deny successor.
 | Value | Meaning |
 |-------|---------|
 | `CUSTODY_HELD` | Lease ACTIVE; no positive release evidence. |
-| `CUSTODY_RELEASED` | Positive evidence recorded; successor permitted. |
+| `CUSTODY_RELEASED` | Reserved for future authenticated classification; not returned by this helper. |
 | `CUSTODY_UNCERTAIN` | Evidence missing or contradictory; deny successor. |
 
 ### `ReleaseEvidence` (dataclass)
@@ -95,12 +83,11 @@ Validated on insert by `record_release_evidence()`.
 
 ### `record_release_evidence(evidence)`
 
-CLH-only write path.  CLF/CLE may supply evidence packages; CLH validates
-and calls this function.
+Observation-only write path. Structural validation does not establish issuer identity or authoritative release.
 
 ### `evaluate_successor_admission(...)`
 
-Gate function consulted before `acquire()` or `replace()` admits a new writer.
+Unqualified observation helper; never a substitute for the accepted admission Gate.
 Returns `AdmissionDecision(permitted, custody_status, findings)`.
 
 ### `get_custody_status(...)`
@@ -115,13 +102,9 @@ Test-only utility.  Not called in production.
 
 ## Integration with `leases.py`
 
-`leases.py` enforces the stale-generation CAS via the `expected_generation`
-parameter on `replace()` and `release()`.  It does not currently consult
-`writer_custody.evaluate_successor_admission()` automatically; callers that
-admit a successor to an ACTIVE lease must consult custody explicitly.
+The current published `leases.py` and its tests are retained exactly. Their Lease/Decision validation and custody behavior remain authoritative. This helper is not consulted by those mutation paths and cannot authorize their bypass.
 
-Future work (out of scope for LEAF-04): integrate
-`evaluate_successor_admission` into the `replace()` admission mutex path.
+Future authenticated integration is unadmitted and must not be inferred from this source merge.
 
 ---
 

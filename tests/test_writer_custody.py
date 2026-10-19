@@ -227,8 +227,8 @@ class TestCustodyUncertainDeniesSuccessor(unittest.TestCase):
         self.assertEqual(CustodyStatus.CUSTODY_UNCERTAIN, decision.custody_status)
 
 
-class TestPositiveAdmission(unittest.TestCase):
-    """Positive cases: CUSTODY_RELEASED → successor permitted."""
+class TestUntrustedReleaseClaims(unittest.TestCase):
+    """Caller claims do not authenticate release or grant successor authority."""
 
     def setUp(self) -> None:
         clear_evidence_store()
@@ -236,8 +236,8 @@ class TestPositiveAdmission(unittest.TestCase):
     def tearDown(self) -> None:
         clear_evidence_store()
 
-    def test_released_lease_state_permits_successor(self) -> None:
-        """A RELEASED lease state provides in-band positive evidence."""
+    def test_caller_released_state_cannot_authorize_successor(self) -> None:
+        """A caller-supplied RELEASED string is not protected release proof."""
         decision = evaluate_successor_admission(
             resource_id="example/coordination",
             lease_id="RUN-A",
@@ -245,11 +245,11 @@ class TestPositiveAdmission(unittest.TestCase):
             current_writer_id="example/product",
             lease_state="RELEASED",
         )
-        self.assertTrue(decision.permitted)
-        self.assertEqual(CustodyStatus.CUSTODY_RELEASED, decision.custody_status)
+        self.assertFalse(decision.permitted)
+        self.assertEqual(CustodyStatus.CUSTODY_UNCERTAIN, decision.custody_status)
 
-    def test_active_lease_with_matching_evidence_permits_successor(self) -> None:
-        """Exact evidence match on ACTIVE lease → successor permitted."""
+    def test_matching_in_process_evidence_cannot_authorize_successor(self) -> None:
+        """Structurally matching in-process evidence is still unauthenticated."""
         record_release_evidence(
             _evidence(
                 resource_id="example/coordination",
@@ -266,8 +266,8 @@ class TestPositiveAdmission(unittest.TestCase):
             current_writer_id="example/product",
             lease_state="ACTIVE",
         )
-        self.assertTrue(decision.permitted)
-        self.assertEqual(CustodyStatus.CUSTODY_RELEASED, decision.custody_status)
+        self.assertFalse(decision.permitted)
+        self.assertEqual(CustodyStatus.CUSTODY_UNCERTAIN, decision.custody_status)
 
     def test_released_lease_with_contradictory_evidence_denies_successor(self) -> None:
         """Even for a RELEASED lease, contradictory evidence in store → denied."""
@@ -357,7 +357,7 @@ class TestGetCustodyStatus(unittest.TestCase):
         )
         self.assertEqual(CustodyStatus.CUSTODY_UNCERTAIN, status)
 
-    def test_released_state_is_released(self) -> None:
+    def test_caller_released_state_remains_uncertain(self) -> None:
         status = get_custody_status(
             resource_id="example/coordination",
             lease_id="RUN-A",
@@ -365,7 +365,22 @@ class TestGetCustodyStatus(unittest.TestCase):
             writer_id="example/product",
             lease_state="RELEASED",
         )
-        self.assertEqual(CustodyStatus.CUSTODY_RELEASED, status)
+        self.assertEqual(CustodyStatus.CUSTODY_UNCERTAIN, status)
+
+
+class TestUnqualifiedAdmissionBoundary(unittest.TestCase):
+    def test_boolean_generation_is_not_an_integer_identity(self):
+        with self.assertRaises(ValueError):
+            record_release_evidence(_evidence(generation=True))
+
+    def test_all_caller_state_claims_keep_runtime_hold(self):
+        for state in ("ACTIVE", "RELEASED", "UNKNOWN", ""):
+            with self.subTest(state=state):
+                clear_evidence_store()
+                record_release_evidence(_evidence())
+                result = evaluate_successor_admission("example/coordination", "RUN-A", 1, "example/product", state)
+                self.assertFalse(result.permitted)
+                self.assertEqual(CustodyStatus.CUSTODY_UNCERTAIN, result.custody_status)
 
 
 if __name__ == "__main__":

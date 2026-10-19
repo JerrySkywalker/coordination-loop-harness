@@ -1,4 +1,9 @@
-"""writer_custody — CLH logical writer-authority contract (I0-A, LEAF-04).
+"""Untrusted custody observations for source preparation (I0-A, LEAF-04).
+
+This module never grants successor authority. Caller state and this process-local
+store cannot authenticate a Lease/Decision or prove prior-writer settlement.
+Current published lease verification and public runtime HOLD remain authoritative.
+The historical contract discussion below describes intended concepts only.
 
 # Trust boundary: logical authority ≠ physical OS write capability
 
@@ -142,7 +147,7 @@ def _validate_evidence(evidence: ReleaseEvidence) -> None:
         raise ValueError("ReleaseEvidence.resource_id must be a non-empty string")
     if not isinstance(evidence.lease_id, str) or not evidence.lease_id.strip():
         raise ValueError("ReleaseEvidence.lease_id must be a non-empty string")
-    if not isinstance(evidence.generation, int) or evidence.generation < 1:
+    if type(evidence.generation) is not int or evidence.generation < 1:
         raise ValueError("ReleaseEvidence.generation must be a positive integer")
     if not isinstance(evidence.writer_id, str) or not evidence.writer_id.strip():
         raise ValueError("ReleaseEvidence.writer_id must be a non-empty string")
@@ -184,9 +189,9 @@ def evaluate_successor_admission(
 ) -> AdmissionDecision:
     """Evaluate whether a successor writer may be admitted for ``lease_id``.
 
-    This function is the **gate** that must be consulted by ``acquire`` and
-    ``replace`` before admitting a new writer for a resource that already
-    has (or had) an active generation.
+    This source-preparation helper is not an authorization gate. It is not
+    integrated into the published lease mutation path and always denies
+    successor authority because none of its caller inputs is authenticated.
 
     Args:
         resource_id: Coordination resource identifier.
@@ -196,8 +201,8 @@ def evaluate_successor_admission(
         lease_state: ``"ACTIVE"`` or ``"RELEASED"`` as stored in the lease.
 
     Returns:
-        ``AdmissionDecision`` with ``permitted=True`` only when custody is
-        positively established as released.
+        ``AdmissionDecision`` with ``permitted=False``. Structurally matching
+        caller observations still cannot prove authentic release.
 
     Custody rules applied (fail-closed for anything other than RELEASED):
 
@@ -238,7 +243,11 @@ def evaluate_successor_admission(
                     custody_status=CustodyStatus.CUSTODY_UNCERTAIN,
                     findings=findings,
                 )
-        return AdmissionDecision(permitted=True, custody_status=CustodyStatus.CUSTODY_RELEASED)
+        return AdmissionDecision(
+            permitted=False,
+            custody_status=CustodyStatus.CUSTODY_UNCERTAIN,
+            findings=["AUTHENTICATED_CUSTODY_UNPROVEN: caller state and in-process evidence cannot authorize successor admission"],
+        )
 
     # ACTIVE lease: require explicit evidence.
     if lease_state != "ACTIVE":
@@ -307,7 +316,11 @@ def evaluate_successor_admission(
             findings=findings,
         )
 
-    return AdmissionDecision(permitted=True, custody_status=CustodyStatus.CUSTODY_RELEASED)
+    return AdmissionDecision(
+            permitted=False,
+            custody_status=CustodyStatus.CUSTODY_UNCERTAIN,
+            findings=["AUTHENTICATED_CUSTODY_UNPROVEN: caller state and in-process evidence cannot authorize successor admission"],
+        )
 
 
 def get_custody_status(

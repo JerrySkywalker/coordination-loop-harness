@@ -17,11 +17,11 @@
     "Do not expose secrets"
   ],
   "authorized_actions": [
-    "status:admit",
-    "lease:acquire"
+    "status:admit"
   ],
-  "lease_id": "EXAMPLE-001",
-  "lease_generation": 1,
+  "lease_id": null,
+  "lease_generation": null,
+  "lease_candidate_sha256": null,
   "previous_decision_ref": null,
   "markdown_sha256": "97f66f1c0f6445f44615b2c74a96dfdb0613ce0ff4361e6d1d12afd6dfe5c27d"
 }
