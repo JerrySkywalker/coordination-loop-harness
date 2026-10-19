@@ -46,20 +46,14 @@ from typing import Any
 
 
 class CustodyStatus(StrEnum):
-    """CLH-visible custody classification for one writer generation.
-
-    CLH consults this status before admitting a successor writer.  Any status
-    other than ``CUSTODY_RELEASED`` must cause successor admission to fail
-    closed.
-    """
+    """Custody vocabulary for source preparation. The public evaluator returns only CUSTODY_UNCERTAIN until authenticated integration is separately admitted. No enum value itself grants authority."""
 
     #: The generation is ACTIVE; no positive release evidence has been
     #: recorded.  Normal in-progress state.
     CUSTODY_HELD = "CUSTODY_HELD"
 
-    #: Positive release evidence has been recorded by CLH for the exact
-    #: generation.  Successor admission is permitted (subject to overlap
-    #: checks).
+    #: Reserved vocabulary for future authenticated integration; not an
+    #: admission result produced by this observation helper.
     CUSTODY_RELEASED = "CUSTODY_RELEASED"
 
     #: Release cannot be positively established (evidence missing,
@@ -75,16 +69,7 @@ class CustodyStatus(StrEnum):
 
 @dataclass(frozen=True)
 class ReleaseEvidence:
-    """Structured positive-release evidence bound to one CLH writer generation.
-
-    Every field is required; an absent or mismatched field yields
-    ``CUSTODY_UNCERTAIN`` (see ``evaluate_successor_admission``).
-
-    Reconciled from G07's terminal-release record:  G07 binds
-    ``release_decision_ref`` + ``outcome_ref`` + ``release_authority``
-    (NORMAL / STALE_RECOVERY) to the exact lease generation.  This record
-    is the v1-compatible minimum version of that binding.
-    """
+    """Caller-supplied observation metadata, not authenticated release proof. Identity and string checks are structural only; neither this record nor its process-local storage establishes an issuer or settles actual prior-writer custody."""
 
     #: Stable identifier for the coordination resource (maps to CLH
     #: ``coordination_repository`` / lock-root namespace).
@@ -120,22 +105,12 @@ class ReleaseEvidence:
 # ---------------------------------------------------------------------------
 
 # Maps (resource_id, lease_id, generation) → ReleaseEvidence.
-# Only CLH may write to this store (see invariant 6 above).
+# Process-local observations are untrusted and confer no issuer authority.
 _EVIDENCE_STORE: dict[tuple[str, str, int], ReleaseEvidence] = {}
 
 
 def record_release_evidence(evidence: ReleaseEvidence) -> None:
-    """Record positive release evidence for one writer generation.
-
-    This is the **only** function that may insert into the evidence store.
-    CLF/CLE may *supply* an ``evidence`` package; they do not call this
-    function directly — CLH validates and then calls it.
-
-    Raises ``ValueError`` if the evidence fields are structurally invalid
-    (empty strings, non-positive generation, etc.).  Does NOT check against
-    a live lease file; that validation belongs in the acquire/replace/release
-    path in ``leases.py``.
-    """
+    """Record structurally valid caller observations in this process. This function does not authenticate an issuer, read a live protected Lease/Decision, or grant release or successor authority. Invalid fields raise ValueError."""
     _validate_evidence(evidence)
     key = (evidence.resource_id, evidence.lease_id, evidence.generation)
     _EVIDENCE_STORE[key] = evidence
@@ -187,41 +162,7 @@ def evaluate_successor_admission(
     current_writer_id: str,
     lease_state: str,
 ) -> AdmissionDecision:
-    """Evaluate whether a successor writer may be admitted for ``lease_id``.
-
-    This source-preparation helper is not an authorization gate. It is not
-    integrated into the published lease mutation path and always denies
-    successor authority because none of its caller inputs is authenticated.
-
-    Args:
-        resource_id: Coordination resource identifier.
-        lease_id: The lease whose writer is being replaced.
-        current_generation: Generation stored in the current active lease.
-        current_writer_id: ``active_writer_repository`` of the current lease.
-        lease_state: ``"ACTIVE"`` or ``"RELEASED"`` as stored in the lease.
-
-    Returns:
-        ``AdmissionDecision`` with ``permitted=False``. Structurally matching
-        caller observations still cannot prove authentic release.
-
-    Custody rules applied (fail-closed for anything other than RELEASED):
-
-    * If ``lease_state`` is ``"RELEASED"`` **and** the lease record's own
-      generation CAS already incremented past ``current_generation``, the
-      lease machinery in ``leases.py`` already enforced positive release.
-      This function additionally checks the evidence store for belt-and-
-      suspenders validation.
-
-    * If ``lease_state`` is ``"ACTIVE"``, the prior generation must have
-      a matching ``ReleaseEvidence`` record; otherwise ``CUSTODY_UNCERTAIN``.
-
-    * Missing or contradictory evidence → ``CUSTODY_UNCERTAIN`` → deny.
-
-    * Process death alone / TTL alone → evidence absent → ``CUSTODY_UNCERTAIN``.
-
-    * Stale generation in evidence (generation != current_generation) →
-      evidence does not cover this generation → ``CUSTODY_UNCERTAIN``.
-    """
+    """Deny successor authority from unauthenticated caller observations. The accepted Lease/Decision verification and public runtime Gate remain authoritative and unchanged. Matching state strings and in-memory records are insufficient; all outcomes remain permitted=False and CUSTODY_UNCERTAIN. Existing mismatch diagnostics are retained for preparation only."""
     findings: list[str] = []
 
     # A RELEASED lease's own CAS increment is treated as in-band positive
