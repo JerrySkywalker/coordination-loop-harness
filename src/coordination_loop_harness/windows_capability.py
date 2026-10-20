@@ -399,9 +399,10 @@ class WindowsPipe:
         )
         if not query(self.handle, ctypes.byref(pid)) or pid.value != pin.pid:
             raise WindowsBoundaryHold("HOLD_PIPE_PEER_PID_MISMATCH")
-        # PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_DUP_HANDLE. The pinned
-        # client's handle table is the sole source for query-only copies.
-        process = self._k.OpenProcess(0x1040 if self.server else 0x1000, False, pid.value)
+        # QUERY_LIMITED_INFORMATION | SYNCHRONIZE for the liveness waits.
+        # Only the producer also needs DUP_HANDLE on the pinned client.
+        access = 0x1000 | 0x00100000 | (0x0040 if self.server else 0)
+        process = self._k.OpenProcess(access, False, pid.value)
         if not process:
             raise WindowsBoundaryHold("HOLD_PIPE_PEER_PROCESS_UNAVAILABLE")
         try:

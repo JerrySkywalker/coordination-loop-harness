@@ -73,6 +73,29 @@ class PeerKernelTests(unittest.TestCase):
         )
         return pipe
 
+    def test_peer_process_access_is_minimal_and_wait_capable(self):
+        for server, pin, access in ((True, PIN, 0x101040), (False, SERVER, 0x101000)):
+            with self.subTest(server=server):
+                pipe = self.pipe(pid=pin.pid, creation=pin.creation, sid=pin.sid)
+                pipe.server = server
+                pipe._k.GetNamedPipeServerProcessId = pipe._k.GetNamedPipeClientProcessId
+                pipe._k.OpenProcess = mock.Mock(return_value=777)
+                with pipe.authenticated_peer(pin):
+                    pass
+                pipe._k.OpenProcess.assert_called_once_with(access, False, pin.pid)
+                pipe._k.CloseHandle.assert_called_once_with(777)
+
+    def test_failed_or_signaled_peer_wait_refuses_and_closes_process(self):
+        for waits in ((0,), (0xFFFFFFFF,), (258, 0), (258, 0xFFFFFFFF)):
+            with self.subTest(waits=waits):
+                pipe = self.pipe()
+                pipe._k.WaitForSingleObject = mock.Mock(side_effect=waits)
+                with self.assertRaisesRegex(WindowsBoundaryHold, "PEER_(NOT_RUNNING|CHANGED)"):
+                    with pipe.authenticated_peer(PIN):
+                        pass
+                self.assertIsNone(pipe._peer_process)
+                pipe._k.CloseHandle.assert_called_once_with(777)
+
     def test_kernel_pid_creation_and_primary_token_are_all_required(self):
         pipe = self.pipe()
         with pipe.authenticated_peer(PIN):
