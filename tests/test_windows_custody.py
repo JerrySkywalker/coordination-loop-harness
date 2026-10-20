@@ -63,16 +63,20 @@ BINDING = WindowsWriterBinding(SYSTEM, WORKER, RESTRICTING, 42, 1000, "writer-on
 
 class WindowsSecurityPolicyTests(unittest.TestCase):
     def test_decision_seal_denies_native_write_and_delete_sharing(self):
+        path = Path("C:/protected/decision.json")
         kernel = SimpleNamespace(
             CreateFileW=mock.Mock(return_value=0x123456789),
             CloseHandle=mock.Mock(return_value=1),
         )
-        with mock.patch(
-            "coordination_loop_harness.windows_custody.ctypes.WinDLL",
-            return_value=kernel,
-            create=True,
+        with (
+            mock.patch("coordination_loop_harness.windows_custody.os", SimpleNamespace(name="nt")),
+            mock.patch(
+                "coordination_loop_harness.windows_custody.ctypes.WinDLL",
+                return_value=kernel,
+                create=True,
+            ),
         ):
-            with sealed_decision(Path("C:/protected/decision.json")):
+            with sealed_decision(path):
                 self.assertEqual(kernel.CreateFileW.call_args.args[2], 0x00000001)
                 kernel.CloseHandle.assert_not_called()
         kernel.CloseHandle.assert_called_once_with(0x123456789)

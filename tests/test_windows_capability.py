@@ -196,6 +196,9 @@ class PeerKernelTests(unittest.TestCase):
         )
         with (
             mock.patch(
+                "coordination_loop_harness.windows_capability.os", SimpleNamespace(name="nt")
+            ),
+            mock.patch(
                 "coordination_loop_harness.windows_capability.ctypes.WinDLL",
                 side_effect=lambda name, **_kwargs: k if name == "kernel32" else a,
                 create=True,
@@ -216,8 +219,12 @@ class PeerKernelTests(unittest.TestCase):
         k.CreateNamedPipeW.side_effect = lambda *_args: INVALID_HANDLE
         with (
             mock.patch(
+                "coordination_loop_harness.windows_capability.os", SimpleNamespace(name="nt")
+            ),
+            mock.patch(
                 "coordination_loop_harness.windows_capability.ctypes.WinDLL",
                 side_effect=lambda name, **_kwargs: k if name == "kernel32" else a,
+                create=True,
             ),
             self.assertRaisesRegex(WindowsBoundaryHold, "FIRST_PIPE_INSTANCE"),
         ):
@@ -227,8 +234,12 @@ class PeerKernelTests(unittest.TestCase):
         k.CreateNamedPipeW.side_effect = lambda *_args: full_handle
         with (
             mock.patch(
+                "coordination_loop_harness.windows_capability.os", SimpleNamespace(name="nt")
+            ),
+            mock.patch(
                 "coordination_loop_harness.windows_capability.ctypes.WinDLL",
                 side_effect=lambda name, **_kwargs: k if name == "kernel32" else a,
+                create=True,
             ),
             mock.patch.object(
                 WindowsPipe, "__init__", side_effect=RuntimeError("constructor failed")
