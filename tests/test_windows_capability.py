@@ -198,6 +198,7 @@ class PeerKernelTests(unittest.TestCase):
             mock.patch(
                 "coordination_loop_harness.windows_capability.ctypes.WinDLL",
                 side_effect=lambda name, **_kwargs: k if name == "kernel32" else a,
+                create=True,
             ),
             mock.patch.object(WindowsPipe, "__init__", return_value=None),
         ):

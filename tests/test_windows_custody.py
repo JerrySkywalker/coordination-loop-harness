@@ -68,7 +68,9 @@ class WindowsSecurityPolicyTests(unittest.TestCase):
             CloseHandle=mock.Mock(return_value=1),
         )
         with mock.patch(
-            "coordination_loop_harness.windows_custody.ctypes.WinDLL", return_value=kernel
+            "coordination_loop_harness.windows_custody.ctypes.WinDLL",
+            return_value=kernel,
+            create=True,
         ):
             with sealed_decision(Path("C:/protected/decision.json")):
                 self.assertEqual(kernel.CreateFileW.call_args.args[2], 0x00000001)
