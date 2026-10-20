@@ -11,15 +11,17 @@ import ctypes
 import json
 import os
 import re
+import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from ctypes import wintypes as w
 from dataclasses import dataclass
 
-from .local_time import WindowsHostClock
+from .local_time import LocalDeadline, WindowsHostClock
 from .util import canonical_json_bytes, sha256_bytes
-from .windows_custody import SYSTEM
+from .windows_custody import SYSTEM, check_observer
 from .windows_security import WindowsBoundaryHold, WindowsSecurityReader, is_account_sid
+from .windows_writer import WindowsWriterBinding, WindowsWriterInspector
 
 MAX_FRAME = 65536
 IO_WAIT_MS = 1000
@@ -61,6 +63,21 @@ HANDOFF_KEYS = frozenset(
         "runtime_gate",
     }
 )
+CHECKPOINT_ORDER = ("resume", "effect_publication", "receipt", "dag_ack")
+UINT64_DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
+
+
+def parse_interrupt_deadline(value: object) -> int:
+    if type(value) is not str or len(value) > 20 or not UINT64_DECIMAL.fullmatch(value):
+        raise WindowsBoundaryHold("HOLD_NATIVE_DEADLINE_ENCODING_INVALID")
+    number = int(value)
+    if not 0 < number < 2**64:
+        raise WindowsBoundaryHold("HOLD_NATIVE_DEADLINE_RANGE_INVALID")
+    return number
+
+
+def binding_wire(binding: WindowsWriterBinding) -> dict:
+    return binding.__dict__ | {"participant_creation": str(binding.participant_creation)}
 
 
 @dataclass(frozen=True)
@@ -76,7 +93,7 @@ class ProcessPin:
             type(self.pid) is not int
             or self.pid < 1
             or type(self.creation) is not int
-            or self.creation < 1
+            or not 0 < self.creation < 2**64
             or not isinstance(self.sid, str)
             or not self.sid
         ):
@@ -109,6 +126,7 @@ class WindowsPipe:
             raise WindowsBoundaryHold("HOLD_NATIVE_PIPE_HANDLE_REQUIRED")
         self.handle, self.server, self.name = handle, server, name
         self._closed = False
+        self._io_lock = threading.RLock()
         self._reader = WindowsSecurityReader()
         self._k = self._reader.k
         for function, args, result in (
@@ -178,6 +196,8 @@ class WindowsPipe:
             ctypes.POINTER(_SecurityAttributes),
         ]
         k.CreateNamedPipeW.restype = w.HANDLE
+        k.CloseHandle.argtypes, k.CloseHandle.restype = [w.HANDLE], w.BOOL
+        k.LocalFree.argtypes, k.LocalFree.restype = [w.HANDLE], w.HANDLE
         descriptor = w.LPVOID()
         # Client may read/write data but cannot create another pipe instance
         # (FILE_APPEND_DATA / FILE_CREATE_PIPE_INSTANCE is deliberately absent).
@@ -218,6 +238,7 @@ class WindowsPipe:
         k = ctypes.WinDLL("kernel32", use_last_error=True)
         k.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, w.LPVOID, w.DWORD, w.DWORD, w.HANDLE]
         k.CreateFileW.restype = w.HANDLE
+        k.CloseHandle.argtypes, k.CloseHandle.restype = [w.HANDLE], w.BOOL
         # Explicit rights omit FILE_CREATE_PIPE_INSTANCE; identification SQOS.
         handle = k.CreateFileW(name, 0x00100083, 0, None, 3, 0x40000000 | 0x00110000, None)
         if handle in (None, 0, INVALID_HANDLE):
@@ -229,9 +250,10 @@ class WindowsPipe:
             raise
 
     def close(self) -> None:
-        if not self._closed:
-            self._closed = True
-            self._k.CloseHandle(self.handle)
+        with self._io_lock:
+            if not self._closed:
+                self._closed = True
+                self._k.CloseHandle(self.handle)
 
     def __enter__(self) -> WindowsPipe:
         return self
@@ -241,6 +263,10 @@ class WindowsPipe:
 
     def _operation(self, function: str, buffer: object | None = None, size: int = 0) -> int:
         """One bounded overlapped operation. Uncertain cancellation closes the pipe."""
+        with self._io_lock:
+            return self._locked_operation(function, buffer, size)
+
+    def _locked_operation(self, function: str, buffer: object | None, size: int) -> int:
         if self._closed:
             raise WindowsBoundaryHold("HOLD_PIPE_CLOSED")
         if len(_abandoned_io) >= 8:
@@ -344,6 +370,12 @@ class WindowsPipe:
 
     @contextmanager
     def authenticated_peer(self, pin: ProcessPin):
+        with self._io_lock:
+            with self._authenticated_peer_locked(pin):
+                yield
+
+    @contextmanager
+    def _authenticated_peer_locked(self, pin: ProcessPin):
         """Keep a process handle across IO and recheck kernel pipe association."""
         if self._closed:
             raise WindowsBoundaryHold("HOLD_PIPE_CLOSED")
@@ -375,6 +407,8 @@ class WindowsPipe:
             token = self._reader.token_security(process)
             if token.user != pin.sid or token.token_type != 1:
                 raise WindowsBoundaryHold("HOLD_PIPE_PEER_PRIMARY_TOKEN_MISMATCH")
+            if self.server:
+                check_observer(token, SYSTEM)
             if self._k.WaitForSingleObject(process, 0) != 258:  # WAIT_TIMEOUT: still running
                 raise WindowsBoundaryHold("HOLD_PIPE_PEER_NOT_RUNNING")
             yield
@@ -424,13 +458,120 @@ def require_system_self(pin: ProcessPin) -> None:
 def require_client_boot_deadline(request: dict) -> None:
     """Native client-side boot/expiry check; CLF still owns wake containment."""
     now = WindowsHostClock().read()
-    if now.boot_id != request["boot_id"] or now.interrupt_after >= request["deadline_interrupt"]:
+    if now.boot_id != request["boot_id"] or now.interrupt_after >= parse_interrupt_deadline(
+        request["deadline_interrupt"]
+    ):
         raise WindowsBoundaryHold("HOLD_CLIENT_BOOT_OR_DEADLINE_MISMATCH")
 
 
+def require_native_client_deadline(deadline: LocalDeadline, pin: ProcessPin, request: dict) -> None:
+    read = deadline._read
+    if (
+        type(getattr(read, "__self__", None)) is not WindowsHostClock
+        or getattr(read, "__func__", None) is not WindowsHostClock.read
+        or deadline.intent.anchor.process_id != f"{pin.pid}:{pin.creation}"
+        or deadline.intent.anchor.boot_id != request["boot_id"]
+        or deadline.intent.deadline != parse_interrupt_deadline(request["deadline_interrupt"])
+    ):
+        raise WindowsBoundaryHold("HOLD_NATIVE_CLIENT_DEADLINE_REQUIRED")
+
+
+class WindowsHandoffSession:
+    """Live, single-use client channel; metadata alone cannot advance a stage."""
+
+    def __init__(
+        self,
+        stack: ExitStack,
+        pipe: WindowsPipe,
+        response: dict,
+        request: dict,
+        client_pin: ProcessPin,
+        binding: WindowsWriterBinding,
+        deadline: LocalDeadline,
+    ) -> None:
+        self._stack, self._pipe = stack, pipe
+        self.response = json.loads(canonical_json_bytes(response))
+        self._request = json.loads(canonical_json_bytes(request))
+        self._handoff_digest = sha256_bytes(canonical_json_bytes(response))
+        self._client_pin, self._binding = client_pin, binding
+        self._client_deadline = deadline
+        self._owner_thread = threading.get_ident()
+        self._next = 0
+        self._closed = False
+
+    def close(self) -> None:
+        if threading.get_ident() != self._owner_thread:
+            self._client_deadline.invalidate("HOLD_HANDOFF_SESSION_THREAD_CHANGED")
+            raise WindowsBoundaryHold("HOLD_HANDOFF_SESSION_THREAD_CHANGED")
+        if not self._closed:
+            self._closed = True
+            if self._next < len(CHECKPOINT_ORDER):
+                self._client_deadline.invalidate("HOLD_HANDOFF_SESSION_LOST")
+            self._stack.close()
+
+    def __enter__(self) -> WindowsHandoffSession:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def checkpoint(self, stage: str, *, participant_handle: int, job_handle: int) -> dict:
+        if threading.get_ident() != self._owner_thread:
+            self._client_deadline.invalidate("HOLD_HANDOFF_SESSION_THREAD_CHANGED")
+            raise WindowsBoundaryHold("HOLD_HANDOFF_SESSION_THREAD_CHANGED")
+        if (
+            self._closed
+            or self._next >= len(CHECKPOINT_ORDER)
+            or stage not in ("watchdog", CHECKPOINT_ORDER[self._next])
+        ):
+            self.close()
+            raise WindowsBoundaryHold("HOLD_HANDOFF_CHECKPOINT_ORDER")
+        try:
+            require_process_self(self._client_pin)
+            require_client_boot_deadline(self._request)
+            # Native owned-handle observation is a source snapshot, not a runtime grant.
+            snapshot = WindowsWriterInspector(self._binding, self._client_deadline).observe(
+                participant_handle=participant_handle, job_handle=job_handle
+            )
+            self._pipe.write_frame(
+                canonical_json_bytes(
+                    {
+                        "schema_version": "clh.windows-local-checkpoint.v1",
+                        "stage": stage,
+                        "handoff_sha256": self._handoff_digest,
+                        "binding": binding_wire(self._binding),
+                    }
+                )
+            )
+            expected = canonical_json_bytes(
+                {
+                    "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                    "stage": stage,
+                    "handoff_sha256": self._handoff_digest,
+                }
+            )
+            if self._pipe.read_frame() != expected:
+                raise WindowsBoundaryHold("HOLD_HANDOFF_CHECKPOINT_ACK_MISMATCH")
+            require_client_boot_deadline(self._request)
+            if stage != "watchdog":
+                self._next += 1
+            if stage == "dag_ack":
+                self.close()
+            return snapshot
+        except Exception:
+            self.close()
+            raise
+
+
 def request_source_handoff(
-    name: str, *, issuer_pin: ProcessPin, client_pin: ProcessPin, request: dict
-) -> dict:
+    name: str,
+    *,
+    issuer_pin: ProcessPin,
+    client_pin: ProcessPin,
+    request: dict,
+    binding: WindowsWriterBinding,
+    deadline: object,
+) -> WindowsHandoffSession:
     """Future CLF-side primitive: authenticate issuer on the connected pipe.
 
     The returned metadata is not a transferable authorization or runtime PASS.
@@ -452,67 +593,78 @@ def request_source_handoff(
         or not re.fullmatch("[0-9a-f]{64}", request["lease_sha256"])
         or type(request.get("generation")) is not int
         or request["generation"] < 1
-        or type(request.get("deadline_interrupt")) is not int
-        or request["deadline_interrupt"] < 1
+        or type(request.get("deadline_interrupt")) is not str
         or type(request.get("target")) is not dict
         or set(request["target"]) != TARGET_KEYS
         or any(type(value) is not str or not value for value in request["target"].values())
     ):
         raise WindowsBoundaryHold("HOLD_TRUSTED_SERVER_PIN_AND_REQUEST_REQUIRED")
+    parse_interrupt_deadline(request["deadline_interrupt"])
+    if (
+        type(binding) is not WindowsWriterBinding
+        or type(deadline) is not LocalDeadline
+        or binding.issuer_sid != issuer_pin.sid
+        or (binding.intent_id, binding.generation, binding.lease_sha256)
+        != (request["intent_id"], request["generation"], request["lease_sha256"])
+        or (deadline.intent.intent_id, deadline.intent.generation, deadline.intent.lease_sha256)
+        != (request["intent_id"], request["generation"], request["lease_sha256"])
+    ):
+        raise WindowsBoundaryHold("HOLD_FIXED_WRITER_BINDING_REQUIRED")
     require_process_self(client_pin)
+    require_native_client_deadline(deadline, client_pin, request)
     require_client_boot_deadline(request)
     raw = canonical_json_bytes(request)
-    with WindowsPipe.client(name) as pipe:
-        with pipe.authenticated_peer(issuer_pin):
-            pipe.write_frame(raw)
-            response_raw = pipe.read_frame()
-            try:
-                response = json.loads(response_raw)
-                canonical_response = canonical_json_bytes(response)
-            except (ValueError, UnicodeError, TypeError) as exc:
-                raise WindowsBoundaryHold("HOLD_HANDOFF_FRAME_INVALID") from exc
-            if (
-                response_raw != canonical_response
-                or type(response) is not dict
-                or set(response) != HANDOFF_KEYS
-                or response.get("schema_version") != "clh.windows-local-handoff.v1"
-                or response.get("request_sha256") != sha256_bytes(raw)
-                or type(response.get("decision_ref")) is not str
-                or not response["decision_ref"]
-                or type(response.get("decision_sha256")) is not str
-                or not re.fullmatch("[0-9a-f]{64}", response["decision_sha256"])
-                or type(response.get("issuer_pid")) is not int
-                or response.get("issuer_pid") != issuer_pin.pid
-                or type(response.get("issuer_creation")) is not str
-                or response.get("issuer_creation") != str(issuer_pin.creation)
-                or type(response.get("client_pid")) is not int
-                or response["client_pid"] != client_pin.pid
-                or type(response.get("client_creation")) is not str
-                or response["client_creation"] != str(client_pin.creation)
-                or response.get("boot_id") != request.get("boot_id")
-                or type(response.get("deadline_interrupt")) is not int
-                or response["deadline_interrupt"] != request.get("deadline_interrupt")
-                or response.get("lease_sha256") != request.get("lease_sha256")
-                or type(response.get("generation")) is not int
-                or response["generation"] != request.get("generation")
-                or response.get("target") != request.get("target")
-                or response.get("custody_resolved") is not False
-                or response.get("verification") != "WINDOWS_CLH_SOURCE_SNAPSHOT_ONLY"
-                or response.get("runtime_gate") != "G_L1_ROOT_AND_CONSUMER_BOUNDARY_UNQUALIFIED"
-            ):
-                raise WindowsBoundaryHold("HOLD_HANDOFF_BINDING_MISMATCH")
-            require_process_self(client_pin)
-            require_client_boot_deadline(request)
-            digest = sha256_bytes(response_raw)
-            pipe.write_frame(
-                canonical_json_bytes(
-                    {"schema_version": "clh.windows-local-ack.v1", "handoff_sha256": digest}
-                )
+    stack = ExitStack()
+    try:
+        pipe = stack.enter_context(WindowsPipe.client(name))
+        stack.enter_context(pipe.authenticated_peer(issuer_pin))
+        pipe.write_frame(raw)
+        response_raw = pipe.read_frame()
+        try:
+            response = json.loads(response_raw)
+            canonical_response = canonical_json_bytes(response)
+        except (ValueError, UnicodeError, TypeError) as exc:
+            raise WindowsBoundaryHold("HOLD_HANDOFF_FRAME_INVALID") from exc
+        if (
+            response_raw != canonical_response
+            or type(response) is not dict
+            or set(response) != HANDOFF_KEYS
+            or response.get("schema_version") != "clh.windows-local-handoff.v1"
+            or response.get("request_sha256") != sha256_bytes(raw)
+            or type(response.get("decision_ref")) is not str
+            or not response["decision_ref"]
+            or type(response.get("decision_sha256")) is not str
+            or not re.fullmatch("[0-9a-f]{64}", response["decision_sha256"])
+            or type(response.get("issuer_pid")) is not int
+            or response.get("issuer_pid") != issuer_pin.pid
+            or type(response.get("issuer_creation")) is not str
+            or response.get("issuer_creation") != str(issuer_pin.creation)
+            or type(response.get("client_pid")) is not int
+            or response["client_pid"] != client_pin.pid
+            or type(response.get("client_creation")) is not str
+            or response["client_creation"] != str(client_pin.creation)
+            or response.get("boot_id") != request.get("boot_id")
+            or type(response.get("deadline_interrupt")) is not str
+            or response["deadline_interrupt"] != request.get("deadline_interrupt")
+            or response.get("lease_sha256") != request.get("lease_sha256")
+            or type(response.get("generation")) is not int
+            or response["generation"] != request.get("generation")
+            or response.get("target") != request.get("target")
+            or response.get("custody_resolved") is not False
+            or response.get("verification") != "WINDOWS_CLH_SOURCE_SNAPSHOT_ONLY"
+            or response.get("runtime_gate") != "G_L1_ROOT_AND_CONSUMER_BOUNDARY_UNQUALIFIED"
+        ):
+            raise WindowsBoundaryHold("HOLD_HANDOFF_BINDING_MISMATCH")
+        require_process_self(client_pin)
+        require_client_boot_deadline(request)
+        digest = sha256_bytes(response_raw)
+        pipe.write_frame(
+            canonical_json_bytes(
+                {"schema_version": "clh.windows-local-ack.v1", "handoff_sha256": digest}
             )
-            if pipe.read_frame() != canonical_json_bytes(
-                {"schema_version": "clh.windows-local-final.v1", "handoff_sha256": digest}
-            ):
-                raise WindowsBoundaryHold("HOLD_HANDOFF_FINAL_MISMATCH")
-            require_process_self(client_pin)
-            require_client_boot_deadline(request)
-            return response
+        )
+        return WindowsHandoffSession(stack, pipe, response, request, client_pin, binding, deadline)
+    except Exception:
+        stack.close()
+        deadline.invalidate("HOLD_HANDOFF_SESSION_LOST")
+        raise

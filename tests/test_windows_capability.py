@@ -2,24 +2,27 @@
 
 import ctypes
 import json
+import threading
 import unittest
 from contextlib import nullcontext
 from ctypes import wintypes as w
 from types import SimpleNamespace
 from unittest import mock
 
-from coordination_loop_harness.local_time import HostSample
+from coordination_loop_harness.local_time import HostSample, LocalDeadline, LocalTimeHold
 from coordination_loop_harness.util import canonical_json_bytes, sha256_bytes
 from coordination_loop_harness.windows_capability import (
     INVALID_HANDLE,
     ProcessPin,
     WindowsPipe,
     _SecurityAttributes,
+    parse_interrupt_deadline,
     request_source_handoff,
     require_client_boot_deadline,
 )
 from coordination_loop_harness.windows_custody import SYSTEM
 from coordination_loop_harness.windows_security import TokenSecurity, WindowsBoundaryHold
+from coordination_loop_harness.windows_writer import WindowsWriterBinding
 
 PIN = ProcessPin(43, 133_800_000_000_000_002, "S-1-5-21-100-200-300-1001")
 SERVER = ProcessPin(42, 133_800_000_000_000_001, SYSTEM)
@@ -27,7 +30,17 @@ NAME = r"\\.\pipe\CoordinationLoop-source-test"
 
 
 class PeerKernelTests(unittest.TestCase):
-    def pipe(self, *, pid=43, creation=PIN.creation, sid=PIN.sid, token_type=1):
+    def pipe(
+        self,
+        *,
+        pid=43,
+        creation=PIN.creation,
+        sid=PIN.sid,
+        token_type=1,
+        groups=(),
+        privileges=(),
+        restricting=(),
+    ):
         def query(_handle, output):
             ctypes.cast(output, ctypes.POINTER(w.ULONG))[0] = pid
             return 1
@@ -43,8 +56,11 @@ class PeerKernelTests(unittest.TestCase):
         pipe.server = True
         pipe.name = NAME
         pipe._closed = False
+        pipe._io_lock = threading.RLock()
         pipe._reader = SimpleNamespace(
-            token_security=lambda _handle: TokenSecurity(sid, (), (), (), token_type)
+            token_security=lambda _handle: TokenSecurity(
+                sid, groups, restricting, privileges, token_type
+            )
         )
         pipe._k = SimpleNamespace(
             GetNamedPipeClientProcessId=query,
@@ -66,6 +82,9 @@ class PeerKernelTests(unittest.TestCase):
             {"creation": PIN.creation + 1},
             {"sid": "S-1-5-21-100-200-300-9999"},
             {"token_type": 2},
+            {"groups": ("S-1-5-32-544",)},
+            {"privileges": ("SeDebugPrivilege",)},
+            {"restricting": ("S-1-5-18",)},
         ):
             with self.subTest(change=change):
                 with self.assertRaises(WindowsBoundaryHold):
@@ -107,6 +126,7 @@ class PeerKernelTests(unittest.TestCase):
             mock.patch.object(WindowsPipe, "__init__", return_value=None),
         ):
             WindowsPipe.first_server(NAME, client_sid=PIN.sid)
+        self.assertEqual(k.CloseHandle.argtypes, [w.HANDLE])
         self.assertEqual(captured["name"], NAME)
         self.assertTrue(captured["flags"] & 0x00080000)
         self.assertTrue(captured["flags"] & 0x40000000)
@@ -126,6 +146,21 @@ class PeerKernelTests(unittest.TestCase):
         ):
             WindowsPipe.first_server(NAME, client_sid=PIN.sid)
 
+        full_handle = 0x123456789
+        k.CreateNamedPipeW.side_effect = lambda *_args: full_handle
+        with (
+            mock.patch(
+                "coordination_loop_harness.windows_capability.ctypes.WinDLL",
+                side_effect=lambda name, **_kwargs: k if name == "kernel32" else a,
+            ),
+            mock.patch.object(
+                WindowsPipe, "__init__", side_effect=RuntimeError("constructor failed")
+            ),
+            self.assertRaisesRegex(RuntimeError, "constructor failed"),
+        ):
+            WindowsPipe.first_server(NAME, client_sid=PIN.sid)
+        k.CloseHandle.assert_called_once_with(full_handle)
+
     def test_peer_replacement_during_exchange_is_refused_and_handle_closed(self):
         pipe = self.pipe()
         calls = 0
@@ -142,11 +177,33 @@ class PeerKernelTests(unittest.TestCase):
                 pass
         pipe._k.CloseHandle.assert_called_once_with(777)
 
+    def test_close_waits_for_outstanding_io(self):
+        pipe = self.pipe()
+        entered, release = threading.Event(), threading.Event()
+
+        def blocked(*_args):
+            entered.set()
+            release.wait(2)
+            return 0
+
+        with mock.patch.object(pipe, "_locked_operation", side_effect=blocked):
+            io = threading.Thread(target=lambda: pipe._operation("ReadFile"))
+            io.start()
+            self.assertTrue(entered.wait(2))
+            closer = threading.Thread(target=pipe.close)
+            closer.start()
+            self.assertFalse(pipe._closed)
+            release.set()
+            io.join(2)
+            closer.join(2)
+        self.assertTrue(pipe._closed)
+        pipe._k.CloseHandle.assert_called_once_with(pipe.handle)
+
 
 class ClientHandoffTests(unittest.TestCase):
     def test_client_native_boot_and_deadline_check_refuses_changed_or_expired(self):
         boot = "12345678-1234-1234-1234-123456789abc"
-        request = {"boot_id": boot, "deadline_interrupt": 200}
+        request = {"boot_id": boot, "deadline_interrupt": "200"}
         for sample, accepted in (
             (HostSample(boot, "43:1", 100, 100, 100), True),
             (HostSample(boot, "43:1", 200, 200, 200), False),
@@ -175,7 +232,7 @@ class ClientHandoffTests(unittest.TestCase):
             "lease_id": "LOCAL-T1",
             "generation": 1,
             "boot_id": "12345678-1234-1234-1234-123456789abc",
-            "deadline_interrupt": 6000,
+            "deadline_interrupt": "6000",
             "lease_sha256": "a" * 64,
             "target": {
                 "repository": "local/example",
@@ -203,6 +260,25 @@ class ClientHandoffTests(unittest.TestCase):
             "verification": "WINDOWS_CLH_SOURCE_SNAPSHOT_ONLY",
             "runtime_gate": "G_L1_ROOT_AND_CONSUMER_BOUNDARY_UNQUALIFIED",
         }
+        binding = WindowsWriterBinding(
+            SYSTEM,
+            "S-1-5-21-100-200-300-1002",
+            "S-1-5-21-100-200-300-1003",
+            55,
+            133_800_000_000_000_003,
+            "one-shot",
+            1,
+            "a" * 64,
+        )
+        sample = HostSample(request["boot_id"], "43:1", 100, 100, 100)
+        deadline = LocalDeadline(
+            lambda: sample,
+            intent_id="one-shot",
+            generation=1,
+            lease_sha256="a" * 64,
+            duration_seconds=600,
+            shorter_cap=6000,
+        )
 
         class Client:
             def __init__(self, raw, *, wrong_final=False):
@@ -227,12 +303,17 @@ class ClientHandoffTests(unittest.TestCase):
             def write_frame(self, raw):
                 if self.writes == 0:
                     assert raw == canonical_json_bytes(request)
-                else:
+                elif self.writes == 1:
                     assert raw == canonical_json_bytes(
                         {
                             "schema_version": "clh.windows-local-ack.v1",
                             "handoff_sha256": sha256_bytes(self.raw),
                         }
+                    )
+                else:
+                    assert (
+                        json.loads(raw)["stage"]
+                        == ("resume", "effect_publication", "receipt", "dag_ack")[self.writes - 2]
                     )
                 self.writes += 1
 
@@ -244,7 +325,10 @@ class ClientHandoffTests(unittest.TestCase):
                     return b"{}\n"
                 return canonical_json_bytes(
                     {
-                        "schema_version": "clh.windows-local-final.v1",
+                        "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                        "stage": ("resume", "effect_publication", "receipt", "dag_ack")[
+                            self.reads - 2
+                        ],
                         "handoff_sha256": sha256_bytes(self.raw),
                     }
                 )
@@ -253,18 +337,57 @@ class ClientHandoffTests(unittest.TestCase):
         with (
             mock.patch.object(WindowsPipe, "client", return_value=good),
             mock.patch("coordination_loop_harness.windows_capability.require_process_self"),
+            mock.patch(
+                "coordination_loop_harness.windows_capability.require_native_client_deadline"
+            ),
+            mock.patch("coordination_loop_harness.windows_capability.require_client_boot_deadline"),
+            mock.patch(
+                "coordination_loop_harness.windows_capability.WindowsWriterInspector"
+            ) as inspector,
+        ):
+            with request_source_handoff(
+                NAME,
+                issuer_pin=SERVER,
+                client_pin=PIN,
+                request=request,
+                binding=binding,
+                deadline=deadline,
+            ) as session:
+                self.assertEqual(session.response, response)
+                self.assertFalse(good.closed)
+                for stage in ("resume", "effect_publication", "receipt", "dag_ack"):
+                    session.checkpoint(stage, participant_handle=1, job_handle=2)
+            self.assertEqual(inspector.return_value.observe.call_count, 4)
+        self.assertTrue(good.closed and good.authenticated)
+        self.assertEqual((good.reads, good.writes), (5, 6))
+        out_of_order = Client(canonical_json_bytes(response))
+        with (
+            mock.patch.object(WindowsPipe, "client", return_value=out_of_order),
+            mock.patch("coordination_loop_harness.windows_capability.require_process_self"),
+            mock.patch(
+                "coordination_loop_harness.windows_capability.require_native_client_deadline"
+            ),
             mock.patch("coordination_loop_harness.windows_capability.require_client_boot_deadline"),
         ):
-            self.assertEqual(
-                request_source_handoff(NAME, issuer_pin=SERVER, client_pin=PIN, request=request),
-                response,
+            session = request_source_handoff(
+                NAME,
+                issuer_pin=SERVER,
+                client_pin=PIN,
+                request=request,
+                binding=binding,
+                deadline=deadline,
             )
-        self.assertTrue(good.closed and good.authenticated)
-        self.assertEqual((good.reads, good.writes), (2, 2))
+            with self.assertRaisesRegex(WindowsBoundaryHold, "CHECKPOINT_ORDER"):
+                session.checkpoint("receipt", participant_handle=1, job_handle=2)
+            self.assertTrue(out_of_order.closed)
+            with self.assertRaisesRegex(WindowsBoundaryHold, "CHECKPOINT_ORDER"):
+                session.checkpoint("resume", participant_handle=1, job_handle=2)
+            with self.assertRaises(LocalTimeHold):
+                deadline.check("watchdog", retained_intent=deadline.intent)
         for change in (
             {"issuer_pid": 99},
             {"generation": True},
-            {"deadline_interrupt": 6001},
+            {"deadline_interrupt": "6001"},
             {"custody_resolved": True},
         ):
             with self.subTest(change=change):
@@ -273,33 +396,71 @@ class ClientHandoffTests(unittest.TestCase):
                     mock.patch.object(WindowsPipe, "client", return_value=bad),
                     mock.patch("coordination_loop_harness.windows_capability.require_process_self"),
                     mock.patch(
+                        "coordination_loop_harness.windows_capability.require_native_client_deadline"
+                    ),
+                    mock.patch(
                         "coordination_loop_harness.windows_capability.require_client_boot_deadline"
                     ),
                 ):
                     with self.assertRaises(WindowsBoundaryHold):
                         request_source_handoff(
-                            NAME, issuer_pin=SERVER, client_pin=PIN, request=request
+                            NAME,
+                            issuer_pin=SERVER,
+                            client_pin=PIN,
+                            request=request,
+                            binding=binding,
+                            deadline=deadline,
                         )
                 self.assertTrue(bad.closed)
         malformed = Client(json.dumps(response).encode())
         with (
             mock.patch.object(WindowsPipe, "client", return_value=malformed),
             mock.patch("coordination_loop_harness.windows_capability.require_process_self"),
+            mock.patch(
+                "coordination_loop_harness.windows_capability.require_native_client_deadline"
+            ),
             mock.patch("coordination_loop_harness.windows_capability.require_client_boot_deadline"),
         ):
             with self.assertRaises(WindowsBoundaryHold):
-                request_source_handoff(NAME, issuer_pin=SERVER, client_pin=PIN, request=request)
+                request_source_handoff(
+                    NAME,
+                    issuer_pin=SERVER,
+                    client_pin=PIN,
+                    request=request,
+                    binding=binding,
+                    deadline=deadline,
+                )
         lost_final = Client(canonical_json_bytes(response), wrong_final=True)
         with (
             mock.patch.object(WindowsPipe, "client", return_value=lost_final),
             mock.patch("coordination_loop_harness.windows_capability.require_process_self"),
+            mock.patch(
+                "coordination_loop_harness.windows_capability.require_native_client_deadline"
+            ),
             mock.patch("coordination_loop_harness.windows_capability.require_client_boot_deadline"),
+            mock.patch("coordination_loop_harness.windows_capability.WindowsWriterInspector"),
         ):
-            with self.assertRaisesRegex(WindowsBoundaryHold, "FINAL_MISMATCH"):
-                request_source_handoff(NAME, issuer_pin=SERVER, client_pin=PIN, request=request)
+            with (
+                request_source_handoff(
+                    NAME,
+                    issuer_pin=SERVER,
+                    client_pin=PIN,
+                    request=request,
+                    binding=binding,
+                    deadline=deadline,
+                ) as session,
+                self.assertRaisesRegex(WindowsBoundaryHold, "CHECKPOINT_ACK_MISMATCH"),
+            ):
+                session.checkpoint("resume", participant_handle=1, job_handle=2)
+
+    def test_native_deadline_decimal_range_and_invalid_forms(self):
+        self.assertEqual(parse_interrupt_deadline(str(2**64 - 1)), 2**64 - 1)
+        for value in (True, 1.0, 1, "00", "01", "-1", "+1", "0", str(2**64), "9" * 5000):
+            with self.subTest(value=value), self.assertRaises(WindowsBoundaryHold):
+                parse_interrupt_deadline(value)
 
     def test_pin_and_name_validation_rejects_bool_and_aliases(self):
-        for pid, creation in ((True, 1), (1, False), (0, 1), (1, 0)):
+        for pid, creation in ((True, 1), (1, False), (0, 1), (1, 0), (1, 2**64)):
             with self.subTest(pid=pid, creation=creation), self.assertRaises(WindowsBoundaryHold):
                 ProcessPin(pid, creation, SYSTEM)
         for name in (r"\\server\pipe\CoordinationLoop-x", NAME + r"\extra", NAME + "?"):

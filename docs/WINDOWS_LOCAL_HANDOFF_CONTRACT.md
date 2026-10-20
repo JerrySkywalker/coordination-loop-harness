@@ -16,8 +16,17 @@ Operator startup channel. It must never learn the expected pin from the pipe
 response, a Worker, environment activation, or a JSON root claim. How that
 startup channel is installed and tested is a future CLF/Operator integration
 gate; a caller supplied pin is not itself authority.
+The Operator also fixes `WindowsWriterBinding` after CLF creates the participant
+suspended and before the claim. The binding names its PID and creation, distinct
+Worker and scratch SIDs, and the same intent/generation/Lease digest. CLF retains
+its owned participant and Job handles and a native client `LocalDeadline` with
+the exact transmitted boot and interrupt deadline.
 
-`WindowsIssuer.claim_once` burns the retained attempt before creating the pipe.
+`WindowsIssuer.claim_once` atomically burns the retained `LocalDeadline` attempt
+before creating the pipe. A second issuer object using that deadline cannot
+claim, even after first-attempt failure. Process restart requires reconciliation
+with existing Owner admission and a newly admitted intent; no source constructor
+can restore or re-anchor the consumed intent.
 Its process must have an actual SYSTEM primary token and the pinned native PID
 and creation time. `WindowsProtectedCustodyVerifier` has a separate native issuer
 self-check for this call; its ordinary observer path still rejects SYSTEM. It
@@ -34,21 +43,23 @@ connection/read/write. Its client ACE permits data read/write, but not
 `FILE_CREATE_PIPE_INSTANCE`. Squatting fails first-instance creation and burns
 the attempt. The client opens without an inheritable handle and uses
 identification-level SQOS. Both sides close on failure or completion; there is
-no server loop, daemon, retry, process launch, token factory invocation, or ACL
+no accept loop, daemon, retry, process launch, token factory invocation, or ACL
 installation here.
 
 The server gets the connected client's kernel pipe PID, opens that process,
 and checks the retained PID, creation time and primary-token SID while holding
 the process handle across the exchange. It checks the pipe peer and process is
-still running afterward. The client independently checks the connected server
+still running afterward. The client token also passes the observer policy: no
+trusted grant-capable group, trusted restricting SID, or enableable privilege
+beyond `SeChangeNotifyPrivilege`. The client independently checks the connected server
 against its protected startup PID, creation time and SYSTEM primary token, and
 checks its own primary token, PID and creation against its startup pin. It
-samples native boot/interrupt time before connection and after the final frame;
-CLF still must own suspend/wake containment and every later checkpoint.
+samples native boot/interrupt time before connection and at each checkpoint;
+CLF still must own suspend/wake containment and schedule those checks.
 Neither a hash nor a serialized frame supplies OS origin. A lost channel,
 partial/oversized/malformed frame, native query failure, wrong peer, timeout,
-changed Lease/Decision/target, boot/time uncertainty, or concurrent second
-claim leaves the one-shot attempt spent and the deadline latched. The fixed
+changed Lease/Decision/target, or boot/time uncertainty latches the deadline;
+a concurrent second claim is refused without disturbing the first claim. The fixed
 name, first-instance rule and PID/creation checks fail closed on issuer restart;
 the old deadline and issuer cannot be deserialized or renewed. A new issuer
 instance requires a **new Owner-admitted intent**, not automatic re-anchoring
@@ -61,17 +72,30 @@ intent ID, Lease ID/generation/digest, boot ID, interrupt deadline, and exact
 repository, canonical path, worktree root, branch ref and HEAD. The response
 (`clh.windows-local-handoff.v1`) binds the request digest, Decision path/digest,
 both process pins, boot/deadline, Lease/generation and target. The response
-encodes native FILETIME process creation pins as canonical decimal strings,
-because their 64-bit values exceed JSON's portable safe-integer range. It
-always says `custody_resolved=false` and keeps the runtime gate unqualified.
-The client acknowledges the exact response digest; the issuer rechecks the
-deadline and sends a final digest frame. The client accepts only that final
-frame on the same authenticated connection. A lost response, acknowledgement,
-or final frame refuses the exchange and never authorizes a retry.
-It has no offline bearer semantics. The future CLF consumer may use the
-exchange only on its authenticated live pipe, followed by its own authorized
-process, containment, effect, time and receipt checks. A copied response or
-synthetic SOURCE_TEST fixture cannot admit a Worker or publish effects.
+encodes native FILETIME process creation pins and the full 64-bit interrupt
+deadline as canonical decimal strings. The client rejects booleans, numbers,
+signs, leading zeroes, zero and out-of-range deadline strings. It always says
+`custody_resolved=false` and keeps the runtime gate unqualified. The Decision
+is opened with native read-only sharing before v2 validation; write and delete
+sharing remain denied through the exchange. Its digest names those sealed bytes.
+
+The client acknowledges the response digest and receives a retained
+`WindowsHandoffSession`. The issuer keeps the authenticated pipe open. CLF
+uses that session on its owning thread; cross-thread use latches HOLD. CLF
+must call `checkpoint` in order: `resume` before participant resume,
+`effect_publication` before exposing staged effects, `receipt` before Receipt,
+and `dag_ack` before DAG acknowledgement. Each call checks the client's native
+boot/deadline and owned participant/Job handles, sends the same handoff digest
+and fixed `WindowsWriterBinding`, and requires the live issuer's acknowledgement
+after its deadline check. CLF must send `watchdog` checkpoints during longer
+work; the three-second frame wait fails closed without one. Loss, wrong order,
+failed observation or a missed acknowledgement closes the session and refuses
+later checkpoints. CLF must contain and settle its owned Job on loss.
+
+A stage acknowledgement and writer snapshot remain source evidence only. They
+do not qualify atomic launch, actual filesystem denial, effect/Receipt/DAG
+integration, or a runtime grant. A copied response or synthetic SOURCE_TEST
+fixture has no offline bearer semantics.
 
 ## Remaining host qualification
 

@@ -6,8 +6,11 @@ ACLs, install a Root, launch a process, or qualify a Worker from a caller boolea
 
 from __future__ import annotations
 
+import ctypes
 import os
 import stat
+from contextlib import contextmanager
+from ctypes import wintypes as w
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,6 +55,32 @@ MUTATION_MASK = 0x116 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x4000
 # why the nonempty-chain proof is required for reparse-capable write rights.
 ANCESTOR_NAMESPACE_MASK = MUTATION_MASK & ~(0x116 | 0x40000000)
 MANIFEST = "compatibility/repo-set-lease.v2/artifact-manifest.json"
+
+
+@contextmanager
+def sealed_decision(path: Path):
+    """Deny writes and deletion of the validated Decision through issuance."""
+    if os.name != "nt":
+        raise WindowsBoundaryHold("HOLD_NATIVE_DECISION_SEAL_UNAVAILABLE")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        w.LPCWSTR,
+        w.DWORD,
+        w.DWORD,
+        w.LPVOID,
+        w.DWORD,
+        w.DWORD,
+        w.HANDLE,
+    ]
+    kernel.CreateFileW.restype = w.HANDLE
+    kernel.CloseHandle.argtypes, kernel.CloseHandle.restype = [w.HANDLE], w.BOOL
+    handle = kernel.CreateFileW(str(path), 0x80000000, 0x00000001, None, 3, 0, None)
+    if handle in (None, 0, ctypes.c_void_p(-1).value):
+        raise WindowsBoundaryHold("HOLD_NATIVE_DECISION_SEAL_UNAVAILABLE")
+    try:
+        yield
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def _digest(value: str) -> bool:

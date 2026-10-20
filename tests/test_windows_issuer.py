@@ -11,7 +11,7 @@ import test_windows_custody as custody_fixture
 
 from coordination_loop_harness.local_time import LocalDeadline, LocalTimeHold
 from coordination_loop_harness.util import canonical_json_bytes, sha256_bytes
-from coordination_loop_harness.windows_capability import ProcessPin
+from coordination_loop_harness.windows_capability import ProcessPin, binding_wire
 from coordination_loop_harness.windows_custody import SYSTEM
 from coordination_loop_harness.windows_issuer import (
     WindowsIssuer,
@@ -19,6 +19,7 @@ from coordination_loop_harness.windows_issuer import (
     require_native_deadline,
 )
 from coordination_loop_harness.windows_security import WindowsBoundaryHold
+from coordination_loop_harness.windows_writer import WindowsWriterBinding
 
 CLIENT = ProcessPin(43, 133_800_000_000_000_002, "S-1-5-21-100-200-300-1001")
 ISSUER = ProcessPin(42, 133_800_000_000_000_001, SYSTEM)
@@ -30,6 +31,8 @@ class FakePipe:
         self.raw = raw
         self.fail = fail
         self.sent = []
+        self.checkpoint_index = 0
+        self.ack_read = False
         self.closed = False
 
     def __enter__(self):
@@ -56,13 +59,25 @@ class FakePipe:
     def read_frame(self):
         if self.fail == "read":
             raise WindowsBoundaryHold("HOLD_PIPE_DISCONNECTED")
-        if self.sent:
+        if self.sent and not self.ack_read:
             if self.fail == "ack":
                 raise WindowsBoundaryHold("HOLD_PIPE_DISCONNECTED")
+            self.ack_read = True
             return canonical_json_bytes(
                 {
                     "schema_version": "clh.windows-local-ack.v1",
                     "handoff_sha256": sha256_bytes(self.sent[0]),
+                }
+            )
+        if self.sent:
+            from coordination_loop_harness.windows_capability import CHECKPOINT_ORDER
+
+            return canonical_json_bytes(
+                {
+                    "schema_version": "clh.windows-local-checkpoint.v1",
+                    "stage": CHECKPOINT_ORDER[self.checkpoint_index],
+                    "handoff_sha256": sha256_bytes(self.sent[0]),
+                    "binding": binding_wire(self.binding),
                 }
             )
         return self.raw
@@ -71,6 +86,8 @@ class FakePipe:
         if self.fail == "write" or (self.fail == "final" and self.sent):
             raise WindowsBoundaryHold("HOLD_PIPE_DISCONNECTED")
         self.sent.append(data)
+        if len(self.sent) > 1:
+            self.checkpoint_index += 1
 
 
 class WindowsIssuerSourceTests(unittest.TestCase):
@@ -104,6 +121,16 @@ class WindowsIssuerSourceTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.target = WriterTarget.from_lease(fixture.candidate["repositories"][0])
+        self.binding = WindowsWriterBinding(
+            SYSTEM,
+            "S-1-5-21-100-200-300-1002",
+            "S-1-5-21-100-200-300-1003",
+            55,
+            133_800_000_000_000_003,
+            "one-shot",
+            1,
+            sha256_bytes(fixture.serialized),
+        )
         self.issuer = self.new_issuer()
         self.raw = canonical_json_bytes(self.issuer._expected_request())
 
@@ -121,15 +148,23 @@ class WindowsIssuerSourceTests(unittest.TestCase):
             lease_id="LOCAL-T1",
             serialized_lease=self.fixture.serialized,
             target=self.target,
+            writer_binding=self.binding,
         )
         return WindowsIssuer(**(fields | changes))
 
     def claim(self, issuer=None, raw=None, *, fail=None):
         pipe = FakePipe(self.raw if raw is None else raw, fail=fail)
-        with mock.patch(
-            "coordination_loop_harness.windows_issuer.WindowsPipe.first_server",
-            return_value=pipe,
-        ) as first:
+        pipe.binding = (issuer or self.issuer)._writer_binding
+        with (
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.WindowsPipe.first_server",
+                return_value=pipe,
+            ) as first,
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.sealed_decision",
+                return_value=nullcontext(),
+            ),
+        ):
             return (issuer or self.issuer).claim_once(), pipe, first
 
     def test_exact_real_chain_target_and_source_only_handoff(self):
@@ -144,6 +179,8 @@ class WindowsIssuerSourceTests(unittest.TestCase):
         first.assert_called_once_with(PIPE, client_sid=CLIENT.sid)
         with self.assertRaisesRegex(WindowsBoundaryHold, "ALREADY_ATTEMPTED"):
             self.issuer.claim_once()
+        with self.assertRaisesRegex(WindowsBoundaryHold, "ALREADY_ATTEMPTED"):
+            self.new_issuer().claim_once()
 
     def test_failed_claim_burns_intent_for_tamper_boolean_target_and_peer_loss(self):
         mutations = (
@@ -153,6 +190,8 @@ class WindowsIssuerSourceTests(unittest.TestCase):
             {"lease_sha256": "f" * 64},
             {"boot_id": "12345678-1234-1234-1234-123456789abd"},
             {"deadline_interrupt": True},
+            {"deadline_interrupt": 1.0},
+            {"deadline_interrupt": "01"},
         )
         for changes in mutations:
             with self.subTest(changes=changes):
@@ -188,6 +227,9 @@ class WindowsIssuerSourceTests(unittest.TestCase):
         )
         self.fixture.write_candidate()
         self.fixture.verifier()
+        self.binding = dataclasses.replace(
+            self.binding, lease_sha256=sha256_bytes(self.fixture.serialized)
+        )
         issuer = self.new_issuer()
         raw = canonical_json_bytes(issuer._expected_request())
         with self.assertRaises(ValueError):
@@ -235,6 +277,7 @@ class WindowsIssuerSourceTests(unittest.TestCase):
         started = threading.Event()
         release = threading.Event()
         pipe = FakePipe(self.raw)
+        pipe.binding = self.binding
         original = pipe.read_frame
 
         def blocking_read():
@@ -251,9 +294,15 @@ class WindowsIssuerSourceTests(unittest.TestCase):
             except Exception as exc:
                 outcomes.append(exc)
 
-        with mock.patch(
-            "coordination_loop_harness.windows_issuer.WindowsPipe.first_server",
-            return_value=pipe,
+        with (
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.WindowsPipe.first_server",
+                return_value=pipe,
+            ),
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.sealed_decision",
+                return_value=nullcontext(),
+            ),
         ):
             first = threading.Thread(target=run)
             first.start()
@@ -264,7 +313,7 @@ class WindowsIssuerSourceTests(unittest.TestCase):
             release.set()
             first.join(60)
         self.assertEqual(len(outcomes), 2)
-        self.assertEqual(sum(isinstance(item, dict) for item in outcomes), 1)
+        self.assertEqual(sum(isinstance(item, dict) for item in outcomes), 1, repr(outcomes))
         self.assertEqual(sum(isinstance(item, WindowsBoundaryHold) for item in outcomes), 1)
 
 

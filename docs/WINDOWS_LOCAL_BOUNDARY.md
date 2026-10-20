@@ -25,8 +25,11 @@ boot/process/source anchor and deadline) inside the trusted Operator process.
 It takes the earliest of start + approved duration (1–600 seconds) and a shorter
 interrupt-time cap. It exposes no renewal, re-anchor, serialization or restore
 API. Recreating it is a new unadmitted intent, never a way to resume an old task;
-the source issuer now burns one retained claim attempt. Restart reconciliation
-and CLF Claim ownership remain future protected integration gates.
+the source issuer atomically burns one claim attempt on the retained deadline
+across issuer instances. Restart requires existing Owner admission reconciliation
+and a new intent. The live handoff session requires ordered writer-bound checks
+through DAG acknowledgement; CLF Claim ownership and protected runtime
+qualification remain future integration gates.
 
 All checkpoints (`admission`, `pre_spawn`, `watchdog`, `resume`,
 `effect_publication`, `receipt`, `dag_ack`) read a fresh sample. Equality at expiry
