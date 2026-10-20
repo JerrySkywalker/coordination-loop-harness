@@ -17,11 +17,13 @@ from .windows_capability import (
     ProcessPin,
     WindowsPipe,
     binding_wire,
+    parse_interrupt_deadline,
+    parse_native_handle,
     require_system_self,
 )
 from .windows_custody import WindowsIssuerConfig, WindowsProtectedCustodyVerifier, sealed_decision
-from .windows_security import WindowsBoundaryHold
-from .windows_writer import WindowsWriterBinding
+from .windows_security import WindowsBoundaryHold, is_account_sid
+from .windows_writer import WindowsWriterBinding, WindowsWriterInspector
 
 
 @dataclass(frozen=True)
@@ -81,7 +83,8 @@ class WindowsIssuer:
         lease_id: str,
         serialized_lease: bytes,
         target: WriterTarget,
-        writer_binding: WindowsWriterBinding,
+        worker_sid: str,
+        scratch_sid: str,
     ) -> None:
         if type(issuer_pin) is not ProcessPin or type(client_pin) is not ProcessPin:
             raise WindowsBoundaryHold("HOLD_FIXED_PROCESS_PINS_REQUIRED")
@@ -96,10 +99,10 @@ class WindowsIssuer:
             or not isinstance(target, WriterTarget)
             or not isinstance(lease_id, str)
             or not lease_id
-            or type(writer_binding) is not WindowsWriterBinding
-            or writer_binding.issuer_sid != issuer_pin.sid
-            or (writer_binding.intent_id, writer_binding.generation, writer_binding.lease_sha256)
-            != (deadline.intent.intent_id, deadline.intent.generation, deadline.intent.lease_sha256)
+            or not is_account_sid(worker_sid)
+            or not is_account_sid(scratch_sid)
+            or worker_sid == scratch_sid
+            or client_pin.sid in (worker_sid, scratch_sid)
         ):
             raise WindowsBoundaryHold("HOLD_FIXED_ISSUER_CLIENT_AND_LEASE_REQUIRED")
         self._config = config
@@ -110,7 +113,8 @@ class WindowsIssuer:
         self._lease_id = lease_id
         self._serialized = serialized_lease
         self._target = target
-        self._writer_binding = writer_binding
+        self._worker_sid = worker_sid
+        self._scratch_sid = scratch_sid
 
     def __getstate__(self):
         raise TypeError("Issuer state cannot be persisted/restored")
@@ -126,6 +130,8 @@ class WindowsIssuer:
             "boot_id": intent.anchor.boot_id,
             "deadline_interrupt": str(intent.deadline),
             "target": self._target.as_dict(),
+            "worker_sid": self._worker_sid,
+            "scratch_sid": self._scratch_sid,
         }
 
     def claim_once(self) -> dict:
@@ -197,13 +203,99 @@ class WindowsIssuer:
                     if pipe.read_frame() != expected_ack:
                         raise WindowsBoundaryHold("HOLD_HANDOFF_ACK_MISMATCH")
                     self._deadline.check("pre_spawn", retained_intent=intent)
+                    verifier.verify(self._lease_id, intent.generation, self._serialized)
+                    # CLF now creates the participant suspended and assigns its
+                    # Job. No participant identity was needed for admission.
+                    pre_spawn_heartbeat = canonical_json_bytes(
+                        {
+                            "schema_version": "clh.windows-local-checkpoint.v1",
+                            "stage": "pre_spawn_watchdog",
+                            "handoff_sha256": handoff_digest,
+                        }
+                    )
+                    while True:
+                        raw_bind = pipe.read_frame()
+                        if raw_bind != pre_spawn_heartbeat:
+                            break
+                        self._deadline.check("watchdog", retained_intent=intent)
+                        verifier.verify(self._lease_id, intent.generation, self._serialized)
+                        pipe.write_frame(
+                            canonical_json_bytes(
+                                {
+                                    "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                                    "stage": "pre_spawn_watchdog",
+                                    "handoff_sha256": handoff_digest,
+                                }
+                            )
+                        )
+                    try:
+                        bind = json.loads(raw_bind)
+                        if raw_bind != canonical_json_bytes(bind):
+                            raise ValueError("noncanonical bind")
+                    except (ValueError, UnicodeError, TypeError) as exc:
+                        raise WindowsBoundaryHold("HOLD_HANDOFF_BIND_FRAME_INVALID") from exc
+                    if (
+                        type(bind) is not dict
+                        or set(bind)
+                        != {
+                            "schema_version",
+                            "handoff_sha256",
+                            "binding",
+                            "participant_handle",
+                            "job_handle",
+                        }
+                        or bind["schema_version"] != "clh.windows-local-bind.v1"
+                        or bind["handoff_sha256"] != handoff_digest
+                        or type(bind["binding"]) is not dict
+                    ):
+                        raise WindowsBoundaryHold("HOLD_HANDOFF_BIND_ORDER")
+                    fields = bind["binding"]
+                    if (
+                        set(fields) != set(WindowsWriterBinding.__dataclass_fields__)
+                        or type(fields.get("participant_pid")) is not int
+                        or not 0 < fields["participant_pid"] < 2**32
+                        or type(fields.get("participant_creation")) is not str
+                    ):
+                        raise WindowsBoundaryHold("HOLD_FIXED_WRITER_BINDING_REQUIRED")
+                    creation = parse_interrupt_deadline(fields["participant_creation"])
+                    try:
+                        binding = WindowsWriterBinding(
+                            **(fields | {"participant_creation": creation})
+                        )
+                    except (TypeError, ValueError) as exc:
+                        raise WindowsBoundaryHold("HOLD_FIXED_WRITER_BINDING_REQUIRED") from exc
+                    if (
+                        binding_wire(binding) != fields
+                        or (binding.issuer_sid, binding.worker_sid, binding.scratch_sid)
+                        != (self._issuer_pin.sid, self._worker_sid, self._scratch_sid)
+                        or (binding.intent_id, binding.generation, binding.lease_sha256)
+                        != (intent.intent_id, intent.generation, intent.lease_sha256)
+                    ):
+                        raise WindowsBoundaryHold("HOLD_FIXED_WRITER_BINDING_REQUIRED")
+                    participant = parse_native_handle(bind["participant_handle"])
+                    job = parse_native_handle(bind["job_handle"])
+                    handles = stack.enter_context(
+                        pipe.duplicate_peer_query_handles(participant, job)
+                    )
+                    inspector = WindowsWriterInspector(binding, self._deadline)
+                    inspector.observe(participant_handle=handles[0], job_handle=handles[1])
+                    verifier.verify(self._lease_id, intent.generation, self._serialized)
+                    pipe.write_frame(
+                        canonical_json_bytes(
+                            {
+                                "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                                "stage": "bind",
+                                "handoff_sha256": handoff_digest,
+                            }
+                        )
+                    )
                     for stage in CHECKPOINT_ORDER:
                         watchdog = canonical_json_bytes(
                             {
                                 "schema_version": "clh.windows-local-checkpoint.v1",
                                 "stage": "watchdog",
                                 "handoff_sha256": handoff_digest,
-                                "binding": binding_wire(self._writer_binding),
+                                "binding": binding_wire(binding),
                             }
                         )
                         expected = canonical_json_bytes(
@@ -211,7 +303,7 @@ class WindowsIssuer:
                                 "schema_version": "clh.windows-local-checkpoint.v1",
                                 "stage": stage,
                                 "handoff_sha256": handoff_digest,
-                                "binding": binding_wire(self._writer_binding),
+                                "binding": binding_wire(binding),
                             }
                         )
                         while True:
@@ -222,6 +314,12 @@ class WindowsIssuer:
                                 checked = stage
                             else:
                                 raise WindowsBoundaryHold("HOLD_HANDOFF_CHECKPOINT_MISMATCH")
+                            self._deadline.check(checked, retained_intent=intent)
+                            # Full protected Lease/Decision/Git admission stays
+                            # strict even after publication. A dirty tree or a
+                            # changed HEAD holds; this never certifies effects.
+                            verifier.verify(self._lease_id, intent.generation, self._serialized)
+                            inspector.observe(participant_handle=handles[0], job_handle=handles[1])
                             self._deadline.check(checked, retained_intent=intent)
                             pipe.write_frame(
                                 canonical_json_bytes(

@@ -17,6 +17,7 @@ from coordination_loop_harness.windows_capability import (
     WindowsPipe,
     _SecurityAttributes,
     parse_interrupt_deadline,
+    parse_native_handle,
     request_source_handoff,
     require_client_boot_deadline,
 )
@@ -90,6 +91,58 @@ class PeerKernelTests(unittest.TestCase):
                 with self.assertRaises(WindowsBoundaryHold):
                     with self.pipe(**change).authenticated_peer(PIN):
                         self.fail("wrong kernel identity entered authenticated scope")
+
+    def test_query_only_handles_come_from_authenticated_client_and_close(self):
+        pipe = self.pipe()
+        copied = []
+
+        def duplicate(source_process, source, target_process, result, access, inherit, options):
+            copied.append((source_process, source, target_process, access, inherit, options))
+            ctypes.cast(result, ctypes.POINTER(w.HANDLE))[0] = 900 + len(copied)
+            return 1
+
+        pipe._k.DuplicateHandle = mock.Mock(side_effect=duplicate)
+        pipe._k.GetCurrentProcess = mock.Mock(return_value=888)
+        with self.assertRaisesRegex(WindowsBoundaryHold, "AUTHENTICATED_CLIENT"):
+            with pipe.duplicate_peer_query_handles(11, 12):
+                pass
+
+        failed = self.pipe()
+        failed_copied = []
+
+        def fail_second(*args):
+            failed_copied.append(args)
+            if len(failed_copied) == 2:
+                return 0
+            ctypes.cast(args[3], ctypes.POINTER(w.HANDLE))[0] = 903
+            return 1
+
+        failed._k.DuplicateHandle = mock.Mock(side_effect=fail_second)
+        failed._k.GetCurrentProcess = mock.Mock(return_value=888)
+        with failed.authenticated_peer(PIN):
+            with self.assertRaisesRegex(WindowsBoundaryHold, "DUPLICATION_FAILED"):
+                with failed.duplicate_peer_query_handles(11, 12):
+                    pass
+        self.assertEqual(
+            failed._k.CloseHandle.call_args_list[-2:], [mock.call(903), mock.call(777)]
+        )
+        with pipe.authenticated_peer(PIN):
+            with pipe.duplicate_peer_query_handles(11, 12) as handles:
+                self.assertEqual(handles, (901, 902))
+        self.assertEqual(
+            copied,
+            [
+                (777, 11, 888, 0x1000, False, 0),
+                (777, 12, 888, 0x0004, False, 0),
+            ],
+        )
+        self.assertEqual(
+            pipe._k.CloseHandle.call_args_list[-3:],
+            [mock.call(902), mock.call(901), mock.call(777)],
+        )
+        with self.assertRaisesRegex(WindowsBoundaryHold, "AUTHENTICATED_CLIENT"):
+            with pipe.duplicate_peer_query_handles(11, 12):
+                pass
 
     def test_first_server_is_single_local_noninheritable_and_rejects_squatting(self):
         captured = {}
@@ -234,6 +287,8 @@ class ClientHandoffTests(unittest.TestCase):
             "boot_id": "12345678-1234-1234-1234-123456789abc",
             "deadline_interrupt": "6000",
             "lease_sha256": "a" * 64,
+            "worker_sid": "S-1-5-21-100-200-300-1002",
+            "scratch_sid": "S-1-5-21-100-200-300-1003",
             "target": {
                 "repository": "local/example",
                 "canonical_path": "C:/example",
@@ -288,6 +343,8 @@ class ClientHandoffTests(unittest.TestCase):
                 self.authenticated = False
                 self.reads = 0
                 self.writes = 0
+                self.last_stage = None
+                self.stage_writes = 0
 
             def __enter__(self):
                 return self
@@ -311,10 +368,19 @@ class ClientHandoffTests(unittest.TestCase):
                         }
                     )
                 else:
-                    assert (
-                        json.loads(raw)["stage"]
-                        == ("resume", "effect_publication", "receipt", "dag_ack")[self.writes - 2]
-                    )
+                    payload = json.loads(raw)
+                    if payload["schema_version"] == "clh.windows-local-bind.v1":
+                        self.last_stage = "bind"
+                    else:
+                        self.last_stage = payload["stage"]
+                        if self.last_stage != "pre_spawn_watchdog":
+                            assert (
+                                self.last_stage
+                                == ("resume", "effect_publication", "receipt", "dag_ack")[
+                                    self.stage_writes
+                                ]
+                            )
+                            self.stage_writes += 1
                 self.writes += 1
 
             def read_frame(self):
@@ -326,9 +392,7 @@ class ClientHandoffTests(unittest.TestCase):
                 return canonical_json_bytes(
                     {
                         "schema_version": "clh.windows-local-checkpoint-ack.v1",
-                        "stage": ("resume", "effect_publication", "receipt", "dag_ack")[
-                            self.reads - 2
-                        ],
+                        "stage": self.last_stage,
                         "handoff_sha256": sha256_bytes(self.raw),
                     }
                 )
@@ -350,16 +414,44 @@ class ClientHandoffTests(unittest.TestCase):
                 issuer_pin=SERVER,
                 client_pin=PIN,
                 request=request,
-                binding=binding,
+                worker_sid=binding.worker_sid,
+                scratch_sid=binding.scratch_sid,
                 deadline=deadline,
             ) as session:
                 self.assertEqual(session.response, response)
                 self.assertFalse(good.closed)
+                session.pre_spawn_watchdog()
+                session.bind(binding, participant_handle=1, job_handle=2)
                 for stage in ("resume", "effect_publication", "receipt", "dag_ack"):
                     session.checkpoint(stage, participant_handle=1, job_handle=2)
-            self.assertEqual(inspector.return_value.observe.call_count, 4)
+            self.assertEqual(inspector.return_value.observe.call_count, 5)
         self.assertTrue(good.closed and good.authenticated)
-        self.assertEqual((good.reads, good.writes), (5, 6))
+        self.assertEqual((good.reads, good.writes), (7, 8))
+        oversized = Client(canonical_json_bytes(response))
+        with (
+            mock.patch.object(WindowsPipe, "client", return_value=oversized),
+            mock.patch("coordination_loop_harness.windows_capability.require_process_self"),
+            mock.patch(
+                "coordination_loop_harness.windows_capability.require_native_client_deadline"
+            ),
+            mock.patch("coordination_loop_harness.windows_capability.require_client_boot_deadline"),
+            mock.patch(
+                "coordination_loop_harness.windows_capability.WindowsWriterInspector"
+            ) as native,
+        ):
+            session = request_source_handoff(
+                NAME,
+                issuer_pin=SERVER,
+                client_pin=PIN,
+                request=request,
+                worker_sid=binding.worker_sid,
+                scratch_sid=binding.scratch_sid,
+                deadline=deadline,
+            )
+            with self.assertRaisesRegex(WindowsBoundaryHold, "NATIVE_HANDLE_RANGE_INVALID"):
+                session.bind(binding, participant_handle=2**64, job_handle=2)
+            native.assert_not_called()
+            self.assertTrue(oversized.closed)
         out_of_order = Client(canonical_json_bytes(response))
         with (
             mock.patch.object(WindowsPipe, "client", return_value=out_of_order),
@@ -374,7 +466,8 @@ class ClientHandoffTests(unittest.TestCase):
                 issuer_pin=SERVER,
                 client_pin=PIN,
                 request=request,
-                binding=binding,
+                worker_sid=binding.worker_sid,
+                scratch_sid=binding.scratch_sid,
                 deadline=deadline,
             )
             with self.assertRaisesRegex(WindowsBoundaryHold, "CHECKPOINT_ORDER"):
@@ -408,7 +501,8 @@ class ClientHandoffTests(unittest.TestCase):
                             issuer_pin=SERVER,
                             client_pin=PIN,
                             request=request,
-                            binding=binding,
+                            worker_sid=binding.worker_sid,
+                            scratch_sid=binding.scratch_sid,
                             deadline=deadline,
                         )
                 self.assertTrue(bad.closed)
@@ -427,7 +521,8 @@ class ClientHandoffTests(unittest.TestCase):
                     issuer_pin=SERVER,
                     client_pin=PIN,
                     request=request,
-                    binding=binding,
+                    worker_sid=binding.worker_sid,
+                    scratch_sid=binding.scratch_sid,
                     deadline=deadline,
                 )
         lost_final = Client(canonical_json_bytes(response), wrong_final=True)
@@ -446,11 +541,13 @@ class ClientHandoffTests(unittest.TestCase):
                     issuer_pin=SERVER,
                     client_pin=PIN,
                     request=request,
-                    binding=binding,
+                    worker_sid=binding.worker_sid,
+                    scratch_sid=binding.scratch_sid,
                     deadline=deadline,
                 ) as session,
-                self.assertRaisesRegex(WindowsBoundaryHold, "CHECKPOINT_ACK_MISMATCH"),
+                self.assertRaisesRegex(WindowsBoundaryHold, "BIND_ACK_MISMATCH"),
             ):
+                session.bind(binding, participant_handle=1, job_handle=2)
                 session.checkpoint("resume", participant_handle=1, job_handle=2)
 
     def test_native_deadline_decimal_range_and_invalid_forms(self):
@@ -458,6 +555,12 @@ class ClientHandoffTests(unittest.TestCase):
         for value in (True, 1.0, 1, "00", "01", "-1", "+1", "0", str(2**64), "9" * 5000):
             with self.subTest(value=value), self.assertRaises(WindowsBoundaryHold):
                 parse_interrupt_deadline(value)
+
+    def test_native_handle_wire_rejects_lossy_and_invalid_values(self):
+        self.assertEqual(parse_native_handle("123"), 123)
+        for value in (True, 1, 1.0, "0", "01", "-1", "+1", str(2**64), "9" * 100):
+            with self.subTest(value=value), self.assertRaises(WindowsBoundaryHold):
+                parse_native_handle(value)
 
     def test_pin_and_name_validation_rejects_bool_and_aliases(self):
         for pid, creation in ((True, 1), (1, False), (0, 1), (1, 0), (1, 2**64)):

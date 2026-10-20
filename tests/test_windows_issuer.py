@@ -11,7 +11,7 @@ import test_windows_custody as custody_fixture
 
 from coordination_loop_harness.local_time import LocalDeadline, LocalTimeHold
 from coordination_loop_harness.util import canonical_json_bytes, sha256_bytes
-from coordination_loop_harness.windows_capability import ProcessPin, binding_wire
+from coordination_loop_harness.windows_capability import CHECKPOINT_ORDER, ProcessPin, binding_wire
 from coordination_loop_harness.windows_custody import SYSTEM
 from coordination_loop_harness.windows_issuer import (
     WindowsIssuer,
@@ -27,12 +27,17 @@ PIPE = r"\\.\pipe\CoordinationLoop-one-shot-source-test"
 
 
 class FakePipe:
-    def __init__(self, raw: bytes, *, fail=None):
+    def __init__(self, raw: bytes, *, fail=None, bind_changes=None, stages=None, pre_watchdogs=0):
         self.raw = raw
         self.fail = fail
+        self.bind_changes = bind_changes or {}
+        self.stages = stages
+        self.pre_watchdogs = pre_watchdogs
         self.sent = []
         self.checkpoint_index = 0
         self.ack_read = False
+        self.bind_read = False
+        self.binding = None
         self.closed = False
 
     def __enter__(self):
@@ -69,13 +74,36 @@ class FakePipe:
                     "handoff_sha256": sha256_bytes(self.sent[0]),
                 }
             )
+        if self.sent and not self.bind_read:
+            if self.pre_watchdogs:
+                self.pre_watchdogs -= 1
+                return canonical_json_bytes(
+                    {
+                        "schema_version": "clh.windows-local-checkpoint.v1",
+                        "stage": "pre_spawn_watchdog",
+                        "handoff_sha256": sha256_bytes(self.sent[0]),
+                    }
+                )
+            self.bind_read = True
+            return canonical_json_bytes(
+                {
+                    "schema_version": "clh.windows-local-bind.v1",
+                    "handoff_sha256": sha256_bytes(self.sent[0]),
+                    "binding": binding_wire(self.binding),
+                    "participant_handle": "1",
+                    "job_handle": "2",
+                }
+                | self.bind_changes
+            )
         if self.sent:
-            from coordination_loop_harness.windows_capability import CHECKPOINT_ORDER
-
             return canonical_json_bytes(
                 {
                     "schema_version": "clh.windows-local-checkpoint.v1",
-                    "stage": CHECKPOINT_ORDER[self.checkpoint_index],
+                    "stage": (
+                        self.stages[self.checkpoint_index]
+                        if self.stages is not None
+                        else CHECKPOINT_ORDER[self.checkpoint_index]
+                    ),
                     "handoff_sha256": sha256_bytes(self.sent[0]),
                     "binding": binding_wire(self.binding),
                 }
@@ -86,8 +114,12 @@ class FakePipe:
         if self.fail == "write" or (self.fail == "final" and self.sent):
             raise WindowsBoundaryHold("HOLD_PIPE_DISCONNECTED")
         self.sent.append(data)
-        if len(self.sent) > 1:
+        if json.loads(data).get("stage") in (*CHECKPOINT_ORDER, "watchdog"):
             self.checkpoint_index += 1
+
+    def duplicate_peer_query_handles(self, participant, job):
+        assert (participant, job) == (1, 2)
+        return nullcontext((101, 102))
 
 
 class WindowsIssuerSourceTests(unittest.TestCase):
@@ -148,13 +180,23 @@ class WindowsIssuerSourceTests(unittest.TestCase):
             lease_id="LOCAL-T1",
             serialized_lease=self.fixture.serialized,
             target=self.target,
-            writer_binding=self.binding,
+            worker_sid=self.binding.worker_sid,
+            scratch_sid=self.binding.scratch_sid,
         )
         return WindowsIssuer(**(fields | changes))
 
-    def claim(self, issuer=None, raw=None, *, fail=None):
-        pipe = FakePipe(self.raw if raw is None else raw, fail=fail)
-        pipe.binding = (issuer or self.issuer)._writer_binding
+    def claim(
+        self,
+        issuer=None,
+        raw=None,
+        *,
+        fail=None,
+        pipe=None,
+        verify_effect=None,
+        inspect_effect=None,
+    ):
+        pipe = pipe or FakePipe(self.raw if raw is None else raw, fail=fail)
+        pipe.binding = self.binding
         with (
             mock.patch(
                 "coordination_loop_harness.windows_issuer.WindowsPipe.first_server",
@@ -164,10 +206,23 @@ class WindowsIssuerSourceTests(unittest.TestCase):
                 "coordination_loop_harness.windows_issuer.sealed_decision",
                 return_value=nullcontext(),
             ),
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.WindowsWriterInspector"
+            ) as inspector,
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.WindowsProtectedCustodyVerifier"
+            ) as verifier,
         ):
+            verifier.return_value.verify.return_value = {
+                "verification": "WINDOWS_CLH_SOURCE_SNAPSHOT_ONLY"
+            }
+            if verify_effect is not None:
+                verifier.return_value.verify.side_effect = verify_effect
+            if inspect_effect is not None:
+                inspector.return_value.observe.side_effect = inspect_effect
             return (issuer or self.issuer).claim_once(), pipe, first
 
-    def test_exact_real_chain_target_and_source_only_handoff(self):
+    def test_exact_target_and_source_only_handoff(self):
         result, pipe, first = self.claim()
         self.assertFalse(result["custody_resolved"])
         self.assertEqual(result["target"], self.target.as_dict())
@@ -181,6 +236,85 @@ class WindowsIssuerSourceTests(unittest.TestCase):
             self.issuer.claim_once()
         with self.assertRaisesRegex(WindowsBoundaryHold, "ALREADY_ATTEMPTED"):
             self.new_issuer().claim_once()
+
+    def test_pre_spawn_bind_order_and_native_evidence_gate_resume(self):
+        for label, changes in (
+            (
+                "wrong worker",
+                {
+                    "binding": binding_wire(
+                        dataclasses.replace(self.binding, worker_sid="S-1-5-21-100-200-300-9999")
+                    )
+                },
+            ),
+            ("noncanonical handle", {"participant_handle": "01"}),
+            ("wrong handle type", {"job_handle": True}),
+        ):
+            with self.subTest(label=label):
+                self.fixture.verifier()
+                pipe = FakePipe(
+                    canonical_json_bytes(self.new_issuer()._expected_request()),
+                    bind_changes=changes,
+                )
+                with self.assertRaises(WindowsBoundaryHold):
+                    self.claim(self.new_issuer(), pipe=pipe)
+                self.assertEqual(len(pipe.sent), 1)  # No bind or resume acknowledgement.
+        for native_failure in (
+            "HOLD_NATIVE_HANDLE_TYPE_MISMATCH",
+            "HOLD_NATIVE_PROCESS_IDENTITY_MISMATCH",
+            "HOLD_NATIVE_JOB_MISMATCH",
+            "HOLD_NATIVE_WORKER_PRINCIPAL_MISMATCH",
+        ):
+            with self.subTest(native_failure=native_failure):
+                self.fixture.verifier()
+                issuer = self.new_issuer()
+                pipe = FakePipe(canonical_json_bytes(issuer._expected_request()))
+                with self.assertRaisesRegex(WindowsBoundaryHold, native_failure):
+                    self.claim(
+                        issuer,
+                        pipe=pipe,
+                        inspect_effect=WindowsBoundaryHold(native_failure),
+                    )
+                self.assertEqual(len(pipe.sent), 1)
+
+    def test_current_protected_state_rechecked_at_watchdogs_and_all_stages(self):
+        for label, fail_at in (
+            ("released before resume", 4),
+            ("replaced before publication", 5),
+            ("decision changed after publication", 6),
+            ("head drift before DAG ack", 7),
+        ):
+            with self.subTest(label=label):
+                self.fixture.verifier()
+                issuer = self.new_issuer()
+                pipe = FakePipe(canonical_json_bytes(issuer._expected_request()))
+                seen = []
+
+                def current(*_args, seen=seen, fail_at=fail_at):
+                    seen.append(1)
+                    if len(seen) == fail_at:
+                        raise WindowsBoundaryHold("HOLD_CURRENT_PROTECTED_STATE_CHANGED")
+                    return {"verification": "WINDOWS_CLH_SOURCE_SNAPSHOT_ONLY"}
+
+                with self.assertRaisesRegex(WindowsBoundaryHold, "PROTECTED_STATE_CHANGED"):
+                    self.claim(issuer, pipe=pipe, verify_effect=current)
+                stages_acked = [json.loads(frame).get("stage") for frame in pipe.sent[1:]]
+                self.assertNotIn(CHECKPOINT_ORDER[fail_at - 4], stages_acked)
+                self.assertTrue(pipe.closed)
+        self.fixture.verifier()
+        issuer = self.new_issuer()
+        pipe = FakePipe(canonical_json_bytes(issuer._expected_request()), pre_watchdogs=1)
+        seen = []
+
+        def lost_on_heartbeat(*_args):
+            seen.append(1)
+            if len(seen) == 3:
+                raise WindowsBoundaryHold("HOLD_LEASE_GENERATION_CHANGED")
+            return {"verification": "WINDOWS_CLH_SOURCE_SNAPSHOT_ONLY"}
+
+        with self.assertRaisesRegex(WindowsBoundaryHold, "GENERATION_CHANGED"):
+            self.claim(issuer, pipe=pipe, verify_effect=lost_on_heartbeat)
+        self.assertEqual(len(pipe.sent), 1)
 
     def test_failed_claim_burns_intent_for_tamper_boolean_target_and_peer_loss(self):
         mutations = (
@@ -303,7 +437,14 @@ class WindowsIssuerSourceTests(unittest.TestCase):
                 "coordination_loop_harness.windows_issuer.sealed_decision",
                 return_value=nullcontext(),
             ),
+            mock.patch("coordination_loop_harness.windows_issuer.WindowsWriterInspector"),
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.WindowsProtectedCustodyVerifier"
+            ) as verifier,
         ):
+            verifier.return_value.verify.return_value = {
+                "verification": "WINDOWS_CLH_SOURCE_SNAPSHOT_ONLY"
+            }
             first = threading.Thread(target=run)
             first.start()
             self.assertTrue(started.wait(2))

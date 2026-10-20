@@ -10,15 +10,17 @@ The Operator fixes `WindowsIssuerConfig`, the exact canonical v2 Lease bytes,
 Lease ID/generation, one `WriterTarget`, the nonrenewable `LocalDeadline` bound
 to `WindowsHostClock.read` and the actual issuer process creation, one
 SYSTEM issuer PID/process-creation pin, one distinct CLF client PID/creation/SID
-pin, and one local pipe name **before** the claim. The client obtains the
+pin, one local pipe name, and distinct Worker and restricting scratch SIDs
+**before** the claim. The client obtains the
 expected issuer pin, request and pipe name through a separately protected
 Operator startup channel. It must never learn the expected pin from the pipe
 response, a Worker, environment activation, or a JSON root claim. How that
 startup channel is installed and tested is a future CLF/Operator integration
 gate; a caller supplied pin is not itself authority.
-The Operator also fixes `WindowsWriterBinding` after CLF creates the participant
-suspended and before the claim. The binding names its PID and creation, distinct
-Worker and scratch SIDs, and the same intent/generation/Lease digest. CLF retains
+CLF supplies `WindowsWriterBinding` only after it creates the participant
+suspended and assigns its Job, and before any resume checkpoint. The binding
+names its PID and creation, the already fixed Worker and scratch SIDs, and the
+same intent/generation/Lease digest. CLF retains
 its owned participant and Job handles and a native client `LocalDeadline` with
 the exact transmitted boot and interrupt deadline.
 
@@ -68,7 +70,8 @@ of the old one. No new durable one-shot ledger is introduced.
 ## Wire binding
 
 The request is canonical JSON (`clh.windows-local-claim.v1`) containing the
-intent ID, Lease ID/generation/digest, boot ID, interrupt deadline, and exact
+intent ID, Lease ID/generation/digest, fixed Worker/scratch SIDs, boot ID,
+interrupt deadline, and exact
 repository, canonical path, worktree root, branch ref and HEAD. The response
 (`clh.windows-local-handoff.v1`) binds the request digest, Decision path/digest,
 both process pins, boot/deadline, Lease/generation and target. The response
@@ -82,15 +85,28 @@ sharing remain denied through the exchange. Its digest names those sealed bytes.
 The client acknowledges the response digest and receives a retained
 `WindowsHandoffSession`. The issuer keeps the authenticated pipe open. CLF
 uses that session on its owning thread; cross-thread use latches HOLD. CLF
-must call `checkpoint` in order: `resume` before participant resume,
+may send `pre_spawn_watchdog` heartbeats while suspended creation is underway;
+the issuer rechecks protected custody on each one. CLF then calls `bind` once
+with its owned process and Job handles. The issuer duplicates only query rights
+from the kernel-authenticated pinned client process, checks native process
+PID/creation/token and Job containment itself, and retains the copies until
+the session closes. Raw binding JSON cannot prove either object. CLF must then
+call `checkpoint` in order: `resume` before participant resume,
 `effect_publication` before exposing staged effects, `receipt` before Receipt,
 and `dag_ack` before DAG acknowledgement. Each call checks the client's native
 boot/deadline and owned participant/Job handles, sends the same handoff digest
 and fixed `WindowsWriterBinding`, and requires the live issuer's acknowledgement
-after its deadline check. CLF must send `watchdog` checkpoints during longer
+after its deadline, full current protected Lease/Decision/Git validation, and
+native participant/Job observation. CLF must send `watchdog` checkpoints during longer
 work; the three-second frame wait fails closed without one. Loss, wrong order,
 failed observation or a missed acknowledgement closes the session and refuses
 later checkpoints. CLF must contain and settle its owned Job on loss.
+
+These checks continue after `effect_publication`; strict Git admission remains
+in force, so a dirty worktree or changed HEAD produces HOLD. A post-publication
+acknowledgement says only that the producer's protected state and writer snapshot
+still passed at that instant. CLF alone validates and accounts for actual staged
+effects. Heartbeats do not renew the nonrenewable deadline (at most 600 seconds).
 
 A stage acknowledgement and writer snapshot remain source evidence only. They
 do not qualify atomic launch, actual filesystem denial, effect/Receipt/DAG

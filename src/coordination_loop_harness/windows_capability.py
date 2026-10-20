@@ -41,6 +41,8 @@ CLAIM_KEYS = frozenset(
         "boot_id",
         "deadline_interrupt",
         "target",
+        "worker_sid",
+        "scratch_sid",
     }
 )
 HANDOFF_KEYS = frozenset(
@@ -78,6 +80,15 @@ def parse_interrupt_deadline(value: object) -> int:
 
 def binding_wire(binding: WindowsWriterBinding) -> dict:
     return binding.__dict__ | {"participant_creation": str(binding.participant_creation)}
+
+
+def parse_native_handle(value: object) -> int:
+    if type(value) is not str or not UINT64_DECIMAL.fullmatch(value) or len(value) > 20:
+        raise WindowsBoundaryHold("HOLD_NATIVE_HANDLE_ENCODING_INVALID")
+    number = int(value)
+    if not 0 < number < 2 ** (ctypes.sizeof(w.HANDLE) * 8) or number == INVALID_HANDLE:
+        raise WindowsBoundaryHold("HOLD_NATIVE_HANDLE_RANGE_INVALID")
+    return number
 
 
 @dataclass(frozen=True)
@@ -126,6 +137,7 @@ class WindowsPipe:
             raise WindowsBoundaryHold("HOLD_NATIVE_PIPE_HANDLE_REQUIRED")
         self.handle, self.server, self.name = handle, server, name
         self._closed = False
+        self._peer_process = None
         self._io_lock = threading.RLock()
         self._reader = WindowsSecurityReader()
         self._k = self._reader.k
@@ -387,7 +399,9 @@ class WindowsPipe:
         )
         if not query(self.handle, ctypes.byref(pid)) or pid.value != pin.pid:
             raise WindowsBoundaryHold("HOLD_PIPE_PEER_PID_MISMATCH")
-        process = self._k.OpenProcess(0x1000, False, pid.value)
+        # PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_DUP_HANDLE. The pinned
+        # client's handle table is the sole source for query-only copies.
+        process = self._k.OpenProcess(0x1040 if self.server else 0x1000, False, pid.value)
         if not process:
             raise WindowsBoundaryHold("HOLD_PIPE_PEER_PROCESS_UNAVAILABLE")
         try:
@@ -411,6 +425,7 @@ class WindowsPipe:
                 check_observer(token, SYSTEM)
             if self._k.WaitForSingleObject(process, 0) != 258:  # WAIT_TIMEOUT: still running
                 raise WindowsBoundaryHold("HOLD_PIPE_PEER_NOT_RUNNING")
+            self._peer_process = process if self.server else None
             yield
             after = w.ULONG()
             if (
@@ -420,7 +435,48 @@ class WindowsPipe:
             ):
                 raise WindowsBoundaryHold("HOLD_PIPE_PEER_CHANGED")
         finally:
+            self._peer_process = None
             self._k.CloseHandle(process)
+
+    @contextmanager
+    def duplicate_peer_query_handles(self, participant: int, job: int):
+        """Copy only query rights from the authenticated, retained client."""
+        if not self.server or self._closed or not getattr(self, "_peer_process", None):
+            raise WindowsBoundaryHold("HOLD_AUTHENTICATED_CLIENT_HANDLE_TABLE_REQUIRED")
+        self._k.DuplicateHandle.argtypes = [
+            w.HANDLE,
+            w.HANDLE,
+            w.HANDLE,
+            ctypes.POINTER(w.HANDLE),
+            w.DWORD,
+            w.BOOL,
+            w.DWORD,
+        ]
+        self._k.DuplicateHandle.restype = w.BOOL
+        self._k.GetCurrentProcess.restype = w.HANDLE
+        self._k.CloseHandle.argtypes, self._k.CloseHandle.restype = [w.HANDLE], w.BOOL
+        copies = []
+        try:
+            for source, access in ((participant, 0x1000), (job, 0x0004)):
+                duplicate = w.HANDLE()
+                if (
+                    not self._k.DuplicateHandle(
+                        self._peer_process,
+                        source,
+                        self._k.GetCurrentProcess(),
+                        ctypes.byref(duplicate),
+                        access,
+                        False,
+                        0,
+                    )
+                    or not duplicate.value
+                ):
+                    raise WindowsBoundaryHold("HOLD_CLIENT_QUERY_HANDLE_DUPLICATION_FAILED")
+                copies.append(int(duplicate.value))
+            yield tuple(copies)
+        finally:
+            for handle in reversed(copies):
+                self._k.CloseHandle(handle)
 
 
 def require_process_self(pin: ProcessPin) -> None:
@@ -486,17 +542,20 @@ class WindowsHandoffSession:
         response: dict,
         request: dict,
         client_pin: ProcessPin,
-        binding: WindowsWriterBinding,
+        worker_sid: str,
+        scratch_sid: str,
         deadline: LocalDeadline,
     ) -> None:
         self._stack, self._pipe = stack, pipe
         self.response = json.loads(canonical_json_bytes(response))
         self._request = json.loads(canonical_json_bytes(request))
         self._handoff_digest = sha256_bytes(canonical_json_bytes(response))
-        self._client_pin, self._binding = client_pin, binding
+        self._client_pin, self._binding = client_pin, None
+        self._worker_sid, self._scratch_sid = worker_sid, scratch_sid
         self._client_deadline = deadline
         self._owner_thread = threading.get_ident()
         self._next = 0
+        self._bound_handles = None
         self._closed = False
 
     def close(self) -> None:
@@ -515,12 +574,103 @@ class WindowsHandoffSession:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
+    def pre_spawn_watchdog(self) -> None:
+        if threading.get_ident() != self._owner_thread or self._closed or self._binding is not None:
+            self.close()
+            raise WindowsBoundaryHold("HOLD_HANDOFF_CHECKPOINT_ORDER")
+        try:
+            require_process_self(self._client_pin)
+            require_client_boot_deadline(self._request)
+            self._pipe.write_frame(
+                canonical_json_bytes(
+                    {
+                        "schema_version": "clh.windows-local-checkpoint.v1",
+                        "stage": "pre_spawn_watchdog",
+                        "handoff_sha256": self._handoff_digest,
+                    }
+                )
+            )
+            expected = canonical_json_bytes(
+                {
+                    "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                    "stage": "pre_spawn_watchdog",
+                    "handoff_sha256": self._handoff_digest,
+                }
+            )
+            if self._pipe.read_frame() != expected:
+                raise WindowsBoundaryHold("HOLD_HANDOFF_CHECKPOINT_ACK_MISMATCH")
+            require_client_boot_deadline(self._request)
+        except Exception:
+            self.close()
+            raise
+
+    def bind(
+        self, binding: WindowsWriterBinding, *, participant_handle: int, job_handle: int
+    ) -> dict:
+        """CLF calls after suspended creation and Job assignment, before resume."""
+        if threading.get_ident() != self._owner_thread or self._closed or self._binding is not None:
+            self.close()
+            raise WindowsBoundaryHold("HOLD_HANDOFF_BIND_ORDER")
+        try:
+            if (
+                type(binding) is not WindowsWriterBinding
+                or type(participant_handle) is not int
+                or type(job_handle) is not int
+                or (binding.issuer_sid, binding.worker_sid, binding.scratch_sid)
+                != (SYSTEM, self._worker_sid, self._scratch_sid)
+                or (binding.intent_id, binding.generation, binding.lease_sha256)
+                != (
+                    self._request["intent_id"],
+                    self._request["generation"],
+                    self._request["lease_sha256"],
+                )
+            ):
+                raise WindowsBoundaryHold("HOLD_FIXED_WRITER_BINDING_REQUIRED")
+            participant_native = parse_native_handle(str(participant_handle))
+            job_native = parse_native_handle(str(job_handle))
+            require_process_self(self._client_pin)
+            require_client_boot_deadline(self._request)
+            snapshot = WindowsWriterInspector(binding, self._client_deadline).observe(
+                participant_handle=participant_native, job_handle=job_native
+            )
+            self._pipe.write_frame(
+                canonical_json_bytes(
+                    {
+                        "schema_version": "clh.windows-local-bind.v1",
+                        "handoff_sha256": self._handoff_digest,
+                        "binding": binding_wire(binding),
+                        "participant_handle": str(participant_native),
+                        "job_handle": str(job_native),
+                    }
+                )
+            )
+            expected = canonical_json_bytes(
+                {
+                    "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                    "stage": "bind",
+                    "handoff_sha256": self._handoff_digest,
+                }
+            )
+            if self._pipe.read_frame() != expected:
+                raise WindowsBoundaryHold("HOLD_HANDOFF_BIND_ACK_MISMATCH")
+            require_client_boot_deadline(self._request)
+            self._binding = binding
+            self._bound_handles = (participant_handle, job_handle)
+            return snapshot
+        except Exception:
+            self.close()
+            raise
+
     def checkpoint(self, stage: str, *, participant_handle: int, job_handle: int) -> dict:
         if threading.get_ident() != self._owner_thread:
             self._client_deadline.invalidate("HOLD_HANDOFF_SESSION_THREAD_CHANGED")
             raise WindowsBoundaryHold("HOLD_HANDOFF_SESSION_THREAD_CHANGED")
         if (
             self._closed
+            or self._binding is None
+            or type(participant_handle) is not int
+            or type(job_handle) is not int
+            or (participant_handle, job_handle) != self._bound_handles
             or self._next >= len(CHECKPOINT_ORDER)
             or stage not in ("watchdog", CHECKPOINT_ORDER[self._next])
         ):
@@ -569,7 +719,8 @@ def request_source_handoff(
     issuer_pin: ProcessPin,
     client_pin: ProcessPin,
     request: dict,
-    binding: WindowsWriterBinding,
+    worker_sid: str,
+    scratch_sid: str,
     deadline: object,
 ) -> WindowsHandoffSession:
     """Future CLF-side primitive: authenticate issuer on the connected pipe.
@@ -595,17 +746,19 @@ def request_source_handoff(
         or request["generation"] < 1
         or type(request.get("deadline_interrupt")) is not str
         or type(request.get("target")) is not dict
+        or request.get("worker_sid") != worker_sid
+        or request.get("scratch_sid") != scratch_sid
         or set(request["target"]) != TARGET_KEYS
         or any(type(value) is not str or not value for value in request["target"].values())
     ):
         raise WindowsBoundaryHold("HOLD_TRUSTED_SERVER_PIN_AND_REQUEST_REQUIRED")
     parse_interrupt_deadline(request["deadline_interrupt"])
     if (
-        type(binding) is not WindowsWriterBinding
+        not is_account_sid(worker_sid)
+        or not is_account_sid(scratch_sid)
+        or worker_sid == scratch_sid
+        or client_pin.sid in (worker_sid, scratch_sid)
         or type(deadline) is not LocalDeadline
-        or binding.issuer_sid != issuer_pin.sid
-        or (binding.intent_id, binding.generation, binding.lease_sha256)
-        != (request["intent_id"], request["generation"], request["lease_sha256"])
         or (deadline.intent.intent_id, deadline.intent.generation, deadline.intent.lease_sha256)
         != (request["intent_id"], request["generation"], request["lease_sha256"])
     ):
@@ -663,7 +816,9 @@ def request_source_handoff(
                 {"schema_version": "clh.windows-local-ack.v1", "handoff_sha256": digest}
             )
         )
-        return WindowsHandoffSession(stack, pipe, response, request, client_pin, binding, deadline)
+        return WindowsHandoffSession(
+            stack, pipe, response, request, client_pin, worker_sid, scratch_sid, deadline
+        )
     except Exception:
         stack.close()
         deadline.invalidate("HOLD_HANDOFF_SESSION_LOST")
