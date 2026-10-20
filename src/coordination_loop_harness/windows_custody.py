@@ -96,10 +96,7 @@ def check_observer(token: TokenSecurity, issuer_sid: str, *, restricted_writer=F
         raise WindowsBoundaryHold("HOLD_SAME_OR_PRIVILEGED_PRINCIPAL")
     if set(token.privileges) - {"SeChangeNotifyPrivilege"}:
         raise WindowsBoundaryHold("HOLD_PRIVILEGED_TOKEN")
-    if restricted_writer and (
-        not token.restricting_sids
-        or token.token_type != 1
-    ):
+    if restricted_writer and (not token.restricting_sids or token.token_type != 1):
         raise WindowsBoundaryHold("HOLD_RESTRICTED_WRITER_TOKEN_UNPROVEN")
 
 
@@ -153,16 +150,28 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
     containment; those obligations stay at the separate G-L1-ROOT Owner gate.
     """
 
-    def __init__(self, config: WindowsIssuerConfig, deadline: LocalDeadline) -> None:
+    def __init__(
+        self, config: WindowsIssuerConfig, deadline: LocalDeadline, *, issuer_pin=None
+    ) -> None:
         super().__init__(config.lock_root, config.repo_root)
         self._config = config
         self._deadline = deadline
         self._reader = WindowsSecurityReader()
+        self._issuer_pin = issuer_pin
+        if issuer_pin is not None:
+            from .windows_capability import require_system_self
+
+            require_system_self(issuer_pin)
 
     def _protected_tree(self, root: Path) -> dict[str, tuple]:
         if root not in (self._repo_root, self._lock_root):
             raise WindowsBoundaryHold("HOLD_CALLER_ROOT_FORBIDDEN")
-        check_observer(self._reader.token_security(), self._config.issuer_sid)
+        if self._issuer_pin is None:
+            check_observer(self._reader.token_security(), self._config.issuer_sid)
+        else:
+            from .windows_capability import require_system_self
+
+            require_system_self(self._issuer_pin)
         inventory = {}
 
         def check(path: Path, inside: bool):

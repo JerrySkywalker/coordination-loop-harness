@@ -35,6 +35,10 @@ approval of this request. T1 has installed nothing.
    CLF must own the future launcher; a separately scoped implementation/host-test
    grant is required for that bridge. T1's read-only inspector alone cannot prove
    atomic launch or filesystem confinement.
+   Qualify the [one-shot pipe handoff](WINDOWS_LOCAL_HANDOFF_CONTRACT.md) on the
+   exact host: protected delivery of both process pins, actual client-end server
+   PID/token/creation query, first-instance/squatting refusal, and bounded
+   disconnect/cancellation. Source fixtures are not a substitute.
 6. **Exact negative probes:** attempted Root/Lease/Decision/Receipt overwrite,
    deletion, rename and ACL takeover; extra/nonallowlisted output, ancestor
    delete-child, reparse/hardlink substitution, same-token control, inherited
