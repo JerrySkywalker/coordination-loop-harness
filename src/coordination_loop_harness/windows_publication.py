@@ -15,7 +15,7 @@ from .leases import _writer_git_lock_paths
 from .repository import _git, _repository_identity_snapshot, verify_repository
 from .util import sha256_bytes, sha256_file
 from .windows_custody import sealed_decision
-from .windows_security import WindowsBoundaryHold, WindowsSecurityReader
+from .windows_security import WindowsBoundaryHold, WindowsSecurityReader, is_account_sid
 
 RESULT_CLAIM = "clh.windows-local-result-claim.v1"
 RESULT_HANDOFF = "clh.windows-local-result-handoff.v1"
@@ -26,16 +26,18 @@ RESULT_LIMIT = 8192
 class ResultPublication:
     """Retained by one issuer attempt; no serialization or offline bearer use."""
 
-    def __init__(self, writer: dict) -> None:
+    def __init__(self, writer: dict, *, publisher_sid: str) -> None:
         self._writer = dict(writer)
         self._root = Path(writer["worktree_root"])
         if (
             not writer["repository"].startswith("local/")
+            or not is_account_sid(publisher_sid)
             or self._root != Path(writer["canonical_path"])
             or not (self._root / ".git").is_dir()
         ):
             raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_SINGLE_LOCAL_REPOSITORY")
         self._reader = WindowsSecurityReader()
+        self._publisher_sid = publisher_sid
         self._check_path(self._root / ".git", directory=True)
         self._seals = ExitStack()
         self._result = None
@@ -76,6 +78,8 @@ class ResultPublication:
 
     def _check_git(self, *, published: bool) -> None:
         root, writer = self._root, self._writer
+        if _git(root, "remote"):
+            raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_ZERO_REMOTES")
         observed = verify_repository(
             root,
             expected_sha=writer["exact_sha"],
@@ -86,8 +90,6 @@ class ResultPublication:
         )
         if observed["findings"] or observed["tracked_dirty"]:
             raise WindowsBoundaryHold("HOLD_RESULT_GIT_BINDING_CHANGED")
-        if _git(root, "remote"):
-            raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_ZERO_REMOTES")
         # Include ignored entries: neither an ignore rule nor a side output can
         # hide an effect. NUL framing preserves exact names rather than quoting.
         status = _git(
@@ -155,6 +157,8 @@ class ResultPublication:
         path = parent / "result.md"
         parent_before = self._check_path(parent, directory=True)
         before = self._check_path(path, directory=False)
+        if before[0].owner != self._publisher_sid:
+            raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_FIXED_CLIENT_OWNER")
         if self._result is None:
             # Read sharing only, retained through DAG acknowledgement. An
             # absent/unsealable file fails immediately; no clean-or-dirty phase.

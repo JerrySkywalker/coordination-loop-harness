@@ -39,7 +39,11 @@ have zero active processes before the `effect_publication` acknowledgement.
 This parent/Job observation does not prove every descendant terminal identity;
 CLF still owns that proof and the operational gate remains unqualified.
 
-After that ACK, CLF alone publishes its validated staged bytes create-new. Before
+After that ACK, CLF alone publishes its validated staged bytes into a freshly
+created, fixed-Client-owned file. It must copy the validated bytes; renaming or
+linking a Worker-owned scratch inode into the target is not publication. The
+issuer checks the actual file owner against the native authenticated Client SID.
+Before
 the next three-second frame deadline, CLF must finish publication and send its
 next checkpoint on the same owner thread. Every later watchdog, `receipt` and
 `dag_ack` requires the result to exist. There is no intermediate acceptance of

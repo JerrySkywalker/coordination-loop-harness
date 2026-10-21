@@ -50,7 +50,9 @@ class ResultPublicationTests(unittest.TestCase):
         # These mocks represent absent deployment qualification, not OS grants.
         self.stack.enter_context(
             mock.patch("coordination_loop_harness.windows_publication.WindowsSecurityReader")
-        ).return_value.file_security.return_value = custody_fixture.SECURITY
+        ).return_value.file_security.return_value = dataclasses.replace(
+            custody_fixture.SECURITY, owner=issuer_fixture.CLIENT.sid
+        )
         self.seal = self.stack.enter_context(
             mock.patch(
                 "coordination_loop_harness.windows_publication.sealed_decision",
@@ -59,7 +61,11 @@ class ResultPublicationTests(unittest.TestCase):
         )
 
     def publication(self):
-        return self.stack.enter_context(ResultPublication(self.current["repositories"][0]))
+        return self.stack.enter_context(
+            ResultPublication(
+                self.current["repositories"][0], publisher_sid=issuer_fixture.CLIENT.sid
+            )
+        )
 
     def publish(self, raw=b"local result\n"):
         path = self.root / RESULT_PATH
@@ -330,20 +336,20 @@ class ResultPublicationTests(unittest.TestCase):
         from coordination_loop_harness.windows_custody import sealed_decision
         from coordination_loop_harness.windows_security import WindowsSecurityReader
 
-        with (
-            mock.patch(
-                "coordination_loop_harness.windows_publication.WindowsSecurityReader",
-                WindowsSecurityReader,
-            ),
-            mock.patch(
-                "coordination_loop_harness.windows_publication.sealed_decision", sealed_decision
-            ),
-        ):
-            publication = self.publication()
-            path = self.publish()
-            publication.verify(self.current)
+        path = self.publish()
+        with sealed_decision(path):
+            self.assertTrue(WindowsSecurityReader().file_security(path).identity)
             with self.assertRaises(OSError):
                 path.write_bytes(b"must not change sealed bytes")
+
+    def test_worker_owned_promoted_file_is_not_a_client_publication(self):
+        publication = self.publication()
+        self.publish()
+        publication._reader.file_security.return_value = dataclasses.replace(
+            custody_fixture.SECURITY, owner=custody_fixture.WORKER
+        )
+        with self.assertRaisesRegex(WindowsBoundaryHold, "FIXED_CLIENT_OWNER"):
+            publication.verify(self.current)
 
 
 class ResultClientTests(unittest.TestCase):

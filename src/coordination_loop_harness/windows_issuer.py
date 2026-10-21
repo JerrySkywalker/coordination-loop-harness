@@ -181,7 +181,9 @@ class WindowsIssuer:
                     if len(writers) != 1 or WriterTarget.from_lease(writers[0]) != self._target:
                         raise WindowsBoundaryHold("HOLD_FIXED_TARGET_MISMATCH")
                     publication = (
-                        stack.enter_context(ResultPublication(writers[0])) if result else None
+                        stack.enter_context(
+                            ResultPublication(writers[0], publisher_sid=self._client_pin.sid)
+                        ) if result else None
                     )
                     self._deadline.check("pre_spawn", retained_intent=intent)
                     response = {
