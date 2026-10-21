@@ -6,8 +6,11 @@ ACLs, install a Root, launch a process, or qualify a Worker from a caller boolea
 
 from __future__ import annotations
 
+import ctypes
 import os
 import stat
+from contextlib import contextmanager
+from ctypes import wintypes as w
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,6 +57,32 @@ ANCESTOR_NAMESPACE_MASK = MUTATION_MASK & ~(0x116 | 0x40000000)
 MANIFEST = "compatibility/repo-set-lease.v2/artifact-manifest.json"
 
 
+@contextmanager
+def sealed_decision(path: Path):
+    """Deny writes and deletion of the validated Decision through issuance."""
+    if os.name != "nt":
+        raise WindowsBoundaryHold("HOLD_NATIVE_DECISION_SEAL_UNAVAILABLE")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        w.LPCWSTR,
+        w.DWORD,
+        w.DWORD,
+        w.LPVOID,
+        w.DWORD,
+        w.DWORD,
+        w.HANDLE,
+    ]
+    kernel.CreateFileW.restype = w.HANDLE
+    kernel.CloseHandle.argtypes, kernel.CloseHandle.restype = [w.HANDLE], w.BOOL
+    handle = kernel.CreateFileW(str(path), 0x80000000, 0x00000001, None, 3, 0, None)
+    if handle in (None, 0, ctypes.c_void_p(-1).value):
+        raise WindowsBoundaryHold("HOLD_NATIVE_DECISION_SEAL_UNAVAILABLE")
+    try:
+        yield
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def _digest(value: str) -> bool:
     return (
         isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
@@ -96,10 +125,7 @@ def check_observer(token: TokenSecurity, issuer_sid: str, *, restricted_writer=F
         raise WindowsBoundaryHold("HOLD_SAME_OR_PRIVILEGED_PRINCIPAL")
     if set(token.privileges) - {"SeChangeNotifyPrivilege"}:
         raise WindowsBoundaryHold("HOLD_PRIVILEGED_TOKEN")
-    if restricted_writer and (
-        not token.restricting_sids
-        or token.token_type != 1
-    ):
+    if restricted_writer and (not token.restricting_sids or token.token_type != 1):
         raise WindowsBoundaryHold("HOLD_RESTRICTED_WRITER_TOKEN_UNPROVEN")
 
 
@@ -153,16 +179,28 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
     containment; those obligations stay at the separate G-L1-ROOT Owner gate.
     """
 
-    def __init__(self, config: WindowsIssuerConfig, deadline: LocalDeadline) -> None:
+    def __init__(
+        self, config: WindowsIssuerConfig, deadline: LocalDeadline, *, issuer_pin=None
+    ) -> None:
         super().__init__(config.lock_root, config.repo_root)
         self._config = config
         self._deadline = deadline
         self._reader = WindowsSecurityReader()
+        self._issuer_pin = issuer_pin
+        if issuer_pin is not None:
+            from .windows_capability import require_system_self
+
+            require_system_self(issuer_pin)
 
     def _protected_tree(self, root: Path) -> dict[str, tuple]:
         if root not in (self._repo_root, self._lock_root):
             raise WindowsBoundaryHold("HOLD_CALLER_ROOT_FORBIDDEN")
-        check_observer(self._reader.token_security(), self._config.issuer_sid)
+        if self._issuer_pin is None:
+            check_observer(self._reader.token_security(), self._config.issuer_sid)
+        else:
+            from .windows_capability import require_system_self
+
+            require_system_self(self._issuer_pin)
         inventory = {}
 
         def check(path: Path, inside: bool):

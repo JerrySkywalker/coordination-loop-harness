@@ -29,6 +29,7 @@ from coordination_loop_harness.windows_custody import (
     WindowsProtectedCustodyVerifier,
     check_file_security,
     check_observer,
+    sealed_decision,
 )
 from coordination_loop_harness.windows_security import (
     Ace,
@@ -61,6 +62,25 @@ BINDING = WindowsWriterBinding(SYSTEM, WORKER, RESTRICTING, 42, 1000, "writer-on
 
 
 class WindowsSecurityPolicyTests(unittest.TestCase):
+    def test_decision_seal_denies_native_write_and_delete_sharing(self):
+        path = Path("C:/protected/decision.json")
+        kernel = SimpleNamespace(
+            CreateFileW=mock.Mock(return_value=0x123456789),
+            CloseHandle=mock.Mock(return_value=1),
+        )
+        with (
+            mock.patch("coordination_loop_harness.windows_custody.os", SimpleNamespace(name="nt")),
+            mock.patch(
+                "coordination_loop_harness.windows_custody.ctypes.WinDLL",
+                return_value=kernel,
+                create=True,
+            ),
+        ):
+            with sealed_decision(path):
+                self.assertEqual(kernel.CreateFileW.call_args.args[2], 0x00000001)
+                kernel.CloseHandle.assert_not_called()
+        kernel.CloseHandle.assert_called_once_with(0x123456789)
+
     def test_acl_positive_is_only_a_synthetic_policy_check(self):
         check_file_security(SECURITY, SYSTEM, require_protected=True)
 

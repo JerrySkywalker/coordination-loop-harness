@@ -1,6 +1,9 @@
 # Windows Local-First T1 source candidate
 
 Status: `LOCAL_HOST_TIME_SOURCE_PREPARED` / `LOCAL_CUSTODY_CANDIDATE_PREPARED`.
+The [source-only authenticated handoff contract](WINDOWS_LOCAL_HANDOFF_CONTRACT.md)
+adds one retained issuer claim and a native named-pipe peer check. It does not
+change either status or qualify the protected host boundary.
 These modules are opt-in source APIs. No public CLI/MCP runtime gate is enabled.
 They do not constitute `LOCAL_BOUNDARY_QUALIFIED`, authenticated UTC, or an
 executable Owner grant. Existing v2 Lease/Decision schemas and public refusals
@@ -22,7 +25,11 @@ boot/process/source anchor and deadline) inside the trusted Operator process.
 It takes the earliest of start + approved duration (1–600 seconds) and a shorter
 interrupt-time cap. It exposes no renewal, re-anchor, serialization or restore
 API. Recreating it is a new unadmitted intent, never a way to resume an old task;
-durable one-shot intent/Claim ownership remains required at the issuer/CLF boundary.
+the source issuer atomically burns one claim attempt on the retained deadline
+across issuer instances. Restart requires existing Owner admission reconciliation
+and a new intent. The live handoff session requires ordered writer-bound checks
+through DAG acknowledgement; CLF Claim ownership and protected runtime
+qualification remain future integration gates.
 
 All checkpoints (`admission`, `pre_spawn`, `watchdog`, `resume`,
 `effect_publication`, `receipt`, `dag_ack`) read a fresh sample. Equality at expiry
@@ -50,7 +57,8 @@ authority/lock paths, distinct issuer SID and exact v2 producer-manifest bytes.
 selected by a caller environment flag or alternate root. A protected local-only
 `CLH-ISSUANCE-ROOT.json` must exactly name the issuer, CLH ownership/policy and
 producer-manifest SHA. The manifest pin is not a substitute for deployment package
-integrity or authenticated IPC.
+integrity or authenticated IPC. The separate named-pipe source contract adds
+cross-process native peer checks, still pending protected host qualification.
 
 The Windows backend reuses the existing CLH Lease/Decision/Git validation functions
 for current canonical Lease bytes, active generation/state, complete accepted Decision ancestry,
@@ -78,10 +86,13 @@ cannot issue CLH authority, own the protected subtree or be a Writer. See the
 The observer must differ from the issuer and lack privileged or enableable trusted
 groups and privileges other than traversal notification. This deliberately rejects
 many ordinary user-owned development paths.
+The separate trusted issuer path checks the current native SYSTEM primary token,
+PID and process creation against Operator startup pins; it does not relax this
+observer policy or allow a caller-selected issuer SID.
 
 All snapshots still return `custody_resolved=false`. Inventories do not provide
-atomic issuance/CAS, a malicious-admin defense, authenticated consumer transport,
-or actual filesystem denial. Existing trusted CLH `acquire`/Decision mechanisms
+atomic issuance/CAS, a malicious-admin defense, installed authenticated consumer
+transport, or actual filesystem denial. Existing trusted CLH `acquire`/Decision mechanisms
 remain the issuer's durable producer; there is no new schema or alternate ledger.
 
 ## Restricted Writer, ACL and Job bridge
@@ -119,7 +130,7 @@ execution, no inherited writable handles, protected Job ownership/no breakaway,
 actual participant and child terminal identities, and effective deny-outside-
 scratch. CLH does not launch/manage Workers. An observation cannot reconstruct
 startup atomicity or qualify child success. All target publication stays behind
-fresh time/custody/process/effect checks and a separately approved consumer path.
+fresh time/custody/process/effect checks and the separately qualified consumer path.
 
 ## Verification and pending Owner gate
 

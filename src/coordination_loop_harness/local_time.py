@@ -193,6 +193,7 @@ class LocalDeadline:
         self._read = read
         self._last = anchor
         self._hold: str | None = None
+        self._issuer_claim_consumed = False
         self._lock = threading.Lock()
 
     @property
@@ -210,6 +211,13 @@ class LocalDeadline:
                     if isinstance(reason, str) and reason.strip()
                     else "HOLD_ROOT_OR_WATCHDOG_LOST"
                 )
+
+    def consume_issuer_claim(self) -> None:
+        """Burn the retained intent across all issuer objects, including failures."""
+        with self._lock:
+            if self._issuer_claim_consumed:
+                raise LocalTimeHold("HOLD_ISSUER_INTENT_ALREADY_ATTEMPTED")
+            self._issuer_claim_consumed = True
 
     def check(self, checkpoint: str, *, retained_intent: LocalIntent) -> HostSample:
         with self._lock:
