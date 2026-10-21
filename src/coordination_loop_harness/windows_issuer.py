@@ -180,6 +180,8 @@ class WindowsIssuer:
                     writers = [item for item in lease["repositories"] if item["mode"] == "WRITE"]
                     if len(writers) != 1 or WriterTarget.from_lease(writers[0]) != self._target:
                         raise WindowsBoundaryHold("HOLD_FIXED_TARGET_MISMATCH")
+                    if result and lease["repositories"] != writers:
+                        raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_SINGLE_REPOSITORY")
                     publication = (
                         stack.enter_context(
                             ResultPublication(writers[0], publisher_sid=self._client_pin.sid)

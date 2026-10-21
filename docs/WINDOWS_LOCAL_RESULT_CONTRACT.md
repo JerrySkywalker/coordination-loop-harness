@@ -75,6 +75,11 @@ with its staged/actual effect and bind a genuinely persisted Receipt to the same
 WorkOrder/Session/Claim/generation and file hash. CLH neither manufactures a
 Receipt nor advances CLE's DAG. Every source snapshot retains `custody_resolved=false`.
 
+Legacy Lease acquire/expand/release operations retain their existing strict Writer
+checks. A post-effect observation does not release the Lease or authorize hiding,
+deleting or reverting the result to regain cleanliness. Any later result-aware
+Lease settlement needs its own accepted contract; unresolved settlement stays HOLD.
+
 ## Compatibility and source evidence
 
 Compatibility window: existing v1 peers remain v1, including strict post-publication

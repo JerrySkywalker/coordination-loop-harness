@@ -132,6 +132,35 @@ class ResultPublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(WindowsBoundaryHold, "ZERO_REMOTES"):
             publication.verify(self.current)
 
+    def test_post_effect_refuses_an_additional_read_repository(self):
+        publication = self.publication()
+        changed = dict(
+            self.current,
+            repositories=[
+                self.current["repositories"][0],
+                dict(self.current["repositories"][0], repository="local/read", mode="READ"),
+            ],
+        )
+        with self.assertRaisesRegex(WindowsBoundaryHold, "WRITER_CHANGED"):
+            publication.verify(changed)
+
+    def test_worktree_configuration_presence_and_content_are_pinned(self):
+        self.git("config", "extensions.worktreeConfig", "true")
+        self.git("config", "--worktree", "source.fixture", "before")
+        publication = self.publication()
+        path = self.publish()
+        self.git("config", "--worktree", "source.fixture", "after")
+        with self.assertRaisesRegex(WindowsBoundaryHold, "METADATA_CHANGED"):
+            publication.verify(self.current)
+        path.unlink()
+        config = self.root / ".git" / "config.worktree"
+        config.unlink()
+        publication = self.publication()
+        self.publish()
+        self.git("config", "--worktree", "source.fixture", "new-file")
+        with self.assertRaisesRegex(WindowsBoundaryHold, "METADATA_CHANGED"):
+            publication.verify(self.current)
+
     def test_index_head_config_refs_and_git_lock_changes_refuse(self):
         publication = self.publication()
         path = self.publish()
@@ -297,6 +326,39 @@ class ResultPublicationTests(unittest.TestCase):
         self.assertEqual([], pipe.sent)
         with self.assertRaisesRegex(WindowsBoundaryHold, "ALREADY_ATTEMPTED"):
             issuer.claim_result_once()
+
+    def test_result_claim_refuses_a_real_additional_read_repository(self):
+        fixture, _unused, binding = self.issuer_fixture()
+        helper = leases_fixture.LeaseTests()
+        chain = fixture.fixture
+        extra = helper.repository_worktree(chain.root, "extra-read", repository="local/read")
+        read_item = helper.lease_v2("READ", "local/read", *extra, mode="READ")["repositories"][0]
+        chain.candidate["repositories"].append(read_item)
+        helper.authorize(chain.root, chain.candidate, "lease:acquire")
+        chain.write_candidate()
+        chain.verifier()
+        issuer = fixture.new_issuer(
+            deadline=chain.deadline,
+            serialized_lease=chain.serialized,
+            target=WriterTarget.from_lease(self.current["repositories"][0]),
+        )
+        from coordination_loop_harness.util import canonical_json_bytes
+
+        pipe = issuer_fixture.FakePipe(canonical_json_bytes(issuer._expected_request(result=True)))
+        pipe.binding = binding
+        with (
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.WindowsPipe.first_server",
+                return_value=pipe,
+            ),
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.sealed_decision",
+                side_effect=lambda _path: nullcontext(),
+            ),
+            self.assertRaisesRegex(WindowsBoundaryHold, "SINGLE_REPOSITORY"),
+        ):
+            issuer.claim_result_once()
+        self.assertEqual([], pipe.sent)
 
     def test_lease_tamper_after_effect_keeps_file_and_refuses_receipt(self):
         fixture, issuer, binding = self.issuer_fixture()

@@ -66,12 +66,20 @@ class ResultPublication:
         if os.path.lexists(exclude):
             self._check_path(exclude, directory=False)
             exclude_digest = sha256_file(exclude)
+        worktree_config = root / ".git" / "config.worktree"
+        worktree_config_pin = None
+        if os.path.lexists(worktree_config):
+            worktree_config_pin = (
+                self._check_path(worktree_config, directory=False),
+                sha256_file(worktree_config),
+            )
         return (
             identity,
             sha256_file(root / ".git" / "config"),
             sha256_file(root / ".git" / "index"),
             sha256_file(root / ".git" / "HEAD"),
             exclude_digest,
+            worktree_config_pin,
             _git(root, "show-ref", "--head"),
             _git(root, "worktree", "list", "--porcelain"),
         )
@@ -149,8 +157,7 @@ class ResultPublication:
         self._check_git(published=False)
 
     def verify(self, current: dict) -> dict:
-        writers = [item for item in current["repositories"] if item["mode"] == "WRITE"]
-        if writers != [self._writer]:
+        if current["repositories"] != [self._writer]:
             raise WindowsBoundaryHold("HOLD_RESULT_WRITER_CHANGED")
         self._check_git(published=True)
         parent = self._parent()
