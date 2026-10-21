@@ -5,6 +5,9 @@ The [source-only authenticated handoff contract](WINDOWS_LOCAL_HANDOFF_CONTRACT.
 adds one retained issuer claim and a native named-pipe peer check. It does not
 change either status or qualify the protected host boundary.
 These modules are opt-in source APIs. No public CLI/MCP runtime gate is enabled.
+The separately versioned [fixed-result source candidate](WINDOWS_LOCAL_RESULT_CONTRACT.md)
+adds a private post-effect observation; legacy admission stays strict and no
+protected runtime boundary is qualified by that candidate.
 They do not constitute `LOCAL_BOUNDARY_QUALIFIED`, authenticated UTC, or an
 executable Owner grant. Existing v2 Lease/Decision schemas and public refusals
 remain unchanged. Program is not a runtime dependency.

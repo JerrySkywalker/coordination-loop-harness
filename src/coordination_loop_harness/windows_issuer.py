@@ -22,6 +22,7 @@ from .windows_capability import (
     require_system_self,
 )
 from .windows_custody import WindowsIssuerConfig, WindowsProtectedCustodyVerifier, sealed_decision
+from .windows_publication import RESULT_CLAIM, RESULT_HANDOFF, ResultPublication
 from .windows_security import WindowsBoundaryHold, is_account_sid
 from .windows_writer import WindowsWriterBinding, WindowsWriterInspector
 
@@ -119,10 +120,10 @@ class WindowsIssuer:
     def __getstate__(self):
         raise TypeError("Issuer state cannot be persisted/restored")
 
-    def _expected_request(self) -> dict:
+    def _expected_request(self, *, result=False) -> dict:
         intent = self._deadline.intent
         return {
-            "schema_version": "clh.windows-local-claim.v1",
+            "schema_version": RESULT_CLAIM if result else "clh.windows-local-claim.v1",
             "intent_id": intent.intent_id,
             "generation": intent.generation,
             "lease_id": self._lease_id,
@@ -136,6 +137,13 @@ class WindowsIssuer:
 
     def claim_once(self) -> dict:
         """Explicit Operator call. Claim and any error consume the one attempt."""
+        return self._claim_once(result=False)
+
+    def claim_result_once(self) -> dict:
+        """Opt-in fixed-result source contract; never selected by CLI/MCP."""
+        return self._claim_once(result=True)
+
+    def _claim_once(self, *, result: bool) -> dict:
         try:
             self._deadline.consume_issuer_claim()
         except Exception as exc:
@@ -163,7 +171,7 @@ class WindowsIssuer:
                 pipe.connect()
                 with pipe.authenticated_peer(self._client_pin):
                     raw = pipe.read_frame()
-                    if raw != canonical_json_bytes(self._expected_request()):
+                    if raw != canonical_json_bytes(self._expected_request(result=result)):
                         raise WindowsBoundaryHold("HOLD_EXACT_CLAIM_MISMATCH")
                     verifier = WindowsProtectedCustodyVerifier(
                         self._config, self._deadline, issuer_pin=self._issuer_pin
@@ -172,9 +180,14 @@ class WindowsIssuer:
                     writers = [item for item in lease["repositories"] if item["mode"] == "WRITE"]
                     if len(writers) != 1 or WriterTarget.from_lease(writers[0]) != self._target:
                         raise WindowsBoundaryHold("HOLD_FIXED_TARGET_MISMATCH")
+                    publication = (
+                        stack.enter_context(ResultPublication(writers[0])) if result else None
+                    )
                     self._deadline.check("pre_spawn", retained_intent=intent)
                     response = {
-                        "schema_version": "clh.windows-local-handoff.v1",
+                        "schema_version": (
+                            RESULT_HANDOFF if result else "clh.windows-local-handoff.v1"
+                        ),
                         "request_sha256": sha256_bytes(raw),
                         "decision_ref": lease["decision_ref"],
                         "decision_sha256": sha256_file(decision),
@@ -204,6 +217,8 @@ class WindowsIssuer:
                         raise WindowsBoundaryHold("HOLD_HANDOFF_ACK_MISMATCH")
                     self._deadline.check("pre_spawn", retained_intent=intent)
                     verifier.verify(self._lease_id, intent.generation, self._serialized)
+                    if publication is not None:
+                        publication.check_clean()
                     # CLF now creates the participant suspended and assigns its
                     # Job. No participant identity was needed for admission.
                     pre_spawn_heartbeat = canonical_json_bytes(
@@ -219,6 +234,8 @@ class WindowsIssuer:
                             break
                         self._deadline.check("watchdog", retained_intent=intent)
                         verifier.verify(self._lease_id, intent.generation, self._serialized)
+                        if publication is not None:
+                            publication.check_clean()
                         pipe.write_frame(
                             canonical_json_bytes(
                                 {
@@ -280,6 +297,8 @@ class WindowsIssuer:
                     inspector = WindowsWriterInspector(binding, self._deadline)
                     inspector.observe(participant_handle=handles[0], job_handle=handles[1])
                     verifier.verify(self._lease_id, intent.generation, self._serialized)
+                    if publication is not None:
+                        publication.check_clean()
                     pipe.write_frame(
                         canonical_json_bytes(
                             {
@@ -315,21 +334,32 @@ class WindowsIssuer:
                             else:
                                 raise WindowsBoundaryHold("HOLD_HANDOFF_CHECKPOINT_MISMATCH")
                             self._deadline.check(checked, retained_intent=intent)
-                            # Full protected Lease/Decision/Git admission stays
-                            # strict even after publication. A dirty tree or a
-                            # changed HEAD holds; this never certifies effects.
-                            verifier.verify(self._lease_id, intent.generation, self._serialized)
-                            inspector.observe(participant_handle=handles[0], job_handle=handles[1])
-                            self._deadline.check(checked, retained_intent=intent)
-                            pipe.write_frame(
-                                canonical_json_bytes(
-                                    {
-                                        "schema_version": "clh.windows-local-checkpoint-ack.v1",
-                                        "stage": checked,
-                                        "handoff_sha256": handoff_digest,
-                                    }
+                            post_effect = result and stage in ("receipt", "dag_ack")
+                            if post_effect:
+                                snapshot = verifier._verify_result(
+                                    self._lease_id, intent.generation, self._serialized, publication
                                 )
+                            else:
+                                snapshot = verifier.verify(
+                                    self._lease_id, intent.generation, self._serialized
+                                )
+                                if publication is not None:
+                                    publication.check_clean()
+                            observation = dict(
+                                participant_handle=handles[0], job_handle=handles[1]
                             )
+                            if result and (post_effect or checked == "effect_publication"):
+                                observation["terminal"] = True
+                            inspector.observe(**observation)
+                            self._deadline.check(checked, retained_intent=intent)
+                            ack = {
+                                "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                                "stage": checked,
+                                "handoff_sha256": handoff_digest,
+                            }
+                            if post_effect:
+                                ack["published_result"] = snapshot["published_result"]
+                            pipe.write_frame(canonical_json_bytes(ack))
                             if checked == stage:
                                 break
                     return response
