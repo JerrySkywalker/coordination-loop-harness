@@ -346,7 +346,10 @@ class ResultPublicationTests(unittest.TestCase):
         publication = self.publication()
         self.publish()
         publication._reader.file_security.return_value = dataclasses.replace(
-            custody_fixture.SECURITY, owner=custody_fixture.WORKER
+            custody_fixture.SECURITY, owner="S-1-5-21-100-200-300-1002"
+        )
+        self.assertNotEqual(
+            issuer_fixture.CLIENT.sid, publication._reader.file_security.return_value.owner
         )
         with self.assertRaisesRegex(WindowsBoundaryHold, "FIXED_CLIENT_OWNER"):
             publication.verify(self.current)
