@@ -409,7 +409,7 @@ class ResultPublicationTests(unittest.TestCase):
     def test_changed_result_after_fsync_refuses_terminal_publication(self):
         fixture, issuer, binding = self.issuer_fixture()
 
-        def change_result(_temp):
+        def change_result(_temp, _verifier):
             (self.root / RESULT_PATH).write_bytes(b"changed after fsync\n")
 
         with self.assertRaisesRegex(WindowsBoundaryHold, "OBSERVATION_CHANGED"):
@@ -581,6 +581,33 @@ class ResultPublicationTests(unittest.TestCase):
 
 
 class ResultClientTests(unittest.TestCase):
+    def test_native_peer_recheck_refuses_closed_missing_changed_or_disconnected_peer(self):
+        import ctypes
+
+        from coordination_loop_harness.windows_capability import WindowsPipe
+
+        for failure in (None, "closed", "missing", "pid", "exit", "pipe"):
+            pipe = object.__new__(WindowsPipe)
+            pipe.server, pipe._closed = True, failure == "closed"
+            pipe._peer_process = None if failure == "missing" else 123
+            pipe.handle, pipe._k = 456, mock.Mock()
+
+            def get_pid(_handle, output, failure=failure):
+                ctypes.cast(output, ctypes.POINTER(ctypes.c_ulong))[0] = (
+                    99 if failure == "pid" else issuer_fixture.CLIENT.pid
+                )
+                return 1
+
+            pipe._k.GetNamedPipeClientProcessId.side_effect = get_pid
+            pipe._k.WaitForSingleObject.return_value = 0 if failure == "exit" else 258
+            pipe._k.PeekNamedPipe.return_value = 0 if failure == "pipe" else 1
+            with self.subTest(failure=failure):
+                if failure:
+                    with self.assertRaisesRegex(WindowsBoundaryHold, "PEER_LOST"):
+                        pipe.require_live_client(issuer_fixture.CLIENT)
+                else:
+                    pipe.require_live_client(issuer_fixture.CLIENT)
+
     def session(self, proof):
         from coordination_loop_harness.util import canonical_json_bytes
 
