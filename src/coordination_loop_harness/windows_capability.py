@@ -342,6 +342,23 @@ class WindowsPipe:
         ):
             raise WindowsBoundaryHold("HOLD_PIPE_SERVER_OWNERSHIP_MISMATCH")
 
+    def require_live_client(self, pin: ProcessPin) -> None:
+        """Recheck the authenticated retained peer immediately before settlement."""
+        process = self._peer_process
+        pid = w.ULONG()
+        self._k.PeekNamedPipe.argtypes = [
+            w.HANDLE, w.LPVOID, w.DWORD, w.LPVOID, w.LPVOID, w.LPVOID,
+        ]
+        self._k.PeekNamedPipe.restype = w.BOOL
+        if (
+            not self.server or self._closed or not process
+            or not self._k.GetNamedPipeClientProcessId(self.handle, ctypes.byref(pid))
+            or pid.value != pin.pid
+            or self._k.WaitForSingleObject(process, 0) != 258
+            or not self._k.PeekNamedPipe(self.handle, None, 0, None, None, None)
+        ):
+            raise WindowsBoundaryHold("HOLD_PIPE_PEER_LOST_BEFORE_SETTLEMENT")
+
     def read_frame(self) -> bytes:
         cutoff = time.monotonic() + FRAME_WAIT_SECONDS
 
@@ -723,6 +740,19 @@ class WindowsHandoffSession:
                     ):
                         raise ValueError("invalid or changed fixed-result observation")
                     expected["published_result"] = result
+                    if stage == "dag_ack":
+                        released = ack["released_lease"]
+                        if (
+                            type(released) is not dict
+                            or set(released) != {"lease_id", "generation", "lease_sha256"}
+                            or released["lease_id"] != self._request["lease_id"]
+                            or type(released["generation"]) is not int
+                            or released["generation"] != self._request["generation"] + 1
+                            or type(released["lease_sha256"]) is not str
+                            or re.fullmatch("[0-9a-f]{64}", released["lease_sha256"]) is None
+                        ):
+                            raise ValueError("invalid terminal Lease observation")
+                        expected["released_lease"] = released
                 except (ValueError, KeyError, TypeError) as exc:
                     raise WindowsBoundaryHold("HOLD_RESULT_ACK_MISMATCH") from exc
             if raw_ack != canonical_json_bytes(expected):
@@ -731,6 +761,8 @@ class WindowsHandoffSession:
             if post_effect:
                 self._published_result = dict(result)
                 snapshot["published_result"] = dict(result)
+                if stage == "dag_ack":
+                    snapshot["released_lease"] = dict(released)
             if stage != "watchdog":
                 self._next += 1
             if stage == "dag_ack":

@@ -1071,6 +1071,14 @@ def _validate_writer_binding(
         findings.append("canonical repository filesystem identity changed during verification")
     if writer_identity != final_writer_identity:
         findings.append("writer worktree filesystem identity changed during verification")
+    findings.extend(_writer_git_lock_findings(data, admitted_git_locks))
+    if findings:
+        raise ValueError("Writer repository binding failed:\n- " + "\n- ".join(findings))
+
+
+def _writer_git_lock_findings(data, admitted_git_locks=None) -> list[str]:
+    """Check only the exact Git guards owned by this admission, never ignore locks."""
+    findings = []
     expected_git_locks = set(_writer_git_lock_paths(data))
     if admitted_git_locks is None:
         for lock_path in expected_git_locks:
@@ -1092,8 +1100,7 @@ def _validate_writer_binding(
                 findings.append(f"owned Git admission lock identity changed: {lock_path}")
             if content != marker:
                 findings.append(f"owned Git admission lock content changed: {lock_path}")
-    if findings:
-        raise ValueError("Writer repository binding failed:\n- " + "\n- ".join(findings))
+    return findings
 
 
 def _validate_decision_scope(data: dict[str, Any], decision: dict[str, Any]) -> None:
@@ -1704,6 +1711,30 @@ def release(
     candidate_path: Path | None = None,
     repo_root: Path | None = None,
 ) -> Path:
+    return _release(
+        lease_id, lock_root, expected_generation=expected_generation,
+        outcome_ref=outcome_ref, candidate_path=candidate_path, repo_root=repo_root,
+        writer_check=_validate_writer_binding,
+    )
+
+
+def _release(
+    lease_id: str,
+    lock_root: Path,
+    *,
+    expected_generation: int,
+    writer_check,
+    prepare_temp=None,
+    outcome_ref: str | None = None,
+    candidate_path: Path | None = None,
+    repo_root: Path | None = None,
+) -> Path:
+    """Internal publication transaction; public callers always use strict release.
+
+    The fixed native Windows issuer supplies its retained result check. This
+    Python helper is not an authentication boundary: protected-root OS custody
+    and the issuer's live checks must authorize that separate entry point.
+    """
     lease_id = require_safe_id(lease_id, "lease_id")
     lock_root = canonical_path(lock_root)
     lease_path = lock_root / f"{lease_id}.lease.json"
@@ -1775,7 +1806,7 @@ def release(
             for field in immutable_fields:
                 if candidate.get(field) != current.get(field):
                     raise ValueError(f"Terminal candidate must preserve lease field: {field}")
-            _validate_writer_binding(current)
+            writer_check(current)
             _validate_release_authority(
                 candidate,
                 current,
@@ -1783,7 +1814,7 @@ def release(
                 observed_now=_timestamp(utc_now(), label="current_utc"),
             )
             with _writer_git_admission_guard(current) as git_locks:
-                _validate_writer_binding(current, admitted_git_locks=git_locks)
+                writer_check(current, admitted_git_locks=git_locks)
                 now = _timestamp(utc_now(), label="current_utc")
                 _validate_release_authority(
                     candidate,
@@ -1791,7 +1822,7 @@ def release(
                     repo_root,
                     observed_now=now,
                 )
-                _validate_writer_binding(current, admitted_git_locks=git_locks)
+                writer_check(current, admitted_git_locks=git_locks)
                 _validate_release_authority(
                     candidate,
                     current,
@@ -1804,17 +1835,23 @@ def release(
                     entry_identity,
                     label="released lease file",
                 )
+                def before_publish():
+                    writer_check(current, admitted_git_locks=git_locks)
+                    _validate_release_authority(
+                        candidate, current, repo_root,
+                        observed_now=_timestamp(utc_now(), label="current_utc"),
+                    )
+                    _assert_lease_entry_unchanged(
+                        lock_root, lease_path, entry_identity, label="released lease file"
+                    )
+
                 write_json_atomic(
                     lease_path,
                     candidate,
                     trusted_root=lock_root,
                     canonical=True,
-                    before_publish=lambda: _validate_release_authority(
-                        candidate,
-                        current,
-                        repo_root,
-                        observed_now=_timestamp(utc_now(), label="current_utc"),
-                    ),
+                    before_publish=before_publish,
+                    prepare_temp=prepare_temp,
                 )
         elif current_schema == _V1_SCHEMA:
             if not isinstance(outcome_ref, str) or not outcome_ref:

@@ -1,7 +1,7 @@
 """One fixed local-result observation, private to the live result issuer.
 
 This never publishes a file, grants runtime custody, or accepts a path list.
-The legacy clean verifier and the published Lease v2 artifact remain unchanged.
+The public clean verifier retains its strict semantics.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import stat
 from contextlib import ExitStack
 from pathlib import Path
 
-from .leases import _writer_git_lock_paths
+from .leases import _writer_git_lock_findings
 from .repository import _git, _repository_identity_snapshot, verify_repository
 from .util import sha256_bytes, sha256_file
 from .windows_custody import sealed_decision
@@ -84,7 +84,7 @@ class ResultPublication:
             _git(root, "worktree", "list", "--porcelain"),
         )
 
-    def _check_git(self, *, published: bool) -> None:
+    def _check_git(self, *, published: bool, admitted_git_locks=None) -> None:
         root, writer = self._root, self._writer
         if _git(root, "remote"):
             raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_ZERO_REMOTES")
@@ -118,9 +118,8 @@ class ResultPublication:
             "schema_version": "coord.repo-set-lease.v2",
             "state": "ACTIVE",
         }
-        for lock in _writer_git_lock_paths(lease_shape):
-            if os.path.lexists(lock):
-                raise WindowsBoundaryHold("HOLD_RESULT_ACTIVE_GIT_LOCK")
+        if _writer_git_lock_findings(lease_shape, admitted_git_locks):
+            raise WindowsBoundaryHold("HOLD_RESULT_ACTIVE_GIT_LOCK")
 
     def _check_path(self, path: Path, *, directory: bool) -> tuple:
         metadata = path.lstat()
@@ -156,10 +155,10 @@ class ResultPublication:
             raise WindowsBoundaryHold("HOLD_RESULT_MUST_BE_CREATE_NEW")
         self._check_git(published=False)
 
-    def verify(self, current: dict) -> dict:
+    def verify(self, current: dict, *, admitted_git_locks=None) -> dict:
         if current["repositories"] != [self._writer]:
             raise WindowsBoundaryHold("HOLD_RESULT_WRITER_CHANGED")
-        self._check_git(published=True)
+        self._check_git(published=True, admitted_git_locks=admitted_git_locks)
         parent = self._parent()
         path = parent / "result.md"
         parent_before = self._check_path(parent, directory=True)
@@ -187,7 +186,7 @@ class ResultPublication:
             or self._check_path(parent, directory=True) != parent_before
         ):
             raise WindowsBoundaryHold("HOLD_RESULT_CHANGED_DURING_READ")
-        self._check_git(published=True)
+        self._check_git(published=True, admitted_git_locks=admitted_git_locks)
         identity = (before, parent_before)
         if self._result is not None and (proof != self._result or identity != self._identity):
             raise WindowsBoundaryHold("HOLD_RESULT_OBSERVATION_CHANGED")

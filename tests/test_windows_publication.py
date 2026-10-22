@@ -247,23 +247,86 @@ class ResultPublicationTests(unittest.TestCase):
         leases_fixture.LeaseTests().authorize(chain.root, chain.candidate, "lease:acquire")
         chain.write_candidate()
         chain.verifier()
+        terminal, terminal_path = leases_fixture.LeaseTests().terminal_v2(
+            chain.root, chain.candidate, authority="NORMAL", released_utc="2026-01-01T00:00:00Z"
+        )
+        fixture.terminal, fixture.terminal_path = terminal, terminal_path
         binding = dataclasses.replace(fixture.binding, lease_sha256=sha256_bytes(chain.serialized))
         issuer = fixture.new_issuer(
             deadline=chain.deadline,
             serialized_lease=chain.serialized,
             target=WriterTarget.from_lease(self.current["repositories"][0]),
+            result_release_ref=terminal_path.relative_to(chain.root).as_posix(),
         )
         return fixture, issuer, binding
+
+    def run_result_claim(self, fixture, issuer, binding, *, before_terminal=None, prepare=None,
+                         lose_ack=False, lose_peer=False, after_publish=None):
+        from coordination_loop_harness.util import canonical_json_bytes
+
+        owner = self
+
+        class PublishingPipe(issuer_fixture.FakePipe):
+            lost = lose_peer
+
+            def require_live_client(self, pin):
+                assert pin == issuer_fixture.CLIENT
+                if self.lost:
+                    raise WindowsBoundaryHold("HOLD_PIPE_PEER_LOST_BEFORE_SETTLEMENT")
+
+            def read_frame(self):
+                raw = super().read_frame()
+                if b'"stage":"dag_ack"' in raw and before_terminal:
+                    before_terminal()
+                return raw
+
+            def write_frame(self, data):
+                if lose_ack and b'"released_lease"' in data:
+                    raise WindowsBoundaryHold("HOLD_PIPE_DISCONNECTED")
+                super().write_frame(data)
+                if b'"stage":"effect_publication"' in data:
+                    owner.publish()
+                    if after_publish:
+                        after_publish()
+
+        pipe = PublishingPipe(canonical_json_bytes(issuer._expected_request(result=True)))
+        pipe.binding = binding
+        self.last_pipe = pipe
+        with (
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.WindowsPipe.first_server",
+                return_value=pipe,
+            ),
+            mock.patch(
+                "coordination_loop_harness.windows_issuer.sealed_decision",
+                side_effect=lambda _path: nullcontext(),
+            ),
+            mock.patch.object(issuer, "_prepare_terminal_temp", side_effect=prepare),
+            mock.patch("coordination_loop_harness.windows_issuer.WindowsWriterInspector"),
+        ):
+            return issuer.claim_result_once(), pipe
 
     def test_real_lease_chain_and_versioned_issuer_post_effect_then_public_v1_refusal(self):
         fixture, issuer, binding = self.issuer_fixture()
         owner = self
 
         class PublishingPipe(issuer_fixture.FakePipe):
+            def require_live_client(self, pin):
+                assert pin == issuer_fixture.CLIENT
+
             def write_frame(self, data):
                 super().write_frame(data)
                 if b'"stage":"effect_publication"' in data:
                     owner.publish()
+                    # Ordinary release remains strict even with a valid Owner
+                    # terminal candidate; only the live issuer selects result settlement.
+                    from coordination_loop_harness.leases import release
+
+                    with owner.assertRaisesRegex(ValueError, "untracked"):
+                        release(
+                            "LOCAL-T1", fixture.fixture.locks, expected_generation=1,
+                            candidate_path=fixture.terminal_path, repo_root=fixture.fixture.root,
+                        )
 
         from coordination_loop_harness.util import canonical_json_bytes
 
@@ -281,6 +344,7 @@ class ResultPublicationTests(unittest.TestCase):
             mock.patch(
                 "coordination_loop_harness.windows_issuer.WindowsWriterInspector"
             ) as inspector,
+            mock.patch.object(issuer, "_prepare_terminal_temp") as native_prepare,
         ):
             response = issuer.claim_result_once()
         self.assertEqual(RESULT_HANDOFF, response["schema_version"])
@@ -297,13 +361,112 @@ class ResultPublicationTests(unittest.TestCase):
             for call in inspector.return_value.observe.call_args_list
             if call.kwargs.get("terminal")
         ]
-        self.assertEqual(3, len(terminal_calls))
-        # The existing public verifier still refuses this exact published file.
-        verifier = fixture.fixture.verifier()
-        with mock.patch.object(verifier, "_protected_tree", return_value={}):
-            with self.assertRaisesRegex(ValueError, "untracked"):
-                verifier.verify("LOCAL-T1", 1, fixture.fixture.serialized)
+        self.assertGreaterEqual(len(terminal_calls), 3)
+        native_prepare.assert_called_once()
+        current = json.loads((fixture.fixture.locks / "LOCAL-T1.lease.json").read_bytes())
+        self.assertEqual(fixture.terminal, current)
+        self.assertEqual(2, acks[-1]["released_lease"]["generation"])
+        self.assertEqual(
+            sha256_bytes(canonical_json_bytes(current)), acks[-1]["released_lease"]["lease_sha256"]
+        )
         self.assertTrue((self.root / RESULT_PATH).exists())
+
+    def test_missing_or_unauthorized_terminal_candidate_never_releases(self):
+        fixture, issuer, binding = self.issuer_fixture()
+        fixture.terminal_path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.run_result_claim(fixture, issuer, binding)
+        self.assertEqual(
+            fixture.fixture.serialized,
+            (fixture.fixture.locks / "LOCAL-T1.lease.json").read_bytes(),
+        )
+        with self.assertRaisesRegex(WindowsBoundaryHold, "ALREADY_ATTEMPTED"):
+            issuer.claim_result_once()
+
+    def test_terminal_candidate_tamper_is_not_an_owner_release(self):
+        import json
+
+        fixture, issuer, binding = self.issuer_fixture()
+        candidate = dict(fixture.terminal, outcome_sha256="a" * 64)
+        fixture.terminal_path.write_text(json.dumps(candidate), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "SHA-256|digest"):
+            self.run_result_claim(fixture, issuer, binding)
+        self.assertEqual(
+            fixture.fixture.serialized,
+            (fixture.fixture.locks / "LOCAL-T1.lease.json").read_bytes(),
+        )
+
+    def test_peer_loss_before_settlement_retains_active_lease_and_actual_effect(self):
+        fixture, issuer, binding = self.issuer_fixture()
+        with self.assertRaisesRegex(WindowsBoundaryHold, "PEER_LOST"):
+            self.run_result_claim(fixture, issuer, binding, lose_peer=True)
+        self.assertEqual(
+            fixture.fixture.serialized,
+            (fixture.fixture.locks / "LOCAL-T1.lease.json").read_bytes(),
+        )
+        self.assertTrue((self.root / RESULT_PATH).exists())
+
+    def test_changed_result_after_fsync_refuses_terminal_publication(self):
+        fixture, issuer, binding = self.issuer_fixture()
+
+        def change_result(_temp):
+            (self.root / RESULT_PATH).write_bytes(b"changed after fsync\n")
+
+        with self.assertRaisesRegex(WindowsBoundaryHold, "OBSERVATION_CHANGED"):
+            self.run_result_claim(fixture, issuer, binding, prepare=change_result)
+        self.assertEqual(
+            fixture.fixture.serialized,
+            (fixture.fixture.locks / "LOCAL-T1.lease.json").read_bytes(),
+        )
+
+    def test_expired_deadline_at_final_checkpoint_cannot_release(self):
+        from coordination_loop_harness.local_time import LocalTimeHold
+
+        fixture, issuer, binding = self.issuer_fixture()
+
+        def expire():
+            fixture.fixture.deadline.invalidate("HOLD_TEST_EXPIRED_AT_DAG")
+
+        with self.assertRaises(LocalTimeHold):
+            self.run_result_claim(fixture, issuer, binding, before_terminal=expire)
+        self.assertEqual(
+            fixture.fixture.serialized,
+            (fixture.fixture.locks / "LOCAL-T1.lease.json").read_bytes(),
+        )
+
+    def test_lost_terminal_ack_retains_actual_released_state_and_forbids_retry(self):
+        import json
+
+        fixture, issuer, binding = self.issuer_fixture()
+        with self.assertRaisesRegex(WindowsBoundaryHold, "DISCONNECTED"):
+            self.run_result_claim(fixture, issuer, binding, lose_ack=True)
+        current = json.loads((fixture.fixture.locks / "LOCAL-T1.lease.json").read_bytes())
+        self.assertEqual(fixture.terminal, current)
+        self.assertTrue((self.root / RESULT_PATH).exists())
+        with self.assertRaisesRegex(WindowsBoundaryHold, "ALREADY_ATTEMPTED"):
+            issuer.claim_result_once()
+
+    def test_terminal_temp_copies_exact_dacl_only_with_mock_native_calls(self):
+        import ctypes
+        from types import SimpleNamespace
+
+        fixture, issuer, _binding = self.issuer_fixture()
+        reader = mock.Mock()
+        original = custody_fixture.SECURITY
+        temporary = dataclasses.replace(original, protected_dacl=False)
+        reader.file_security.side_effect = [original, temporary, original, original]
+
+        def get_dacl(_path, _kind, _flags, _owner, _group, dacl, _sacl, descriptor):
+            ctypes.cast(dacl, ctypes.POINTER(ctypes.c_void_p))[0] = 123
+            ctypes.cast(descriptor, ctypes.POINTER(ctypes.c_void_p))[0] = 456
+            return 0
+
+        reader.a.GetNamedSecurityInfoW.side_effect = get_dacl
+        reader.a.SetNamedSecurityInfoW.return_value = 0
+        path = fixture.fixture.locks / ".LOCAL-T1.lease.json.source-test.tmp"
+        issuer._prepare_terminal_temp(path, SimpleNamespace(_reader=reader))
+        self.assertEqual(0x80000004, reader.a.SetNamedSecurityInfoW.call_args.args[2])
+        reader.k.LocalFree.assert_called_once()
 
     def test_v1_cannot_accept_result_claim_or_silently_upgrade(self):
         _fixture, issuer, binding = self.issuer_fixture()
@@ -427,7 +590,7 @@ class ResultClientTests(unittest.TestCase):
             ExitStack(),
             pipe,
             {},
-            {"schema_version": RESULT_CLAIM},
+            {"schema_version": RESULT_CLAIM, "lease_id": "SOURCE-ONE", "generation": 1},
             issuer_fixture.CLIENT,
             issuer_fixture.CLIENT.sid,
             custody_fixture.RESTRICTING,
@@ -494,6 +657,60 @@ class ResultClientTests(unittest.TestCase):
                 self.assertRaisesRegex(WindowsBoundaryHold, "RESULT_ACK"),
             ):
                 session.checkpoint("receipt", participant_handle=1, job_handle=2)
+            self.assertTrue(session._closed)
+
+    def test_final_ack_requires_terminal_lease_readback_and_closes(self):
+        from coordination_loop_harness.util import canonical_json_bytes
+
+        session, pipe = self.session({})
+        session._next = 3
+        released = {"lease_id": "SOURCE-ONE", "generation": 2, "lease_sha256": "b" * 64}
+        pipe.read_frame.return_value = canonical_json_bytes({
+            "schema_version": "clh.windows-local-checkpoint-ack.v1", "stage": "dag_ack",
+            "handoff_sha256": session._handoff_digest,
+            "published_result": {"path": RESULT_PATH, "size": 1, "sha256": "a" * 64},
+            "released_lease": released,
+        })
+        with (
+            mock.patch("coordination_loop_harness.windows_capability.require_process_self"),
+            mock.patch("coordination_loop_harness.windows_capability.require_client_boot_deadline"),
+            mock.patch(
+                "coordination_loop_harness.windows_capability.WindowsWriterInspector"
+            ) as inspect,
+        ):
+            inspect.return_value.observe.return_value = {"custody_resolved": False}
+            snapshot = session.checkpoint("dag_ack", participant_handle=1, job_handle=2)
+        self.assertEqual(released, snapshot["released_lease"])
+        self.assertFalse(snapshot["custody_resolved"])
+        self.assertTrue(session._closed)
+
+    def test_final_ack_rejects_missing_wrong_or_malformed_terminal_binding(self):
+        from coordination_loop_harness.util import canonical_json_bytes
+
+        for change in (
+            None, {"lease_id": "OTHER"}, {"generation": True}, {"generation": 3},
+            {"lease_sha256": "bad"}, {"extra": "not-authority"},
+        ):
+            session, pipe = self.session({})
+            session._next = 3
+            ack = {
+                "schema_version": "clh.windows-local-checkpoint-ack.v1", "stage": "dag_ack",
+                "handoff_sha256": session._handoff_digest,
+                "published_result": {"path": RESULT_PATH, "size": 1, "sha256": "a" * 64},
+            }
+            if change is not None:
+                ack["released_lease"] = {
+                    "lease_id": "SOURCE-ONE", "generation": 2, "lease_sha256": "b" * 64,
+                } | change
+            pipe.read_frame.return_value = canonical_json_bytes(ack)
+            with (
+                self.subTest(change=change),
+                mock.patch("coordination_loop_harness.windows_capability.require_process_self"),
+                mock.patch("coordination_loop_harness.windows_capability.require_client_boot_deadline"),
+                mock.patch("coordination_loop_harness.windows_capability.WindowsWriterInspector"),
+                self.assertRaisesRegex(WindowsBoundaryHold, "RESULT_ACK"),
+            ):
+                session.checkpoint("dag_ack", participant_handle=1, job_handle=2)
             self.assertTrue(session._closed)
 
 

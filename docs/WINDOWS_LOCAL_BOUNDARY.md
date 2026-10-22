@@ -67,8 +67,10 @@ The Windows backend reuses the existing CLH Lease/Decision/Git validation functi
 for current canonical Lease bytes, active generation/state, complete accepted Decision ancestry,
 Markdown/candidate digest bindings and legacy UTC **refusal** checks. The narrow
 Windows orchestration also retains every archived-candidate/immutable-lineage
-check. The manifest-bound published `leases.py` and producer manifest remain byte
-unchanged; no OS issuer hook is inserted into that artifact. Those UTC
+check. Ordinary public release remains strict. The explicit local-result
+issuer now reuses the release transaction with its retained sole-result check;
+the producer manifest records the updated Lease/util implementation bytes.
+There is no caller-selected public dirty-tree mode. Those UTC
 checks add a conservative rejection; they supply no authenticated UTC evidence.
 It additionally binds the immutable L1 intent, requires exactly one Writer and
 uses the existing Git verifier for actual repository/common-dir/worktree/branch,
