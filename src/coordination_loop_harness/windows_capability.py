@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from .local_time import LocalDeadline, WindowsHostClock
 from .util import canonical_json_bytes, sha256_bytes
 from .windows_custody import SYSTEM, check_observer
+from .windows_publication import RESULT_CLAIM, RESULT_HANDOFF, RESULT_LIMIT, RESULT_PATH
 from .windows_security import WindowsBoundaryHold, WindowsSecurityReader, is_account_sid
 from .windows_writer import WindowsWriterBinding, WindowsWriterInspector
 
@@ -341,6 +342,23 @@ class WindowsPipe:
         ):
             raise WindowsBoundaryHold("HOLD_PIPE_SERVER_OWNERSHIP_MISMATCH")
 
+    def require_live_client(self, pin: ProcessPin) -> None:
+        """Recheck the authenticated retained peer immediately before settlement."""
+        process = self._peer_process
+        pid = w.ULONG()
+        self._k.PeekNamedPipe.argtypes = [
+            w.HANDLE, w.LPVOID, w.DWORD, w.LPVOID, w.LPVOID, w.LPVOID,
+        ]
+        self._k.PeekNamedPipe.restype = w.BOOL
+        if (
+            not self.server or self._closed or not process
+            or not self._k.GetNamedPipeClientProcessId(self.handle, ctypes.byref(pid))
+            or pid.value != pin.pid
+            or self._k.WaitForSingleObject(process, 0) != 258
+            or not self._k.PeekNamedPipe(self.handle, None, 0, None, None, None)
+        ):
+            raise WindowsBoundaryHold("HOLD_PIPE_PEER_LOST_BEFORE_SETTLEMENT")
+
     def read_frame(self) -> bytes:
         cutoff = time.monotonic() + FRAME_WAIT_SECONDS
 
@@ -558,6 +576,8 @@ class WindowsHandoffSession:
         self._next = 0
         self._bound_handles = None
         self._closed = False
+        self._result_contract = request["schema_version"] == RESULT_CLAIM
+        self._published_result = None
 
     def close(self) -> None:
         if threading.get_ident() != self._owner_thread:
@@ -681,8 +701,12 @@ class WindowsHandoffSession:
             require_process_self(self._client_pin)
             require_client_boot_deadline(self._request)
             # Native owned-handle observation is a source snapshot, not a runtime grant.
+            observation = dict(participant_handle=participant_handle, job_handle=job_handle)
+            post_effect = self._result_contract and self._next >= 2
+            if self._result_contract and (post_effect or stage == "effect_publication"):
+                observation["terminal"] = True
             snapshot = WindowsWriterInspector(self._binding, self._client_deadline).observe(
-                participant_handle=participant_handle, job_handle=job_handle
+                **observation
             )
             self._pipe.write_frame(
                 canonical_json_bytes(
@@ -694,16 +718,51 @@ class WindowsHandoffSession:
                     }
                 )
             )
-            expected = canonical_json_bytes(
-                {
-                    "schema_version": "clh.windows-local-checkpoint-ack.v1",
-                    "stage": stage,
-                    "handoff_sha256": self._handoff_digest,
-                }
-            )
-            if self._pipe.read_frame() != expected:
+            expected = {
+                "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                "stage": stage,
+                "handoff_sha256": self._handoff_digest,
+            }
+            raw_ack = self._pipe.read_frame()
+            if post_effect:
+                try:
+                    ack = json.loads(raw_ack)
+                    result = ack["published_result"]
+                    if (
+                        type(result) is not dict
+                        or set(result) != {"path", "size", "sha256"}
+                        or result["path"] != RESULT_PATH
+                        or type(result["size"]) is not int
+                        or not 0 <= result["size"] <= RESULT_LIMIT
+                        or type(result["sha256"]) is not str
+                        or re.fullmatch("[0-9a-f]{64}", result["sha256"]) is None
+                        or (self._published_result is not None and result != self._published_result)
+                    ):
+                        raise ValueError("invalid or changed fixed-result observation")
+                    expected["published_result"] = result
+                    if stage == "dag_ack":
+                        released = ack["released_lease"]
+                        if (
+                            type(released) is not dict
+                            or set(released) != {"lease_id", "generation", "lease_sha256"}
+                            or released["lease_id"] != self._request["lease_id"]
+                            or type(released["generation"]) is not int
+                            or released["generation"] != self._request["generation"] + 1
+                            or type(released["lease_sha256"]) is not str
+                            or re.fullmatch("[0-9a-f]{64}", released["lease_sha256"]) is None
+                        ):
+                            raise ValueError("invalid terminal Lease observation")
+                        expected["released_lease"] = released
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise WindowsBoundaryHold("HOLD_RESULT_ACK_MISMATCH") from exc
+            if raw_ack != canonical_json_bytes(expected):
                 raise WindowsBoundaryHold("HOLD_HANDOFF_CHECKPOINT_ACK_MISMATCH")
             require_client_boot_deadline(self._request)
+            if post_effect:
+                self._published_result = dict(result)
+                snapshot["published_result"] = dict(result)
+                if stage == "dag_ack":
+                    snapshot["released_lease"] = dict(released)
             if stage != "watchdog":
                 self._next += 1
             if stage == "dag_ack":
@@ -737,7 +796,7 @@ def request_source_handoff(
         or not is_account_sid(client_pin.sid)
         or type(request) is not dict
         or set(request) != CLAIM_KEYS
-        or request.get("schema_version") != "clh.windows-local-claim.v1"
+        or request.get("schema_version") not in ("clh.windows-local-claim.v1", RESULT_CLAIM)
         or any(
             type(request.get(key)) is not str or not request[key]
             for key in ("intent_id", "lease_id", "lease_sha256", "boot_id")
@@ -783,7 +842,10 @@ def request_source_handoff(
             response_raw != canonical_response
             or type(response) is not dict
             or set(response) != HANDOFF_KEYS
-            or response.get("schema_version") != "clh.windows-local-handoff.v1"
+            or response.get("schema_version") != (
+                RESULT_HANDOFF if request["schema_version"] == RESULT_CLAIM
+                else "clh.windows-local-handoff.v1"
+            )
             or response.get("request_sha256") != sha256_bytes(raw)
             or type(response.get("decision_ref")) is not str
             or not response["decision_ref"]

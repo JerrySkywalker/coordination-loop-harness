@@ -5,6 +5,9 @@ The [source-only authenticated handoff contract](WINDOWS_LOCAL_HANDOFF_CONTRACT.
 adds one retained issuer claim and a native named-pipe peer check. It does not
 change either status or qualify the protected host boundary.
 These modules are opt-in source APIs. No public CLI/MCP runtime gate is enabled.
+The separately versioned [fixed-result source candidate](WINDOWS_LOCAL_RESULT_CONTRACT.md)
+adds a private post-effect observation; legacy admission stays strict and no
+protected runtime boundary is qualified by that candidate.
 They do not constitute `LOCAL_BOUNDARY_QUALIFIED`, authenticated UTC, or an
 executable Owner grant. Existing v2 Lease/Decision schemas and public refusals
 remain unchanged. Program is not a runtime dependency.
@@ -64,8 +67,10 @@ The Windows backend reuses the existing CLH Lease/Decision/Git validation functi
 for current canonical Lease bytes, active generation/state, complete accepted Decision ancestry,
 Markdown/candidate digest bindings and legacy UTC **refusal** checks. The narrow
 Windows orchestration also retains every archived-candidate/immutable-lineage
-check. The manifest-bound published `leases.py` and producer manifest remain byte
-unchanged; no OS issuer hook is inserted into that artifact. Those UTC
+check. Ordinary public release remains strict. The explicit local-result
+issuer now reuses the release transaction with its retained sole-result check;
+the producer manifest records the updated Lease/util implementation bytes.
+There is no caller-selected public dirty-tree mode. Those UTC
 checks add a conservative rejection; they supply no authenticated UTC evidence.
 It additionally binds the immutable L1 intent, requires exactly one Writer and
 uses the existing Git verifier for actual repository/common-dir/worktree/branch,

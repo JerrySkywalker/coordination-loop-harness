@@ -114,6 +114,8 @@ def check_writer_snapshot(
     job: JobSnapshot,
     binding: WindowsWriterBinding,
     intent: LocalIntent,
+    *,
+    terminal=False,
 ) -> dict:
     """Deterministic candidate checks. Never an authority/actual denial proof."""
     check_observer(token, binding.issuer_sid, restricted_writer=True)
@@ -150,6 +152,8 @@ def check_writer_snapshot(
             raise WindowsBoundaryHold("HOLD_PARTICIPANT_IDENTITY_MISSING")
     elif job.active_count:
         raise WindowsBoundaryHold("HOLD_DESCENDANTS_UNSETTLED")
+    if terminal and (job.participant_exit != 0 or job.active_count != 0):
+        raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_NATIVE_TERMINAL_WRITER")
     # Zero active processes + parent exit still says nothing about child exits,
     # inherited writable handles, startup atomicity or deny-outside-scratch.
     return {
@@ -184,7 +188,7 @@ class WindowsWriterInspector:
             function = getattr(self._kernel, name)
             function.argtypes, function.restype = arguments, result
 
-    def observe(self, *, participant_handle: int, job_handle: int) -> dict:
+    def observe(self, *, participant_handle: int, job_handle: int, terminal=False) -> dict:
         """CLF retains the handles; concurrent changes are conservatively refused."""
         if not participant_handle or not job_handle:
             self._deadline.invalidate("HOLD_OWNED_PROCESS_OR_JOB_HANDLE_LOST")
@@ -192,14 +196,16 @@ class WindowsWriterInspector:
         intent = self._deadline.intent
         self._deadline.check("watchdog", retained_intent=intent)
         try:
-            result = self._observe(participant_handle, job_handle, intent)
+            result = self._observe(participant_handle, job_handle, intent, terminal=terminal)
             self._deadline.check("watchdog", retained_intent=intent)
             return result
         except Exception:
             self._deadline.invalidate("HOLD_WRITER_OR_JOB_CONTINUITY_LOST")
             raise
 
-    def _observe(self, participant_handle: int, job_handle: int, intent: LocalIntent) -> dict:
+    def _observe(
+        self, participant_handle: int, job_handle: int, intent: LocalIntent, *, terminal=False
+    ) -> dict:
         require = self._reader._require
         token = self._reader.token_security(participant_handle)
         limits, accounting, members = _ExtendedLimit(), _Accounting(), _ProcessList()
@@ -243,4 +249,4 @@ class WindowsWriterInspector:
             accounting.active,
             tuple(members.pids[: members.count]),
         )
-        return check_writer_snapshot(token, snapshot, self._binding, intent)
+        return check_writer_snapshot(token, snapshot, self._binding, intent, terminal=terminal)

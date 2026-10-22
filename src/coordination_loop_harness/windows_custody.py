@@ -261,6 +261,18 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
             raise WindowsBoundaryHold("HOLD_FIXED_CLH_ISSUER_OR_PRODUCER_MISMATCH")
 
     def verify(self, lease_id: str, expected_generation: int, serialized: bytes) -> dict:
+        return self._verify_current(lease_id, expected_generation, serialized)
+
+    def _verify_result(self, lease_id, expected_generation, serialized, publication) -> dict:
+        from .windows_publication import ResultPublication
+
+        if type(publication) is not ResultPublication or self._issuer_pin is None:
+            raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_LIVE_ISSUER")
+        return self._verify_current(lease_id, expected_generation, serialized, publication)
+
+    def _verify_current(
+        self, lease_id, expected_generation, serialized, publication=None
+    ) -> dict:
         intent = self._deadline.intent
         try:
             lease_id = require_safe_id(lease_id, "lease_id")
@@ -308,7 +320,11 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
             self._verify_lineage(current)
             if len([item for item in current["repositories"] if item["mode"] == "WRITE"]) != 1:
                 raise WindowsBoundaryHold("HOLD_EXACTLY_ONE_WRITER_REQUIRED")
-            _validate_writer_binding(current)
+            result = None
+            if publication is None:
+                _validate_writer_binding(current)
+            else:
+                result = publication.verify(current)
             _assert_lease_entry_unchanged(
                 self._lock_root, path, identity, label="protected current lease"
             )
@@ -319,7 +335,7 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
                 raise WindowsBoundaryHold("HOLD_AUTHORITY_CHANGED_DURING_WRITER_CHECK")
             _require_unexpired_acquisition(current)
             self._deadline.check("pre_spawn", retained_intent=intent)
-            return {
+            snapshot = {
                 "lease_id": lease_id,
                 "generation": expected_generation,
                 "state": "ACTIVE",
@@ -330,6 +346,9 @@ class WindowsProtectedCustodyVerifier(ProtectedCustodyVerifier):
                 "authenticated_utc": False,
                 "runtime_gate": "G_L1_ROOT_AND_CONSUMER_BOUNDARY_UNQUALIFIED",
             }
+            if result is not None:
+                snapshot["published_result"] = result
+            return snapshot
         except Exception:
             self._deadline.invalidate("HOLD_CUSTODY_CONTINUITY_LOST")
             raise

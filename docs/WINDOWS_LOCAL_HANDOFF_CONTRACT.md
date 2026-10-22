@@ -115,6 +115,11 @@ fixture has no offline bearer semantics.
 
 ## Remaining host qualification
 
+The [fixed local-result contract candidate](WINDOWS_LOCAL_RESULT_CONTRACT.md)
+defines a separately selected claim/response, one-way post-effect observation
+and Owner-authorized terminal Lease settlement at its final checkpoint.
+It does not silently amend the v1 strict-clean promise above or qualify runtime.
+
 No protected SYSTEM process, pipe, distinct-principal ACL denial, suspend,
 restart, inherited-handle denial, restricted Worker, Job, model call or real
 Provider was exercised for this source change. The exact Windows build must

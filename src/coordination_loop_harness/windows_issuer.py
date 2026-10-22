@@ -6,12 +6,23 @@ protected runtime authority or be replayed as an offline JSON capability.
 
 from __future__ import annotations
 
+import ctypes
 import json
 from contextlib import ExitStack
+from ctypes import wintypes as w
 from dataclasses import dataclass
+from pathlib import Path
 
+from .leases import _release
 from .local_time import LocalDeadline, WindowsHostClock
-from .util import canonical_json_bytes, ensure_within, sha256_bytes, sha256_file
+from .util import (
+    canonical_json_bytes,
+    ensure_within,
+    is_repository_relative_path_v2,
+    load_json,
+    sha256_bytes,
+    sha256_file,
+)
 from .windows_capability import (
     CHECKPOINT_ORDER,
     ProcessPin,
@@ -21,7 +32,13 @@ from .windows_capability import (
     parse_native_handle,
     require_system_self,
 )
-from .windows_custody import WindowsIssuerConfig, WindowsProtectedCustodyVerifier, sealed_decision
+from .windows_custody import (
+    WindowsIssuerConfig,
+    WindowsProtectedCustodyVerifier,
+    check_file_security,
+    sealed_decision,
+)
+from .windows_publication import RESULT_CLAIM, RESULT_HANDOFF, ResultPublication
 from .windows_security import WindowsBoundaryHold, is_account_sid
 from .windows_writer import WindowsWriterBinding, WindowsWriterInspector
 
@@ -85,6 +102,7 @@ class WindowsIssuer:
         target: WriterTarget,
         worker_sid: str,
         scratch_sid: str,
+        result_release_ref: str | None = None,
     ) -> None:
         if type(issuer_pin) is not ProcessPin or type(client_pin) is not ProcessPin:
             raise WindowsBoundaryHold("HOLD_FIXED_PROCESS_PINS_REQUIRED")
@@ -115,14 +133,20 @@ class WindowsIssuer:
         self._target = target
         self._worker_sid = worker_sid
         self._scratch_sid = scratch_sid
+        if (
+            result_release_ref is not None
+            and not is_repository_relative_path_v2(result_release_ref)
+        ):
+            raise WindowsBoundaryHold("HOLD_FIXED_RESULT_RELEASE_REF_REQUIRED")
+        self._result_release_ref = result_release_ref
 
     def __getstate__(self):
         raise TypeError("Issuer state cannot be persisted/restored")
 
-    def _expected_request(self) -> dict:
+    def _expected_request(self, *, result=False) -> dict:
         intent = self._deadline.intent
         return {
-            "schema_version": "clh.windows-local-claim.v1",
+            "schema_version": RESULT_CLAIM if result else "clh.windows-local-claim.v1",
             "intent_id": intent.intent_id,
             "generation": intent.generation,
             "lease_id": self._lease_id,
@@ -136,11 +160,150 @@ class WindowsIssuer:
 
     def claim_once(self) -> dict:
         """Explicit Operator call. Claim and any error consume the one attempt."""
+        return self._claim_once(result=False)
+
+    def claim_result_once(self) -> dict:
+        """Opt-in result/terminal contract; never selected by CLI/MCP."""
+        return self._claim_once(result=True)
+
+    def _prepare_terminal_temp(self, path: Path, verifier) -> None:
+        """Copy the existing protected Lease DACL onto this transaction's temp.
+
+        Only the fixed SYSTEM issuer calls this during protected settlement.
+        Source tests mock the native setter; this never installs a Root or
+        changes an ancestor, existing resource, identity, service or privilege.
+        """
+        require_system_self(self._issuer_pin)
+        source = self._config.lock_root / f"{self._lease_id}.lease.json"
+        if path.parent != source.parent or not path.name.startswith(f".{source.name}."):
+            raise WindowsBoundaryHold("HOLD_EXACT_TERMINAL_TEMP_REQUIRED")
+        reader = verifier._reader
+        original, temporary = reader.file_security(source), reader.file_security(path)
+        check_file_security(original, self._config.issuer_sid, require_protected=True)
+        if temporary.owner != self._config.issuer_sid:
+            raise WindowsBoundaryHold("HOLD_SYSTEM_OWNED_TERMINAL_TEMP_REQUIRED")
+        api = reader.a
+        api.GetNamedSecurityInfoW.argtypes = [
+            w.LPCWSTR, w.DWORD, w.DWORD, w.LPVOID, w.LPVOID,
+            w.LPVOID, w.LPVOID, w.LPVOID,
+        ]
+        api.GetNamedSecurityInfoW.restype = w.DWORD
+        api.SetNamedSecurityInfoW.argtypes = [
+            w.LPWSTR, w.DWORD, w.DWORD, w.LPVOID, w.LPVOID, w.LPVOID, w.LPVOID,
+        ]
+        api.SetNamedSecurityInfoW.restype = w.DWORD
+        descriptor, dacl = w.LPVOID(), w.LPVOID()
+        try:
+            if (
+                api.GetNamedSecurityInfoW(
+                    str(source), 1, 4, None, None, ctypes.byref(dacl), None,
+                    ctypes.byref(descriptor),
+                ) != 0 or not descriptor or not dacl
+            ):
+                raise WindowsBoundaryHold("HOLD_TERMINAL_DACL_READ_FAILED")
+            if api.SetNamedSecurityInfoW(str(path), 1, 0x80000004, None, None, dacl, None) != 0:
+                raise WindowsBoundaryHold("HOLD_TERMINAL_DACL_COPY_FAILED")
+            after = reader.file_security(path)
+            if (
+                after.owner != self._config.issuer_sid or not after.protected_dacl
+                or after.aces != original.aces or after.identity != temporary.identity
+                or reader.file_security(source) != original
+            ):
+                raise WindowsBoundaryHold("HOLD_TERMINAL_DACL_READBACK_MISMATCH")
+        finally:
+            if descriptor:
+                reader.k.LocalFree(descriptor)
+
+    def _settle_result(self, verifier, publication, pipe, inspector, handles) -> dict:
+        """Release only inside this retained native issuer's final live checkpoint.
+
+        The fixed Operator path supplies an independently authorized terminal
+        candidate, not a candidate or a success flag from the client frame.
+        """
+        intent = self._deadline.intent
+        candidate_path = ensure_within(
+            self._config.repo_root / self._result_release_ref,
+            self._config.repo_root, label="fixed terminal candidate", must_exist=True,
+        )
+        candidate = load_json(candidate_path)
+        roots = (self._config.repo_root, self._config.lock_root)
+
+        def root_pins():
+            return tuple(
+                (
+                    item.owner, item.protected_dacl, item.aces,
+                    item.identity[:3], item.descriptor_sha256,
+                )
+                for item in (verifier._reader.file_security(root) for root in roots)
+            )
+
+        pinned_roots = root_pins()
+        with ExitStack() as seals:
+            for path in (
+                candidate_path,
+                ensure_within(
+                    self._config.repo_root / candidate["release_decision_ref"],
+                    self._config.repo_root, label="terminal Decision", must_exist=True,
+                ),
+                ensure_within(
+                    self._config.repo_root / candidate["outcome_ref"],
+                    self._config.repo_root, label="terminal outcome", must_exist=True,
+                ),
+            ):
+                seals.enter_context(sealed_decision(path))
+            release_decision = self._config.repo_root / candidate["release_decision_ref"]
+            seals.enter_context(sealed_decision(release_decision.with_suffix(".md")))
+            if load_json(candidate_path) != candidate:
+                raise WindowsBoundaryHold("HOLD_TERMINAL_CANDIDATE_CHANGED")
+
+            def check_writer(current, *, admitted_git_locks=None):
+                require_system_self(self._issuer_pin)
+                require_native_deadline(self._deadline, self._issuer_pin)
+                self._deadline.check("dag_ack", retained_intent=intent)
+                pipe.require_live_client(self._client_pin)
+                inspector.observe(
+                    participant_handle=handles[0], job_handle=handles[1], terminal=True
+                )
+                if canonical_json_bytes(current) != self._serialized:
+                    raise WindowsBoundaryHold("HOLD_SETTLEMENT_ACTIVE_LEASE_CHANGED")
+                if root_pins() != pinned_roots:
+                    raise WindowsBoundaryHold("HOLD_SETTLEMENT_ROOT_CHANGED")
+                verifier._verify_issuer()
+                verifier._verify_lineage(current)
+                publication.verify(current, admitted_git_locks=admitted_git_locks)
+                if root_pins() != pinned_roots:
+                    raise WindowsBoundaryHold("HOLD_SETTLEMENT_ROOT_CHANGED")
+                pipe.require_live_client(self._client_pin)
+                self._deadline.check("dag_ack", retained_intent=intent)
+
+            lease_path = _release(
+                self._lease_id, self._config.lock_root,
+                expected_generation=intent.generation, candidate_path=candidate_path,
+                repo_root=self._config.repo_root, writer_check=check_writer,
+                prepare_temp=lambda path: self._prepare_terminal_temp(path, verifier),
+            )
+            # The owned admission mutex/temp have gone. Re-admit the complete
+            # protected trees, including the replacement file's actual DACL.
+            for root in roots:
+                verifier._protected_tree(root)
+            raw = lease_path.read_bytes()
+            if raw != canonical_json_bytes(candidate):
+                raise WindowsBoundaryHold("HOLD_TERMINAL_LEASE_READBACK_MISMATCH")
+            pipe.require_live_client(self._client_pin)
+            self._deadline.check("dag_ack", retained_intent=intent)
+            return {
+                "lease_id": self._lease_id, "generation": candidate["generation"],
+                "lease_sha256": sha256_bytes(raw),
+            }
+
+    def _claim_once(self, *, result: bool) -> dict:
         try:
             self._deadline.consume_issuer_claim()
         except Exception as exc:
             raise WindowsBoundaryHold("HOLD_ISSUER_INTENT_ALREADY_ATTEMPTED") from exc
         try:
+            if result and self._result_release_ref is None:
+                raise WindowsBoundaryHold("HOLD_FIXED_RESULT_RELEASE_REF_REQUIRED")
             require_system_self(self._issuer_pin)
             require_native_deadline(self._deadline, self._issuer_pin)
             intent = self._deadline.intent
@@ -163,7 +326,7 @@ class WindowsIssuer:
                 pipe.connect()
                 with pipe.authenticated_peer(self._client_pin):
                     raw = pipe.read_frame()
-                    if raw != canonical_json_bytes(self._expected_request()):
+                    if raw != canonical_json_bytes(self._expected_request(result=result)):
                         raise WindowsBoundaryHold("HOLD_EXACT_CLAIM_MISMATCH")
                     verifier = WindowsProtectedCustodyVerifier(
                         self._config, self._deadline, issuer_pin=self._issuer_pin
@@ -172,9 +335,18 @@ class WindowsIssuer:
                     writers = [item for item in lease["repositories"] if item["mode"] == "WRITE"]
                     if len(writers) != 1 or WriterTarget.from_lease(writers[0]) != self._target:
                         raise WindowsBoundaryHold("HOLD_FIXED_TARGET_MISMATCH")
+                    if result and lease["repositories"] != writers:
+                        raise WindowsBoundaryHold("HOLD_RESULT_REQUIRES_SINGLE_REPOSITORY")
+                    publication = (
+                        stack.enter_context(
+                            ResultPublication(writers[0], publisher_sid=self._client_pin.sid)
+                        ) if result else None
+                    )
                     self._deadline.check("pre_spawn", retained_intent=intent)
                     response = {
-                        "schema_version": "clh.windows-local-handoff.v1",
+                        "schema_version": (
+                            RESULT_HANDOFF if result else "clh.windows-local-handoff.v1"
+                        ),
                         "request_sha256": sha256_bytes(raw),
                         "decision_ref": lease["decision_ref"],
                         "decision_sha256": sha256_file(decision),
@@ -204,6 +376,8 @@ class WindowsIssuer:
                         raise WindowsBoundaryHold("HOLD_HANDOFF_ACK_MISMATCH")
                     self._deadline.check("pre_spawn", retained_intent=intent)
                     verifier.verify(self._lease_id, intent.generation, self._serialized)
+                    if publication is not None:
+                        publication.check_clean()
                     # CLF now creates the participant suspended and assigns its
                     # Job. No participant identity was needed for admission.
                     pre_spawn_heartbeat = canonical_json_bytes(
@@ -219,6 +393,8 @@ class WindowsIssuer:
                             break
                         self._deadline.check("watchdog", retained_intent=intent)
                         verifier.verify(self._lease_id, intent.generation, self._serialized)
+                        if publication is not None:
+                            publication.check_clean()
                         pipe.write_frame(
                             canonical_json_bytes(
                                 {
@@ -280,6 +456,8 @@ class WindowsIssuer:
                     inspector = WindowsWriterInspector(binding, self._deadline)
                     inspector.observe(participant_handle=handles[0], job_handle=handles[1])
                     verifier.verify(self._lease_id, intent.generation, self._serialized)
+                    if publication is not None:
+                        publication.check_clean()
                     pipe.write_frame(
                         canonical_json_bytes(
                             {
@@ -315,21 +493,36 @@ class WindowsIssuer:
                             else:
                                 raise WindowsBoundaryHold("HOLD_HANDOFF_CHECKPOINT_MISMATCH")
                             self._deadline.check(checked, retained_intent=intent)
-                            # Full protected Lease/Decision/Git admission stays
-                            # strict even after publication. A dirty tree or a
-                            # changed HEAD holds; this never certifies effects.
-                            verifier.verify(self._lease_id, intent.generation, self._serialized)
-                            inspector.observe(participant_handle=handles[0], job_handle=handles[1])
-                            self._deadline.check(checked, retained_intent=intent)
-                            pipe.write_frame(
-                                canonical_json_bytes(
-                                    {
-                                        "schema_version": "clh.windows-local-checkpoint-ack.v1",
-                                        "stage": checked,
-                                        "handoff_sha256": handoff_digest,
-                                    }
+                            post_effect = result and stage in ("receipt", "dag_ack")
+                            if post_effect:
+                                snapshot = verifier._verify_result(
+                                    self._lease_id, intent.generation, self._serialized, publication
                                 )
+                            else:
+                                snapshot = verifier.verify(
+                                    self._lease_id, intent.generation, self._serialized
+                                )
+                                if publication is not None:
+                                    publication.check_clean()
+                            observation = dict(
+                                participant_handle=handles[0], job_handle=handles[1]
                             )
+                            if result and (post_effect or checked == "effect_publication"):
+                                observation["terminal"] = True
+                            inspector.observe(**observation)
+                            self._deadline.check(checked, retained_intent=intent)
+                            ack = {
+                                "schema_version": "clh.windows-local-checkpoint-ack.v1",
+                                "stage": checked,
+                                "handoff_sha256": handoff_digest,
+                            }
+                            if post_effect:
+                                ack["published_result"] = snapshot["published_result"]
+                            if result and checked == "dag_ack":
+                                ack["released_lease"] = self._settle_result(
+                                    verifier, publication, pipe, inspector, handles
+                                )
+                            pipe.write_frame(canonical_json_bytes(ack))
                             if checked == stage:
                                 break
                     return response

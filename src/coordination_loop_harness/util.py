@@ -83,6 +83,7 @@ def write_json_atomic(
     trusted_root: Path | None = None,
     canonical: bool = False,
     before_publish: Callable[[], None] | None = None,
+    prepare_temp: Callable[[Path], None] | None = None,
 ) -> None:
     if trusted_root is not None:
         trusted_root = canonical_path(trusted_root)
@@ -106,6 +107,8 @@ def write_json_atomic(
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        if prepare_temp is not None:
+            prepare_temp(Path(tmp_name))
         if before_publish is not None:
             before_publish()
         if create_new:
