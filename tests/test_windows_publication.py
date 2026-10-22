@@ -374,7 +374,7 @@ class ResultPublicationTests(unittest.TestCase):
     def test_missing_or_unauthorized_terminal_candidate_never_releases(self):
         fixture, issuer, binding = self.issuer_fixture()
         fixture.terminal_path.unlink()
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaisesRegex(ValueError, "Cannot safely resolve path"):
             self.run_result_claim(fixture, issuer, binding)
         self.assertEqual(
             fixture.fixture.serialized,
@@ -504,6 +504,7 @@ class ResultPublicationTests(unittest.TestCase):
             deadline=chain.deadline,
             serialized_lease=chain.serialized,
             target=WriterTarget.from_lease(self.current["repositories"][0]),
+            result_release_ref=fixture.terminal_path.relative_to(chain.root).as_posix(),
         )
         from coordination_loop_harness.util import canonical_json_bytes
 
